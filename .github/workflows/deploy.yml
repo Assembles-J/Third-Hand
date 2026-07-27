@@ -56,6 +56,9 @@ jobs:
           script: |
             set -e
             cd /opt/third-hand
-            test -f .env
+            if [ ! -f .env ]; then
+              cp .env.example .env
+              echo "Created initial .env from .env.example"
+            fi
             docker compose up -d --build --remove-orphans
             docker compose ps
