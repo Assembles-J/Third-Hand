@@ -77,6 +77,6 @@ Compose 默认只将 API 绑定到 `127.0.0.1:8000`，因此公网无法直接�
 `Deploy` 工作流只允许手动运行，并要求 GitHub Environment `production`。在仓库的 **Settings → Secrets and variables → Actions** 中配置：
 
 - Secrets：`SERVER_IP`、`SERVER_USER`、`SERVER_SSH_KEY`、`SERVER_KNOWN_HOSTS`。
-- Variable：可选的 `SERVER_PATH`（默认 `/opt/third-hand`）。
+- 部署目录固定为 `/opt/third-hand`，无需再配置 `SERVER_PATH`。
 
 `SERVER_KNOWN_HOSTS` 是服务器的公开主机指纹行，可在你已确认服务器身份的机器上用 `ssh-keyscan -H <server-ip>` 获取。不要为了方便而在工作流中关闭主机密钥校验。部署用户只应拥有目标部署目录及 Docker Compose 所需的最小权限。

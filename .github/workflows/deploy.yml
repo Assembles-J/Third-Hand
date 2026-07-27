@@ -38,9 +38,8 @@ jobs:
         env:
           SERVER_IP: ${{ secrets.SERVER_IP }}
           SERVER_USER: ${{ secrets.SERVER_USER }}
-          SERVER_PATH: ${{ vars.SERVER_PATH }}
+          SERVER_PATH: /opt/third-hand
         run: |
-          : "${SERVER_PATH:=/opt/third-hand}"
           ssh "$SERVER_USER@$SERVER_IP" "mkdir -p '$SERVER_PATH'"
           rsync -az \
             --exclude '.git/' --exclude '.idea/' --exclude '.gradle/' --exclude '**/build/' \
@@ -50,7 +49,6 @@ jobs:
         env:
           SERVER_IP: ${{ secrets.SERVER_IP }}
           SERVER_USER: ${{ secrets.SERVER_USER }}
-          SERVER_PATH: ${{ vars.SERVER_PATH }}
+          SERVER_PATH: /opt/third-hand
         run: |
-          : "${SERVER_PATH:=/opt/third-hand}"
           ssh "$SERVER_USER@$SERVER_IP" "cd '$SERVER_PATH' && test -f .env && docker compose up -d --build --remove-orphans && docker compose ps"
