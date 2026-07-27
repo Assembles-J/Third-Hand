@@ -60,5 +60,13 @@ jobs:
               cp .env.example .env
               echo "Created initial .env from .env.example"
             fi
-            docker compose up -d --build --remove-orphans
-            docker compose ps
+            if docker compose version >/dev/null 2>&1; then
+              docker compose up -d --build --remove-orphans
+              docker compose ps
+            elif command -v docker-compose >/dev/null 2>&1; then
+              docker-compose up -d --build --remove-orphans
+              docker-compose ps
+            else
+              echo "Docker Compose is not installed on the server."
+              exit 1
+            fi
