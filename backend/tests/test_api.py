@@ -1,12 +1,13 @@
 from fastapi.testclient import TestClient
 
-from app.main import app, store
+from app.main import app, market_data, store
+from app.time_utils import beijing_now
 
 client = TestClient(app)
 
 
 def setup_function():
-    store._holdings.clear()  # Isolate in-memory MVP tests.
+    store.clear_for_test()
 
 
 def test_health():
@@ -39,3 +40,14 @@ def test_import_accepts_valid_rows_and_rejects_invalid_rows():
 def test_import_rejects_unknown_header():
     response = client.post("/v1/holdings/import", params={"csv_content": "code,name\n1,a"})
     assert response.status_code == 422
+
+
+def test_market_quote_uses_adapter(monkeypatch):
+    monkeypatch.setattr(market_data, "quotes", lambda symbols: [{"symbol": "01810", "price": 45.5, "currency": "HKD"}])
+    response = client.get("/v1/market/quotes", params=[("symbols", "01810")])
+    assert response.status_code == 200
+    assert response.json()[0]["symbol"] == "01810"
+
+
+def test_user_visible_time_uses_beijing_timezone():
+    assert beijing_now().utcoffset().total_seconds() == 8 * 60 * 60

@@ -1,0 +1,20 @@
+services:
+  api:
+    build:
+      context: ./backend
+    image: third-hand-api:latest
+    restart: unless-stopped
+    environment:
+      TZ: Asia/Shanghai
+      THIRD_HAND_DB_PATH: /app/data/third_hand.db
+    volumes:
+      - ./data:/app/data
+    ports:
+      # Keep the API private to this machine. Put Caddy/Nginx in front of it for HTTPS.
+      - "${API_BIND_ADDRESS:-127.0.0.1}:${API_PORT:-8000}:8000"
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/health')"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 10s

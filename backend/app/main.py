@@ -7,15 +7,25 @@ from __future__ import annotations
 
 import csv
 import io
-from datetime import datetime, timezone
-from threading import Lock
+from datetime import datetime
 from typing import Annotated
 from uuid import uuid4
 
 from fastapi import FastAPI, HTTPException, Query, Response, status
+from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field, field_validator
 
+from app.market import MarketDataService, MarketDataUnavailable
+from app.storage import PortfolioStore
+from app.time_utils import beijing_now
+
 app = FastAPI(title="Third-Hand API", version="0.2.0")
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["http://localhost", "http://127.0.0.1"],
+    allow_methods=["GET", "POST", "DELETE"],
+    allow_headers=["*"],
+)
 
 DISCLAIMER = "信息仅供学习与核查，不构成投资建议；请以原始公告和合规行情源为准。"
 
@@ -61,29 +71,8 @@ class ImportResult(BaseModel):
     message: str
 
 
-class PortfolioStore:
-    """Thread-safe MVP storage. No broker credentials or exported files are retained."""
-
-    def __init__(self) -> None:
-        self._holdings: dict[str, Holding] = {}
-        self._lock = Lock()
-
-    def list(self) -> list[Holding]:
-        with self._lock:
-            return sorted(self._holdings.values(), key=lambda item: item.created_at, reverse=True)
-
-    def add(self, payload: HoldingInput) -> Holding:
-        holding = Holding(id=str(uuid4()), **payload.model_dump(), created_at=datetime.now(timezone.utc))
-        with self._lock:
-            self._holdings[holding.id] = holding
-        return holding
-
-    def delete(self, holding_id: str) -> bool:
-        with self._lock:
-            return self._holdings.pop(holding_id, None) is not None
-
-
 store = PortfolioStore()
+market_data = MarketDataService()
 
 GLOSSARY = {
     "pe": GlossaryCard(term="PE（市盈率）", plain_explanation="股价相对于每股盈利的倍数。它不是越低越好，要结合行业和盈利质量判断。", watch_for="亏损或一次性收益会使 PE 失真。"),
@@ -96,7 +85,7 @@ def seed_news(symbols: list[str]) -> list[NewsItem]:
     related = symbols or ["600519"]
     return [NewsItem(
         id="demo-buyback", title="示例：公司发布回购进展公告", source_name="交易所公告（示例）",
-        source_url="https://www.sse.com.cn/", published_at=datetime.now(timezone.utc), related_symbols=related,
+        source_url="https://www.sse.com.cn/", published_at=beijing_now(), related_symbols=related,
         explanation="为什么相关：公告涉及你的持仓或自选股。请打开原文核查实际回购数量、金额和后续安排。",
         confidence=0.65,
     )]
@@ -111,8 +100,17 @@ def health() -> dict[str, str]:
 def feed(symbols: Annotated[list[str], Query()] = []) -> list[NewsItem]:
     requested = [symbol.strip().upper() for symbol in symbols if symbol.strip()]
     if not requested:
-        requested = [holding.symbol for holding in store.list()]
+        requested = [str(holding["symbol"]) for holding in store.list()]
     return seed_news(requested)
+
+
+@app.get("/v1/market/quotes")
+def market_quotes(symbols: Annotated[list[str], Query()]) -> list[dict[str, object]]:
+    """Return cached public-source snapshots for A shares and Hong Kong listings."""
+    try:
+        return market_data.quotes(symbols)
+    except MarketDataUnavailable as error:
+        raise HTTPException(status_code=503, detail={"message": str(error), "code": error.code}) from error
 
 
 @app.get("/v1/glossary/{term}", response_model=GlossaryCard)
@@ -125,12 +123,12 @@ def glossary(term: str) -> GlossaryCard:
 
 @app.get("/v1/holdings", response_model=list[Holding])
 def list_holdings() -> list[Holding]:
-    return store.list()
+    return [Holding.model_validate(item) for item in store.list()]
 
 
 @app.post("/v1/holdings", response_model=Holding, status_code=status.HTTP_201_CREATED)
 def create_holding(payload: HoldingInput) -> Holding:
-    return store.add(payload)
+    return Holding.model_validate(store.add(str(uuid4()), **payload.model_dump()))
 
 
 @app.delete("/v1/holdings/{holding_id}", status_code=status.HTTP_204_NO_CONTENT)
@@ -154,7 +152,8 @@ def import_holdings(csv_content: str) -> ImportResult:
     accepted = 0
     for line_number, row in enumerate(rows, start=2):
         try:
-            store.add(HoldingInput(**row))
+            payload = HoldingInput(**row)
+            store.add(str(uuid4()), **payload.model_dump())
             accepted += 1
         except (ValueError, TypeError):
             rejected.append(line_number)

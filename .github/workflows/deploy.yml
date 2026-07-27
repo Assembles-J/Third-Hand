@@ -1,0 +1,56 @@
+name: Deploy
+
+on:
+  workflow_dispatch:
+    inputs:
+      ref:
+        description: Git ref to deploy
+        required: true
+        default: main
+
+permissions:
+  contents: read
+
+concurrency:
+  group: production-deploy
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    name: Deploy with Docker Compose
+    runs-on: ubuntu-latest
+    environment: production
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.ref }}
+      - name: Configure SSH
+        env:
+          SERVER_SSH_KEY: ${{ secrets.SERVER_SSH_KEY }}
+          SERVER_KNOWN_HOSTS: ${{ secrets.SERVER_KNOWN_HOSTS }}
+        run: |
+          install -d -m 700 ~/.ssh
+          printf '%s\n' "$SERVER_SSH_KEY" > ~/.ssh/id_ed25519
+          chmod 600 ~/.ssh/id_ed25519
+          printf '%s\n' "$SERVER_KNOWN_HOSTS" > ~/.ssh/known_hosts
+          chmod 600 ~/.ssh/known_hosts
+      - name: Upload application
+        env:
+          SERVER_IP: ${{ secrets.SERVER_IP }}
+          SERVER_USER: ${{ secrets.SERVER_USER }}
+          SERVER_PATH: ${{ vars.SERVER_PATH }}
+        run: |
+          : "${SERVER_PATH:=/opt/third-hand}"
+          ssh "$SERVER_USER@$SERVER_IP" "mkdir -p '$SERVER_PATH'"
+          rsync -az \
+            --exclude '.git/' --exclude '.idea/' --exclude '.gradle/' --exclude '**/build/' \
+            --exclude '.env' --exclude '.verify-venv/' \
+            ./ "$SERVER_USER@$SERVER_IP:$SERVER_PATH/"
+      - name: Build and start services
+        env:
+          SERVER_IP: ${{ secrets.SERVER_IP }}
+          SERVER_USER: ${{ secrets.SERVER_USER }}
+          SERVER_PATH: ${{ vars.SERVER_PATH }}
+        run: |
+          : "${SERVER_PATH:=/opt/third-hand}"
+          ssh "$SERVER_USER@$SERVER_IP" "cd '$SERVER_PATH' && test -f .env && docker compose up -d --build --remove-orphans && docker compose ps"
