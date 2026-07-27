@@ -32,7 +32,12 @@ jobs:
           host: ${{ secrets.SERVER_IP }}
           username: ${{ secrets.SERVER_USER }}
           key: ${{ secrets.SERVER_SSH_KEY }}
-          script: mkdir -p /opt/third-hand
+          script: |
+            set -eu
+            echo "Remote identity: $(id -un) ($(id -u))"
+            ls -ld /opt
+            mkdir -pv /opt/third-hand
+            test -w /opt/third-hand
       - name: Upload deployment files
         uses: appleboy/scp-action@v1.0.0
         with:
