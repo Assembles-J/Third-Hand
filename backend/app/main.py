@@ -16,6 +16,8 @@ from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field, field_validator
 
 from app.market import MarketDataService, MarketDataUnavailable
+from app.news import NewsDataUnavailable, NewsService
+from app.announcements import AnnouncementDataUnavailable, AnnouncementService
 from app.storage import PortfolioStore
 from app.time_utils import beijing_now
 
@@ -73,6 +75,8 @@ class ImportResult(BaseModel):
 
 store = PortfolioStore()
 market_data = MarketDataService()
+news_service = NewsService()
+announcement_service = AnnouncementService()
 
 GLOSSARY = {
     "pe": GlossaryCard(term="PE（市盈率）", plain_explanation="股价相对于每股盈利的倍数。它不是越低越好，要结合行业和盈利质量判断。", watch_for="亏损或一次性收益会使 PE 失真。"),
@@ -99,9 +103,32 @@ def health() -> dict[str, str]:
 @app.get("/v1/feed", response_model=list[NewsItem])
 def feed(symbols: Annotated[list[str], Query()] = []) -> list[NewsItem]:
     requested = [symbol.strip().upper() for symbol in symbols if symbol.strip()]
+    holdings = store.list()
     if not requested:
-        requested = [str(holding["symbol"]) for holding in store.list()]
-    return seed_news(requested)
+        requested = [str(holding["symbol"]) for holding in holdings]
+    if not requested:
+        return seed_news([])
+    names_by_symbol = {str(holding["symbol"]): str(holding["name"]) for holding in holdings}
+    try:
+        return [NewsItem.model_validate(item) for item in news_service.fetch(requested, names_by_symbol)]
+    except NewsDataUnavailable as error:
+        raise HTTPException(status_code=503, detail=str(error)) from error
+
+
+@app.get("/v1/announcements", response_model=list[NewsItem])
+def announcements(
+    symbols: Annotated[list[str], Query()] = [],
+    days: Annotated[int, Query(ge=1, le=90)] = 30,
+) -> list[NewsItem]:
+    requested = [symbol.strip().upper() for symbol in symbols if symbol.strip()]
+    holdings = store.list()
+    if not requested:
+        requested = [str(holding["symbol"]) for holding in holdings]
+    names_by_symbol = {str(holding["symbol"]): str(holding["name"]) for holding in holdings}
+    try:
+        return [NewsItem.model_validate(item) for item in announcement_service.fetch(requested, names_by_symbol, days)]
+    except AnnouncementDataUnavailable as error:
+        raise HTTPException(status_code=503, detail=str(error)) from error
 
 
 @app.get("/v1/market/quotes")

@@ -10,17 +10,19 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
-import androidx.compose.foundation.layout.weight
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.clickable
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.Card
+import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.NavigationBar
 import androidx.compose.material3.NavigationBarItem
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
+import androidx.compose.material3.RadioButton
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
@@ -34,7 +36,9 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalUriHandler
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.unit.dp
 import kotlinx.coroutines.launch
 
@@ -46,10 +50,13 @@ class MainActivity : ComponentActivity() {
 }
 
 @Composable
+@OptIn(ExperimentalMaterial3Api::class)
 private fun ThirdHandApp() {
+    val context = LocalContext.current
+    var themeMode by remember { mutableStateOf(ThemeStore.load(context)) }
     var tab by remember { mutableIntStateOf(0) }
     val labels = listOf("今日", "持仓", "消息", "我的")
-    MaterialTheme {
+    ThirdHandTheme(themeMode) {
         Scaffold(
             topBar = { TopAppBar(title = { Text("Third-Hand") }) },
             bottomBar = {
@@ -64,7 +71,11 @@ private fun ThirdHandApp() {
                 0 -> TodayScreen(Modifier.padding(padding))
                 1 -> HoldingsScreen(Modifier.padding(padding))
                 2 -> FeedScreen(Modifier.padding(padding))
-                else -> ProfileScreen(Modifier.padding(padding))
+                else -> ProfileScreen(
+                    modifier = Modifier.padding(padding),
+                    themeMode = themeMode,
+                    onThemeModeChange = { mode -> ThemeStore.save(context, mode); themeMode = mode },
+                )
             }
         }
     }
@@ -143,7 +154,7 @@ private fun HoldingsScreen(modifier: Modifier) {
         items(holdings, key = { it.id }) { holding ->
             Card(Modifier.fillMaxWidth()) {
                 Row(Modifier.padding(16.dp), horizontalArrangement = Arrangement.SpaceBetween) {
-                    Column(Modifier.weight(1f)) {
+                    Column(Modifier.fillMaxWidth()) {
                         Text("${holding.name} · ${holding.symbol}", style = MaterialTheme.typography.titleMedium)
                         Text("数量：${holding.quantity}　成本：${holding.average_cost}")
                     }
@@ -186,29 +197,51 @@ private fun AddHoldingDialog(onDismiss: () -> Unit, onSave: (HoldingInputDto) ->
             OutlinedTextField(cost, { cost = it }, label = { Text("平均成本") })
         } },
         confirmButton = { TextButton(onClick = { onSave(HoldingInputDto(symbol, name, quantity.toDoubleOrNull() ?: 0.0, cost.toDoubleOrNull() ?: -1.0)) }) { Text("保存") } },
-        dismissButton = { TextButton(onClick = onDismiss) { Text("取消") },
+        dismissButton = { TextButton(onClick = onDismiss) { Text("取消") } },
     )
 }
 
 @Composable
 private fun FeedScreen(modifier: Modifier) {
     val context = LocalContext.current
+    val uriHandler = LocalUriHandler.current
     val api = ApiClient.service(context)
     var feed by remember { mutableStateOf<List<NewsItemDto>>(emptyList()) }
+    var announcements by remember { mutableStateOf<List<NewsItemDto>>(emptyList()) }
     var error by remember { mutableStateOf<String?>(null) }
     val scope = rememberCoroutineScope()
-    fun refresh() = scope.launch { try { feed = api.feed(emptyList()); error = null } catch (exception: Exception) { error = exception.message } }
+    fun refresh() = scope.launch { try {
+        val symbols = api.holdings().map { it.symbol }
+        announcements = api.announcements(symbols)
+        feed = api.feed(symbols)
+        error = null
+    } catch (exception: Exception) { error = exception.message } }
     LaunchedEffect(Unit) { refresh() }
     LazyColumn(modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
         item { Text("关联消息", style = MaterialTheme.typography.headlineSmall) }
+        item { Text("正式公告优先展示；新闻用于补充背景，均请以原文为准。") }
         item { Button(onClick = { refresh() }) { Text("刷新") } }
         error?.let { item { Text(it ?: "", color = MaterialTheme.colorScheme.error) } }
-        items(feed) { item -> Card(Modifier.fillMaxWidth()) { Column(Modifier.padding(16.dp)) { Text(item.title, style = MaterialTheme.typography.titleMedium); Text(item.explanation); Text("${item.source_name}｜${item.published_at}", style = MaterialTheme.typography.bodySmall) } } }
+        if (announcements.isNotEmpty()) item { Text("正式公告", style = MaterialTheme.typography.titleMedium) }
+        items(announcements) { item -> FeedCard(item, uriHandler, "公告") }
+        if (feed.isNotEmpty()) item { Text("相关新闻", style = MaterialTheme.typography.titleMedium) }
+        items(feed) { item -> FeedCard(item, uriHandler, "新闻") }
     }
 }
 
 @Composable
-private fun ProfileScreen(modifier: Modifier) {
+private fun FeedCard(item: NewsItemDto, uriHandler: androidx.compose.ui.platform.UriHandler, label: String) = Card(Modifier.fillMaxWidth()) {
+    Column(Modifier.padding(16.dp)) {
+        Text(label, color = MaterialTheme.colorScheme.primary, style = MaterialTheme.typography.labelMedium)
+        Text(item.title, style = MaterialTheme.typography.titleMedium)
+        Text(item.explanation)
+        Text("${item.source_name}｜${item.published_at}", style = MaterialTheme.typography.bodySmall)
+        TextButton(onClick = { uriHandler.openUri(item.source_url) }) { Text("查看原文") }
+    }
+}
+
+@Composable
+private fun ProfileScreen(modifier: Modifier, themeMode: ThemeMode, onThemeModeChange: (ThemeMode) -> Unit) {
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
     var baseUrl by remember { mutableStateOf(EndpointStore.baseUrl(context)) }
@@ -230,6 +263,16 @@ private fun ProfileScreen(modifier: Modifier) {
             }) { Text("测试连接") }
         }
         connectionStatus?.let { Text(it, color = if (it == "连接成功") MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.error) }
+        Text("外观", style = MaterialTheme.typography.titleMedium)
+        ThemeMode.entries.forEach { mode ->
+            Row(
+                modifier = Modifier.fillMaxWidth().clickable { onThemeModeChange(mode) },
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                RadioButton(selected = themeMode == mode, onClick = { onThemeModeChange(mode) })
+                Text(mode.label)
+            }
+        }
         Text("当前为本地 MVP。持仓数据存储在后端 SQLite；请在生产部署前补充账号认证与备份。")
     }
 }

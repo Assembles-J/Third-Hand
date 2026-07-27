@@ -20,18 +20,18 @@ object ScreenshotOcr {
         return lines.mapNotNull { nameLine ->
             val box = nameLine.boundingBox ?: return@mapNotNull null
             val name = nameLine.text.trim()
-            if (box.left > imageWidth * 0.32f || !name.contains(Regex("[\\u4e00-\\u9fff]"))) return@mapNotNull null
+            if (box.left.toFloat() > imageWidth * 0.32f || !name.contains(Regex("[\\u4e00-\\u9fff]"))) return@mapNotNull null
             val rowLines = lines.filter { line ->
                 val rowBox = line.boundingBox ?: return@filter false
                 abs(rowBox.top - box.top) < 32
             }
             val quantity = rowLines.firstNotNullOfOrNull { line ->
                 val rowBox = line.boundingBox ?: return@firstNotNullOfOrNull null
-                if (rowBox.left in (imageWidth * 0.53f)..(imageWidth * 0.80f)) number(line.text) else null
+                if (rowBox.left.toFloat() in (imageWidth * 0.53f)..(imageWidth * 0.80f)) number(line.text) else null
             }
             val cost = rowLines.firstNotNullOfOrNull { line ->
                 val rowBox = line.boundingBox ?: return@firstNotNullOfOrNull null
-                if (rowBox.left > imageWidth * 0.80f) number(line.text) else null
+                if (rowBox.left.toFloat() > imageWidth * 0.80f) number(line.text) else null
             }
             if (quantity != null && quantity > 0 && cost != null && cost >= 0) RecognizedHolding(name, quantity, cost) else null
         }.distinctBy { it.name }

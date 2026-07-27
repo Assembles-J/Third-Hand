@@ -14,6 +14,10 @@
 
 行情适配器会将相同市场的全量公开快照缓存 60 秒，避免每次 App 刷新都请求公开网站。港股 `01810`（小米集团-W）走 `stock_hk_spot_em`；A 股走 `stock_zh_a_spot_em`。这是信息展示与提醒用途的公开源快照，绝不能用作下单、止损或任何交易执行依据。
 
+信息流会按持仓调用 AKShare 的公开个股新闻接口，保留原文链接、来源、发布时间和关联代码，并以 5 分钟缓存限制请求频率。新闻源不可用时接口返回 `503`，不会用过时示例消息伪装成实时新闻。原文仍是用户核查事实的依据。
+
+`GET /v1/announcements` 为 A 股持仓获取巨潮资讯公开披露公告，并以“正式公告”单独呈现；默认回看 30 天，可用 `days=1..90` 调整。港股不使用该 A 股公告接口，避免错误标注来源。
+
 所有面向用户的 API 时间字段（例如 `retrieved_at`、`published_at`、`created_at`）均使用北京时间 `Asia/Shanghai`，并携带 `+08:00` 时区偏移，例如 `2026-07-27T13:40:00+08:00`。
 
 ## 本地运行
@@ -43,6 +47,8 @@ uvicorn app.main:app --reload
 5. 测试成功后，在“持仓”页添加持仓，在“今日”页刷新公开行情。
 
 模拟器仍使用默认地址 `http://10.0.2.2:8000/`。开发环境允许 HTTP 明文连接；正式部署必须使用 HTTPS 域名，并移除明文流量配置。
+
+Android 工程提交时应保留 `gradlew`、`gradlew.bat`、`gradle/wrapper/gradle-wrapper.jar`、`gradle/wrapper/gradle-wrapper.properties` 和 `gradle.properties`。不要提交 `local.properties`、`.gradle/` 或 `build/`；它们是机器或构建产物相关文件。
 
 ## GitHub Actions
 

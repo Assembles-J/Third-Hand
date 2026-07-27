@@ -42,6 +42,7 @@ data class NewsItemDto(
     val title: String,
     val explanation: String,
     val source_name: String,
+    val source_url: String,
     val published_at: String,
 )
 
@@ -65,6 +66,9 @@ interface ThirdHandApi {
 
     @GET("v1/feed")
     suspend fun feed(@Query("symbols") symbols: List<String>): List<NewsItemDto>
+
+    @GET("v1/announcements")
+    suspend fun announcements(@Query("symbols") symbols: List<String>): List<NewsItemDto>
 }
 
 object ApiClient {

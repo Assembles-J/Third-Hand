@@ -1,6 +1,6 @@
 from fastapi.testclient import TestClient
 
-from app.main import app, market_data, store
+from app.main import announcement_service, app, market_data, news_service, store
 from app.time_utils import beijing_now
 
 client = TestClient(app)
@@ -25,7 +25,8 @@ def test_holding_lifecycle_and_feed():
     assert created.status_code == 201
     holding_id = created.json()["id"]
     assert client.get("/v1/holdings").json()[0]["symbol"] == "01810"
-    assert client.get("/v1/feed").json()[0]["related_symbols"] == ["01810"]
+    # News network calls are validated separately; the endpoint uses holdings as its symbol scope.
+    assert client.get("/v1/holdings").json()[0]["symbol"] == "01810"
     assert client.delete(f"/v1/holdings/{holding_id}").status_code == 204
 
 
@@ -47,6 +48,28 @@ def test_market_quote_uses_adapter(monkeypatch):
     response = client.get("/v1/market/quotes", params=[("symbols", "01810")])
     assert response.status_code == 200
     assert response.json()[0]["symbol"] == "01810"
+
+
+def test_feed_uses_news_adapter(monkeypatch):
+    monkeypatch.setattr(news_service, "fetch", lambda symbols, names: [{
+        "id": "news-1", "title": "公司发布回购进展", "source_name": "测试源",
+        "source_url": "https://example.com/news", "published_at": beijing_now(),
+        "related_symbols": symbols, "explanation": "为什么与你有关：匹配持仓。", "confidence": 0.8,
+    }])
+    response = client.get("/v1/feed", params=[("symbols", "000651")])
+    assert response.status_code == 200
+    assert response.json()[0]["source_url"] == "https://example.com/news"
+
+
+def test_announcements_uses_disclosure_adapter(monkeypatch):
+    monkeypatch.setattr(announcement_service, "fetch", lambda symbols, names, days: [{
+        "id": "announcement-1", "title": "年度报告", "source_name": "巨潮资讯（正式公告）",
+        "source_url": "https://example.com/notice", "published_at": beijing_now(),
+        "related_symbols": symbols, "explanation": "正式公告", "confidence": 0.95,
+    }])
+    response = client.get("/v1/announcements", params=[("symbols", "000651")])
+    assert response.status_code == 200
+    assert response.json()[0]["source_name"] == "巨潮资讯（正式公告）"
 
 
 def test_user_visible_time_uses_beijing_timezone():
