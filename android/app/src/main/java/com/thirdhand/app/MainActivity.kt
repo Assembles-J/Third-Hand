@@ -87,36 +87,63 @@ private fun TodayScreen(modifier: Modifier) {
     val context = LocalContext.current
     val api = ApiClient.service(context)
     var holdings by remember { mutableStateOf<List<HoldingDto>>(emptyList()) }
+    var drafts by remember { mutableStateOf<List<HoldingDraftDto>>(emptyList()) }
     var quotes by remember { mutableStateOf<List<MarketQuoteDto>>(emptyList()) }
     var error by remember { mutableStateOf<String?>(null) }
+    var refreshing by remember { mutableStateOf(false) }
+    var refreshMessage by remember { mutableStateOf<String?>(null) }
     val scope = rememberCoroutineScope()
     fun refresh() = scope.launch {
-        error = null
         try {
-            holdings = api.holdings()
-        } catch (exception: Exception) {
-            error = "无法读取持仓：${exception.message ?: "请确认后端正在运行"}"
-            return@launch
-        }
-        if (holdings.isEmpty()) {
-            quotes = emptyList()
-            return@launch
-        }
-        try {
-            quotes = api.quotes(holdings.map { it.symbol })
-        } catch (exception: Exception) {
-            error = "持仓已加载；行情暂时不可用，请稍后刷新。"
+            refreshing = true
+            error = null
+            refreshMessage = null
+            try {
+                holdings = api.holdings()
+                drafts = api.holdingDrafts()
+            } catch (exception: Exception) {
+                error = "无法读取持仓：${exception.message ?: "请确认后端正在运行"}"
+                return@launch
+            }
+            if (holdings.isEmpty()) {
+                quotes = emptyList()
+                refreshMessage = if (drafts.isNotEmpty()) "待补全记录没有证券代码，暂时无法拉取行情。" else "还没有正式持仓可供查询。"
+                return@launch
+            }
+            try {
+                quotes = api.quotes(holdings.map { it.symbol })
+                refreshMessage = "行情已更新"
+            } catch (exception: Exception) {
+                error = "持仓已加载；行情暂时不可用，请稍后刷新。"
+            }
+        } finally {
+            refreshing = false
         }
     }
     LaunchedEffect(Unit) { refresh() }
     LazyColumn(modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
         item { Text("今日关注", style = MaterialTheme.typography.headlineSmall) }
         item { Text("行情来自公开源快照，显示北京时间与数据来源，不构成投资建议。") }
-        item { Button(onClick = { refresh() }) { Text("刷新行情") } }
+        item { Button(onClick = { refresh() }, enabled = !refreshing) { Text(if (refreshing) "正在刷新…" else "刷新行情") } }
         error?.let { message -> item { Text(message, color = MaterialTheme.colorScheme.error) } }
-        if (holdings.isEmpty()) item { Text("先在“持仓”页手动添加一只股票，例如小米集团-W（01810）。") }
+        refreshMessage?.let { message -> item { Text(message, color = MaterialTheme.colorScheme.primary) } }
+        if (drafts.isNotEmpty()) item {
+            Card(
+                modifier = Modifier.fillMaxWidth(),
+                colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.secondaryContainer),
+            ) {
+                Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                    Text("有 ${drafts.size} 条待补全持仓", style = MaterialTheme.typography.titleMedium)
+                    Text("补充证券代码后，首页会自动显示对应行情。")
+                }
+            }
+        }
+        if (holdings.isEmpty() && drafts.isEmpty()) item { Text("先在“持仓”页手动添加一只股票，例如小米集团-W（01810）。") }
         if (holdings.isNotEmpty() && quotes.isEmpty()) item { Text("已保存 ${holdings.size} 条持仓，行情加载失败不会影响持仓展示。") }
-        items(quotes) { quote -> QuoteCard(quote) }
+        items(quotes) { quote ->
+            val holdingName = holdings.firstOrNull { it.symbol == quote.symbol }?.name
+            QuoteCard(if (holdingName == null) quote else quote.copy(name = holdingName))
+        }
     }
 }
 

@@ -36,9 +36,37 @@ class MarketDataService:
         a_symbols = [symbol for symbol in normalized if not self._is_hk(symbol)]
         quotes: list[dict[str, object]] = []
         if hk_symbols:
-            quotes.extend(self._from_frame(self._frame("hk"), hk_symbols, "HKD", "公开源快照，港股行情存在约 15 分钟延时。"))
+            quotes.extend(self._hk_quotes(hk_symbols))
         if a_symbols:
             quotes.extend(self._from_frame(self._frame("a"), a_symbols, "CNY", "公开源快照，不应用于交易执行。"))
+        return quotes
+
+    @staticmethod
+    def _hk_quotes(symbols: list[str]) -> list[dict[str, object]]:
+        """Fetch only the holdings requested instead of downloading the whole HK market."""
+        try:
+            import akshare as ak
+        except ImportError as error:
+            raise MarketDataUnavailable("未安装 AKShare，请在 backend 虚拟环境运行 pip install -r requirements.txt。", "akshare_not_installed") from error
+
+        quotes: list[dict[str, object]] = []
+        for symbol in symbols:
+            try:
+                data = ak.stock_hk_daily(symbol=symbol)
+                latest = data.iloc[-1]
+                previous = data.iloc[-2] if len(data.index) > 1 else None
+                price = float(latest["close"])
+                previous_close = float(previous["close"]) if previous is not None else None
+                change_percent = None if not previous_close else round((price - previous_close) / previous_close * 100, 2)
+                quotes.append({
+                    "symbol": symbol, "name": symbol, "price": price, "change": None,
+                    "change_percent": change_percent, "open": latest.get("open"), "high": latest.get("high"),
+                    "low": latest.get("low"), "previous_close": previous_close, "volume": latest.get("volume"),
+                    "amount": latest.get("amount"), "currency": "HKD", "source": "新浪财经 / AKShare",
+                    "retrieved_at": beijing_now(), "freshness_note": "最近交易日收盘价，不应用于交易执行。",
+                })
+            except Exception as error:
+                raise MarketDataUnavailable("港股行情源暂时不可用，请稍后刷新。") from error
         return quotes
 
     def lookup_symbols(self, names: list[str]) -> list[dict[str, object]]:
