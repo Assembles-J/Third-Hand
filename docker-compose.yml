@@ -2,6 +2,9 @@ services:
   api:
     build:
       context: ./backend
+      args:
+        PIP_INDEX_URL: "${PIP_INDEX_URL:-https://pypi.tuna.tsinghua.edu.cn/simple}"
+        PIP_TRUSTED_HOST: "${PIP_TRUSTED_HOST:-pypi.tuna.tsinghua.edu.cn}"
     image: third-hand-api:latest
     restart: unless-stopped
     environment:
