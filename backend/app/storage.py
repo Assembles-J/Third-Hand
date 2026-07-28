@@ -80,6 +80,14 @@ class PortfolioStore:
             )
         return item
 
+    def add_drafts(self, drafts: list[dict[str, object]]) -> list[dict[str, object]]:
+        with self._connect() as connection:
+            connection.executemany(
+                "INSERT INTO holding_drafts (id, name, quantity, average_cost, created_at) VALUES (:id, :name, :quantity, :average_cost, :created_at)",
+                drafts,
+            )
+        return drafts
+
     def confirm_draft(self, draft_id: str, holding_id: str, symbol: str, name: str, quantity: float, average_cost: float) -> dict[str, object] | None:
         item = {
             "id": holding_id, "symbol": symbol, "name": name, "quantity": quantity,

@@ -78,6 +78,10 @@ class HoldingDraft(HoldingDraftInput):
     created_at: datetime
 
 
+class HoldingDraftBatchInput(BaseModel):
+    items: list[HoldingDraftInput] = Field(min_length=1, max_length=100)
+
+
 class ImportResult(BaseModel):
     accepted: int
     rejected_rows: list[int]
@@ -206,6 +210,16 @@ def list_holding_drafts() -> list[HoldingDraft]:
 @app.post("/v1/holding-drafts", response_model=HoldingDraft, status_code=status.HTTP_201_CREATED)
 def create_holding_draft(payload: HoldingDraftInput) -> HoldingDraft:
     return HoldingDraft.model_validate(store.add_draft(str(uuid4()), **payload.model_dump()))
+
+
+@app.post("/v1/holding-drafts/batch", response_model=list[HoldingDraft], status_code=status.HTTP_201_CREATED)
+def create_holding_drafts(payload: HoldingDraftBatchInput) -> list[HoldingDraft]:
+    created_at = beijing_now().isoformat()
+    drafts = [
+        {"id": str(uuid4()), **item.model_dump(), "created_at": created_at}
+        for item in payload.items
+    ]
+    return [HoldingDraft.model_validate(item) for item in store.add_drafts(drafts)]
 
 
 @app.post("/v1/holding-drafts/{draft_id}/confirm", response_model=Holding, status_code=status.HTTP_201_CREATED)

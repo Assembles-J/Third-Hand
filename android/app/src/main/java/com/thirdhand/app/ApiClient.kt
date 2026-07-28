@@ -40,6 +40,8 @@ data class HoldingDraftInputDto(
     val average_cost: Double,
 )
 
+data class HoldingDraftBatchInputDto(val items: List<HoldingDraftInputDto>)
+
 data class MarketQuoteDto(
     val symbol: String,
     val name: String,
@@ -93,6 +95,9 @@ interface ThirdHandApi {
 
     @POST("v1/holding-drafts")
     suspend fun addHoldingDraft(@Body draft: HoldingDraftInputDto): HoldingDraftDto
+
+    @POST("v1/holding-drafts/batch")
+    suspend fun addHoldingDrafts(@Body drafts: HoldingDraftBatchInputDto): List<HoldingDraftDto>
 
     @POST("v1/holding-drafts/{id}/confirm")
     suspend fun confirmHoldingDraft(@Path("id") id: String, @Body holding: HoldingInputDto): HoldingDto

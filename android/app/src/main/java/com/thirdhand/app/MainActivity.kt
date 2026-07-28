@@ -223,27 +223,39 @@ private fun HoldingsScreen(modifier: Modifier) {
     }
     if (showAdd) AddHoldingDialog(
         onDismiss = { showAdd = false },
-        onSave = { input -> scope.launch { api.addHolding(input); showAdd = false; refresh() } },
+        onSave = { input -> scope.launch { try {
+            api.addHolding(input); showAdd = false; refresh()
+        } catch (exception: Exception) { error = "保存失败：${exception.message ?: "请稍后重试"}" } } },
     )
     editingDraft?.let { draft -> AddHoldingDialog(
         title = "补全证券代码",
         initial = HoldingInputDto("", draft.name, draft.quantity, draft.average_cost),
         onDismiss = { editingDraft = null },
-        onSave = { input -> scope.launch { api.confirmHoldingDraft(draft.id, input); editingDraft = null; refresh() } },
+        onSave = { input -> scope.launch { try {
+            api.confirmHoldingDraft(draft.id, input); editingDraft = null; refresh()
+        } catch (exception: Exception) { error = "补全代码失败：${exception.message ?: "请稍后重试"}" } } },
     ) }
     if (preview.isNotEmpty()) ScreenshotPreviewDialog(
         items = preview,
         candidatesByName = lookupCandidates,
         lookupLoading = lookupLoading,
         onDismiss = { preview = emptyList(); lookupCandidates = emptyMap(); lookupLoading = false },
-        onSave = { item, candidate -> scope.launch {
+        onSave = { item, candidate -> scope.launch { try {
             api.addHolding(HoldingInputDto(candidate.symbol, candidate.name, item.quantity, item.averageCost))
             refresh()
-        } },
-        onSaveDraft = { item -> scope.launch {
+        } catch (exception: Exception) { scanError = "保存失败：${exception.message ?: "请稍后重试"}" } } },
+        onSaveDraft = { item -> scope.launch { try {
             api.addHoldingDraft(HoldingDraftInputDto(item.name, item.quantity, item.averageCost))
             refresh()
-        } },
+        } catch (exception: Exception) { scanError = "保存待补全记录失败：${exception.message ?: "请稍后重试"}" } } },
+        onSaveAllDrafts = { recognized -> scope.launch { try {
+            api.addHoldingDrafts(HoldingDraftBatchInputDto(recognized.map {
+                HoldingDraftInputDto(it.name, it.quantity, it.averageCost)
+            }))
+            preview = emptyList()
+            lookupCandidates = emptyMap()
+            refresh()
+        } catch (exception: Exception) { scanError = "批量保存失败：${exception.message ?: "请稍后重试"}" } } },
     )
 }
 
@@ -255,6 +267,7 @@ private fun ScreenshotPreviewDialog(
     onDismiss: () -> Unit,
     onSave: (RecognizedHolding, SecurityCandidateDto) -> Unit,
     onSaveDraft: (RecognizedHolding) -> Unit,
+    onSaveAllDrafts: (List<RecognizedHolding>) -> Unit,
 ) = AlertDialog(
     onDismissRequest = onDismiss,
     title = { Text("识别结果（请校对）") },
@@ -272,7 +285,8 @@ private fun ScreenshotPreviewDialog(
             OutlinedButton(onClick = { onSaveDraft(item) }) { Text("先保存，稍后补代码") }
         }
     } },
-    confirmButton = { TextButton(onClick = onDismiss) { Text("我知道了") } },
+    confirmButton = { TextButton(onClick = { onSaveAllDrafts(items) }) { Text("全部保存，稍后补代码") } },
+    dismissButton = { TextButton(onClick = onDismiss) { Text("暂不保存") } },
 )
 
 @Composable
