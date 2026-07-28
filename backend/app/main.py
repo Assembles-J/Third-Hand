@@ -73,6 +73,19 @@ class ImportResult(BaseModel):
     message: str
 
 
+class SecurityCandidate(BaseModel):
+    symbol: str
+    name: str
+    market: str
+    currency: str
+    match_type: str
+
+
+class SymbolLookupResult(BaseModel):
+    query: str
+    matches: list[SecurityCandidate]
+
+
 store = PortfolioStore()
 market_data = MarketDataService()
 news_service = NewsService()
@@ -136,6 +149,15 @@ def market_quotes(symbols: Annotated[list[str], Query()]) -> list[dict[str, obje
     """Return cached public-source snapshots for A shares and Hong Kong listings."""
     try:
         return market_data.quotes(symbols)
+    except MarketDataUnavailable as error:
+        raise HTTPException(status_code=503, detail={"message": str(error), "code": error.code}) from error
+
+
+@app.get("/v1/market/symbols", response_model=list[SymbolLookupResult])
+def market_symbol_lookup(names: Annotated[list[str], Query()]) -> list[SymbolLookupResult]:
+    """Return name-matched listings for OCR review; this endpoint never creates holdings."""
+    try:
+        return [SymbolLookupResult.model_validate(item) for item in market_data.lookup_symbols(names)]
     except MarketDataUnavailable as error:
         raise HTTPException(status_code=503, detail={"message": str(error), "code": error.code}) from error
 

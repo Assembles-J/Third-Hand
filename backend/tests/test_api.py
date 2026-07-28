@@ -43,6 +43,16 @@ def test_import_rejects_unknown_header():
     assert response.status_code == 422
 
 
+def test_symbol_lookup_returns_candidates(monkeypatch):
+    monkeypatch.setattr(market_data, "lookup_symbols", lambda names: [{
+        "query": names[0],
+        "matches": [{"symbol": "01810", "name": "小米集团-W", "market": "HK", "currency": "HKD", "match_type": "exact"}],
+    }])
+    response = client.get("/v1/market/symbols", params=[("names", "小米集团-W")])
+    assert response.status_code == 200
+    assert response.json()[0]["matches"][0]["symbol"] == "01810"
+
+
 def test_market_quote_uses_adapter(monkeypatch):
     monkeypatch.setattr(market_data, "quotes", lambda symbols: [{"symbol": "01810", "price": 45.5, "currency": "HKD"}])
     response = client.get("/v1/market/quotes", params=[("symbols", "01810")])

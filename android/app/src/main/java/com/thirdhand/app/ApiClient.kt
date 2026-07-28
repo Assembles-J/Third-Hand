@@ -37,6 +37,19 @@ data class MarketQuoteDto(
     val freshness_note: String,
 )
 
+data class SecurityCandidateDto(
+    val symbol: String,
+    val name: String,
+    val market: String,
+    val currency: String,
+    val match_type: String,
+)
+
+data class SymbolLookupResultDto(
+    val query: String,
+    val matches: List<SecurityCandidateDto>,
+)
+
 data class NewsItemDto(
     val id: String,
     val title: String,
@@ -63,6 +76,9 @@ interface ThirdHandApi {
 
     @GET("v1/market/quotes")
     suspend fun quotes(@Query("symbols") symbols: List<String>): List<MarketQuoteDto>
+
+    @GET("v1/market/symbols")
+    suspend fun symbolLookup(@Query("names") names: List<String>): List<SymbolLookupResultDto>
 
     @GET("v1/feed")
     suspend fun feed(@Query("symbols") symbols: List<String>): List<NewsItemDto>

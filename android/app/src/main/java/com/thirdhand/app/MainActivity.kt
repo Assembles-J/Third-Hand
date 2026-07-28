@@ -127,6 +127,7 @@ private fun HoldingsScreen(modifier: Modifier) {
     var error by remember { mutableStateOf<String?>(null) }
     var showAdd by remember { mutableStateOf(false) }
     var preview by remember { mutableStateOf<List<RecognizedHolding>>(emptyList()) }
+    var lookupCandidates by remember { mutableStateOf<Map<String, List<SecurityCandidateDto>>>(emptyMap()) }
     var scanError by remember { mutableStateOf<String?>(null) }
     val scope = rememberCoroutineScope()
     val imagePicker = rememberLauncherForActivityResult(ActivityResultContracts.GetContent()) { imageUri ->
@@ -135,6 +136,7 @@ private fun HoldingsScreen(modifier: Modifier) {
                 scanError = null
                 preview = ScreenshotOcr.scan(context, imageUri)
                 if (preview.isEmpty()) scanError = "未能识别出完整持仓行，请使用清晰、完整的持仓列表截图。"
+                else lookupCandidates = api.symbolLookup(preview.map { it.name }).associate { it.query to it.matches }
             } catch (exception: Exception) {
                 scanError = "截图识别失败：${exception.message ?: "请重试"}"
             }
@@ -167,16 +169,38 @@ private fun HoldingsScreen(modifier: Modifier) {
         onDismiss = { showAdd = false },
         onSave = { input -> scope.launch { api.addHolding(input); showAdd = false; refresh() } },
     )
-    if (preview.isNotEmpty()) ScreenshotPreviewDialog(preview, onDismiss = { preview = emptyList() })
+    if (preview.isNotEmpty()) ScreenshotPreviewDialog(
+        items = preview,
+        candidatesByName = lookupCandidates,
+        onDismiss = { preview = emptyList(); lookupCandidates = emptyMap() },
+        onSave = { item, candidate -> scope.launch {
+            api.addHolding(HoldingInputDto(candidate.symbol, candidate.name, item.quantity, item.averageCost))
+            refresh()
+        } },
+    )
 }
 
 @Composable
-private fun ScreenshotPreviewDialog(items: List<RecognizedHolding>, onDismiss: () -> Unit) = AlertDialog(
+private fun ScreenshotPreviewDialog(
+    items: List<RecognizedHolding>,
+    candidatesByName: Map<String, List<SecurityCandidateDto>>,
+    onDismiss: () -> Unit,
+    onSave: (RecognizedHolding, SecurityCandidateDto) -> Unit,
+) = AlertDialog(
     onDismissRequest = onDismiss,
     title = { Text("识别结果（请校对）") },
     text = { Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
-        Text("截图未包含证券代码，结果不会自动入库。请逐项核对名称、数量和成本，再用“手动添加”补全代码。")
-        items.forEach { item -> Text("${item.name}：${item.quantity} 股/份，成本 ${item.averageCost}") }
+        Text("已按名称反查候选证券。请逐项确认后入库；同名或模糊匹配不会自动保存。")
+        items.forEach { item ->
+            Text("${item.name}：${item.quantity} 股/份，成本 ${item.averageCost}")
+            val candidates = candidatesByName[item.name].orEmpty()
+            if (candidates.isEmpty()) Text("未找到候选代码，请手动添加。")
+            candidates.forEach { candidate ->
+                TextButton(onClick = { onSave(item, candidate) }) {
+                    Text("确认 ${candidate.name}（${candidate.symbol} · ${candidate.market}）")
+                }
+            }
+        }
     } },
     confirmButton = { TextButton(onClick = onDismiss) { Text("我知道了") } },
 )

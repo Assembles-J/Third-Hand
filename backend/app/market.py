@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import time
+import re
 from datetime import datetime
 from threading import Lock
 
@@ -36,6 +37,17 @@ class MarketDataService:
         if a_symbols:
             quotes.extend(self._from_frame(self._frame("a"), a_symbols, "CNY", "公开源快照，不应用于交易执行。"))
         return quotes
+
+    def lookup_symbols(self, names: list[str]) -> list[dict[str, object]]:
+        """Find A-share and Hong Kong listings by a user-provided security name."""
+        requested = list(dict.fromkeys(name.strip() for name in names if name.strip()))
+        if not requested:
+            return []
+        matches = {name: [] for name in requested}
+        for market, currency in (("a", "CNY"), ("hk", "HKD")):
+            for record in self._lookup_from_frame(self._frame(market), requested, market, currency):
+                matches[record.pop("query")].append(record)
+        return [{"query": name, "matches": matches[name]} for name in requested]
 
     @staticmethod
     def _is_hk(symbol: str) -> bool:
@@ -89,3 +101,43 @@ class MarketDataService:
             "volume": record.get("成交量"), "amount": record.get("成交额"), "currency": currency,
             "source": source, "retrieved_at": retrieved_at, "freshness_note": freshness_note,
         } for record in records]
+
+    @staticmethod
+    def _lookup_from_frame(frame_and_time, names: list[str], market: str, currency: str) -> list[dict[str, str]]:
+        frame, _, _ = frame_and_time
+        try:
+            data = frame.copy()
+            code_column = "代码"
+            name_column = "名称" if "名称" in data.columns else "中文名称"
+            width = 5 if market == "hk" else 6
+            data[code_column] = data[code_column].astype(str).str.zfill(width)
+        except (AttributeError, KeyError) as error:
+            raise MarketDataUnavailable("行情源字段已变更，等待适配更新。") from error
+
+        results: list[dict[str, str]] = []
+        for query in names:
+            normalized_query = MarketDataService._normalize_name(query)
+            if not normalized_query:
+                continue
+            exact = data[data[name_column].astype(str).map(MarketDataService._normalize_name) == normalized_query]
+            candidates = exact
+            match_type = "exact"
+            if candidates.empty:
+                candidates = data[data[name_column].astype(str).map(
+                    lambda value: normalized_query in MarketDataService._normalize_name(value)
+                )]
+                match_type = "partial"
+            for _, row in candidates.head(10).iterrows():
+                results.append({
+                    "query": query,
+                    "symbol": str(row[code_column]),
+                    "name": str(row[name_column]),
+                    "market": "HK" if market == "hk" else "CN",
+                    "currency": currency,
+                    "match_type": match_type,
+                })
+        return results
+
+    @staticmethod
+    def _normalize_name(value: object) -> str:
+        return re.sub(r"[\s\-_.·・()（）]", "", str(value)).upper()
