@@ -36,6 +36,15 @@ class PortfolioStore:
                         created_at TEXT NOT NULL
                     )
                 """)
+                connection.execute("""
+                    CREATE TABLE IF NOT EXISTS holding_drafts (
+                        id TEXT PRIMARY KEY,
+                        name TEXT NOT NULL,
+                        quantity REAL NOT NULL CHECK (quantity > 0),
+                        average_cost REAL NOT NULL CHECK (average_cost >= 0),
+                        created_at TEXT NOT NULL
+                    )
+                """)
 
     def list(self) -> list[dict[str, object]]:
         with self._connect() as connection:
@@ -54,11 +63,50 @@ class PortfolioStore:
             )
         return item
 
+    def list_drafts(self) -> list[dict[str, object]]:
+        with self._connect() as connection:
+            rows = connection.execute("SELECT * FROM holding_drafts ORDER BY created_at DESC").fetchall()
+        return [dict(row) for row in rows]
+
+    def add_draft(self, draft_id: str, name: str, quantity: float, average_cost: float) -> dict[str, object]:
+        item = {
+            "id": draft_id, "name": name, "quantity": quantity,
+            "average_cost": average_cost, "created_at": beijing_now().isoformat(),
+        }
+        with self._connect() as connection:
+            connection.execute(
+                "INSERT INTO holding_drafts (id, name, quantity, average_cost, created_at) VALUES (:id, :name, :quantity, :average_cost, :created_at)",
+                item,
+            )
+        return item
+
+    def confirm_draft(self, draft_id: str, holding_id: str, symbol: str, name: str, quantity: float, average_cost: float) -> dict[str, object] | None:
+        item = {
+            "id": holding_id, "symbol": symbol, "name": name, "quantity": quantity,
+            "average_cost": average_cost, "created_at": beijing_now().isoformat(),
+        }
+        with self._connect() as connection:
+            draft = connection.execute("SELECT id FROM holding_drafts WHERE id = ?", (draft_id,)).fetchone()
+            if not draft:
+                return None
+            connection.execute(
+                "INSERT INTO holdings (id, symbol, name, quantity, average_cost, created_at) VALUES (:id, :symbol, :name, :quantity, :average_cost, :created_at)",
+                item,
+            )
+            connection.execute("DELETE FROM holding_drafts WHERE id = ?", (draft_id,))
+        return item
+
     def delete(self, holding_id: str) -> bool:
         with self._connect() as connection:
             result = connection.execute("DELETE FROM holdings WHERE id = ?", (holding_id,))
         return result.rowcount > 0
 
+    def delete_draft(self, draft_id: str) -> bool:
+        with self._connect() as connection:
+            result = connection.execute("DELETE FROM holding_drafts WHERE id = ?", (draft_id,))
+        return result.rowcount > 0
+
     def clear_for_test(self) -> None:
         with self._connect() as connection:
             connection.execute("DELETE FROM holdings")
+            connection.execute("DELETE FROM holding_drafts")
