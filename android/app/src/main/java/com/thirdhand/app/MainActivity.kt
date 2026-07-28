@@ -16,6 +16,7 @@ import androidx.compose.foundation.clickable
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.Card
+import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.NavigationBar
@@ -93,9 +94,18 @@ private fun TodayScreen(modifier: Modifier) {
         error = null
         try {
             holdings = api.holdings()
-            quotes = if (holdings.isEmpty()) emptyList() else api.quotes(holdings.map { it.symbol })
         } catch (exception: Exception) {
-            error = "无法连接数据服务：${exception.message ?: "请确认后端正在运行"}"
+            error = "无法读取持仓：${exception.message ?: "请确认后端正在运行"}"
+            return@launch
+        }
+        if (holdings.isEmpty()) {
+            quotes = emptyList()
+            return@launch
+        }
+        try {
+            quotes = api.quotes(holdings.map { it.symbol })
+        } catch (exception: Exception) {
+            error = "持仓已加载；行情暂时不可用，请稍后刷新。"
         }
     }
     LaunchedEffect(Unit) { refresh() }
@@ -105,6 +115,7 @@ private fun TodayScreen(modifier: Modifier) {
         item { Button(onClick = { refresh() }) { Text("刷新行情") } }
         error?.let { message -> item { Text(message, color = MaterialTheme.colorScheme.error) } }
         if (holdings.isEmpty()) item { Text("先在“持仓”页手动添加一只股票，例如小米集团-W（01810）。") }
+        if (holdings.isNotEmpty() && quotes.isEmpty()) item { Text("已保存 ${holdings.size} 条持仓，行情加载失败不会影响持仓展示。") }
         items(quotes) { quote -> QuoteCard(quote) }
     }
 }
@@ -124,10 +135,13 @@ private fun HoldingsScreen(modifier: Modifier) {
     val context = LocalContext.current
     val api = ApiClient.service(context)
     var holdings by remember { mutableStateOf<List<HoldingDto>>(emptyList()) }
+    var drafts by remember { mutableStateOf<List<HoldingDraftDto>>(emptyList()) }
     var error by remember { mutableStateOf<String?>(null) }
     var showAdd by remember { mutableStateOf(false) }
+    var editingDraft by remember { mutableStateOf<HoldingDraftDto?>(null) }
     var preview by remember { mutableStateOf<List<RecognizedHolding>>(emptyList()) }
     var lookupCandidates by remember { mutableStateOf<Map<String, List<SecurityCandidateDto>>>(emptyMap()) }
+    var lookupLoading by remember { mutableStateOf(false) }
     var scanError by remember { mutableStateOf<String?>(null) }
     val scope = rememberCoroutineScope()
     val imagePicker = rememberLauncherForActivityResult(ActivityResultContracts.GetContent()) { imageUri ->
@@ -136,30 +150,72 @@ private fun HoldingsScreen(modifier: Modifier) {
                 scanError = null
                 preview = ScreenshotOcr.scan(context, imageUri)
                 if (preview.isEmpty()) scanError = "未能识别出完整持仓行，请使用清晰、完整的持仓列表截图。"
-                else lookupCandidates = api.symbolLookup(preview.map { it.name }).associate { it.query to it.matches }
+                else {
+                    lookupCandidates = emptyMap()
+                    lookupLoading = true
+                    try {
+                        lookupCandidates = api.symbolLookup(preview.map { it.name }).associate { it.query to it.matches }
+                    } catch (exception: Exception) {
+                        scanError = "截图已识别，但证券代码反查暂时不可用；你仍可手动添加。"
+                    } finally {
+                        lookupLoading = false
+                    }
+                }
             } catch (exception: Exception) {
                 scanError = "截图识别失败：${exception.message ?: "请重试"}"
             }
         }
     }
     fun refresh() = scope.launch {
-        try { holdings = api.holdings(); error = null }
+        try {
+            holdings = api.holdings()
+            drafts = api.holdingDrafts()
+            error = null
+        }
         catch (exception: Exception) { error = "读取持仓失败：${exception.message ?: "请确认后端正在运行"}" }
     }
     LaunchedEffect(Unit) { refresh() }
     LazyColumn(modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
-        item { Text("持仓", style = MaterialTheme.typography.headlineSmall) }
-        item { Text("仅录入你主动提供的信息；不会索取交易密码、验证码或券商 Cookie。") }
+        item { Text("我的持仓", style = MaterialTheme.typography.headlineSmall) }
+        item { Text("识别结果可先保存，稍后补充证券代码再确认入库。") }
+        item {
+            Card(
+                modifier = Modifier.fillMaxWidth(),
+                colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.primaryContainer),
+            ) {
+                Row(Modifier.padding(16.dp), horizontalArrangement = Arrangement.SpaceBetween) {
+                    Column { Text("已入库", style = MaterialTheme.typography.labelLarge); Text("${holdings.size} 条", style = MaterialTheme.typography.headlineSmall) }
+                    Column { Text("待补全", style = MaterialTheme.typography.labelLarge); Text("${drafts.size} 条", style = MaterialTheme.typography.headlineSmall) }
+                }
+            }
+        }
         item { Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) { Button(onClick = { showAdd = true }) { Text("手动添加") }; OutlinedButton(onClick = { imagePicker.launch("image/*") }) { Text("识别截图") }; OutlinedButton(onClick = { refresh() }) { Text("刷新") } } }
         error?.let { message -> item { Text(message, color = MaterialTheme.colorScheme.error) } }
         scanError?.let { message -> item { Text(message, color = MaterialTheme.colorScheme.error) } }
-        items(holdings, key = { it.id }) { holding ->
-            Card(Modifier.fillMaxWidth()) {
-                Row(Modifier.padding(16.dp), horizontalArrangement = Arrangement.SpaceBetween) {
-                    Column(Modifier.fillMaxWidth()) {
-                        Text("${holding.name} · ${holding.symbol}", style = MaterialTheme.typography.titleMedium)
-                        Text("数量：${holding.quantity}　成本：${holding.average_cost}")
+        if (drafts.isNotEmpty()) item { Text("待补全代码", style = MaterialTheme.typography.titleMedium) }
+        items(drafts, key = { it.id }) { draft ->
+            Card(
+                modifier = Modifier.fillMaxWidth(),
+                colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.secondaryContainer),
+            ) {
+                Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                    Text(draft.name, style = MaterialTheme.typography.titleMedium)
+                    Text("待补充证券代码 · 数量 ${draft.quantity} · 成本 ${draft.average_cost}")
+                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        Button(onClick = { editingDraft = draft }) { Text("补全代码") }
+                        TextButton(onClick = { scope.launch { api.deleteHoldingDraft(draft.id); refresh() } }) { Text("删除") }
                     }
+                }
+            }
+        }
+        if (holdings.isNotEmpty()) item { Text("已入库持仓", style = MaterialTheme.typography.titleMedium) }
+        items(holdings, key = { it.id }) { holding ->
+            Card(Modifier.fillMaxWidth(), colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant)) {
+                Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        Text("${holding.name} · ${holding.symbol}", style = MaterialTheme.typography.titleMedium)
+                    }
+                    Text("数量 ${holding.quantity}　·　平均成本 ${holding.average_cost}")
                     TextButton(onClick = { scope.launch { api.deleteHolding(holding.id); refresh() } }) { Text("删除") }
                 }
             }
@@ -169,12 +225,23 @@ private fun HoldingsScreen(modifier: Modifier) {
         onDismiss = { showAdd = false },
         onSave = { input -> scope.launch { api.addHolding(input); showAdd = false; refresh() } },
     )
+    editingDraft?.let { draft -> AddHoldingDialog(
+        title = "补全证券代码",
+        initial = HoldingInputDto("", draft.name, draft.quantity, draft.average_cost),
+        onDismiss = { editingDraft = null },
+        onSave = { input -> scope.launch { api.confirmHoldingDraft(draft.id, input); editingDraft = null; refresh() } },
+    ) }
     if (preview.isNotEmpty()) ScreenshotPreviewDialog(
         items = preview,
         candidatesByName = lookupCandidates,
-        onDismiss = { preview = emptyList(); lookupCandidates = emptyMap() },
+        lookupLoading = lookupLoading,
+        onDismiss = { preview = emptyList(); lookupCandidates = emptyMap(); lookupLoading = false },
         onSave = { item, candidate -> scope.launch {
             api.addHolding(HoldingInputDto(candidate.symbol, candidate.name, item.quantity, item.averageCost))
+            refresh()
+        } },
+        onSaveDraft = { item -> scope.launch {
+            api.addHoldingDraft(HoldingDraftInputDto(item.name, item.quantity, item.averageCost))
             refresh()
         } },
     )
@@ -184,8 +251,10 @@ private fun HoldingsScreen(modifier: Modifier) {
 private fun ScreenshotPreviewDialog(
     items: List<RecognizedHolding>,
     candidatesByName: Map<String, List<SecurityCandidateDto>>,
+    lookupLoading: Boolean,
     onDismiss: () -> Unit,
     onSave: (RecognizedHolding, SecurityCandidateDto) -> Unit,
+    onSaveDraft: (RecognizedHolding) -> Unit,
 ) = AlertDialog(
     onDismissRequest = onDismiss,
     title = { Text("识别结果（请校对）") },
@@ -194,26 +263,32 @@ private fun ScreenshotPreviewDialog(
         items.forEach { item ->
             Text("${item.name}：${item.quantity} 股/份，成本 ${item.averageCost}")
             val candidates = candidatesByName[item.name].orEmpty()
-            if (candidates.isEmpty()) Text("未找到候选代码，请手动添加。")
+            if (candidates.isEmpty()) Text(if (lookupLoading) "正在反查证券代码…" else "未找到候选代码，请手动添加。")
             candidates.forEach { candidate ->
                 TextButton(onClick = { onSave(item, candidate) }) {
                     Text("确认 ${candidate.name}（${candidate.symbol} · ${candidate.market}）")
                 }
             }
+            OutlinedButton(onClick = { onSaveDraft(item) }) { Text("先保存，稍后补代码") }
         }
     } },
     confirmButton = { TextButton(onClick = onDismiss) { Text("我知道了") } },
 )
 
 @Composable
-private fun AddHoldingDialog(onDismiss: () -> Unit, onSave: (HoldingInputDto) -> Unit) {
-    var symbol by remember { mutableStateOf("") }
-    var name by remember { mutableStateOf("") }
-    var quantity by remember { mutableStateOf("") }
-    var cost by remember { mutableStateOf("") }
+private fun AddHoldingDialog(
+    onDismiss: () -> Unit,
+    onSave: (HoldingInputDto) -> Unit,
+    title: String = "添加持仓",
+    initial: HoldingInputDto? = null,
+) {
+    var symbol by remember { mutableStateOf(initial?.symbol.orEmpty()) }
+    var name by remember { mutableStateOf(initial?.name.orEmpty()) }
+    var quantity by remember { mutableStateOf(initial?.quantity?.toString().orEmpty()) }
+    var cost by remember { mutableStateOf(initial?.average_cost?.toString().orEmpty()) }
     AlertDialog(
         onDismissRequest = onDismiss,
-        title = { Text("添加持仓") },
+        title = { Text(title) },
         text = { Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
             OutlinedTextField(symbol, { symbol = it }, label = { Text("代码，例如 01810") })
             OutlinedTextField(name, { name = it }, label = { Text("名称") })

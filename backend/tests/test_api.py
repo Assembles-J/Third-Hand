@@ -30,6 +30,19 @@ def test_holding_lifecycle_and_feed():
     assert client.delete(f"/v1/holdings/{holding_id}").status_code == 204
 
 
+def test_holding_draft_can_be_confirmed_later():
+    draft = client.post("/v1/holding-drafts", json={"name": "小米集团", "quantity": 100, "average_cost": 45.5})
+    assert draft.status_code == 201
+    draft_id = draft.json()["id"]
+    assert client.get("/v1/holding-drafts").json()[0]["name"] == "小米集团"
+    confirmed = client.post(f"/v1/holding-drafts/{draft_id}/confirm", json={
+        "symbol": "01810", "name": "小米集团-W", "quantity": 100, "average_cost": 45.5,
+    })
+    assert confirmed.status_code == 201
+    assert client.get("/v1/holding-drafts").json() == []
+    assert client.get("/v1/holdings").json()[0]["symbol"] == "01810"
+
+
 def test_import_accepts_valid_rows_and_rejects_invalid_rows():
     content = "symbol,name,quantity,average_cost\n600519,贵州茅台,10,1450\nbad,错误,0,4"
     response = client.post("/v1/holdings/import", params={"csv_content": content})

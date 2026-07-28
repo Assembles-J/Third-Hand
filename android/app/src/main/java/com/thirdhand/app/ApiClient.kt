@@ -26,6 +26,20 @@ data class HoldingInputDto(
     val average_cost: Double,
 )
 
+data class HoldingDraftDto(
+    val id: String,
+    val name: String,
+    val quantity: Double,
+    val average_cost: Double,
+    val created_at: String,
+)
+
+data class HoldingDraftInputDto(
+    val name: String,
+    val quantity: Double,
+    val average_cost: Double,
+)
+
 data class MarketQuoteDto(
     val symbol: String,
     val name: String,
@@ -73,6 +87,18 @@ interface ThirdHandApi {
 
     @DELETE("v1/holdings/{id}")
     suspend fun deleteHolding(@Path("id") id: String)
+
+    @GET("v1/holding-drafts")
+    suspend fun holdingDrafts(): List<HoldingDraftDto>
+
+    @POST("v1/holding-drafts")
+    suspend fun addHoldingDraft(@Body draft: HoldingDraftInputDto): HoldingDraftDto
+
+    @POST("v1/holding-drafts/{id}/confirm")
+    suspend fun confirmHoldingDraft(@Path("id") id: String, @Body holding: HoldingInputDto): HoldingDto
+
+    @DELETE("v1/holding-drafts/{id}")
+    suspend fun deleteHoldingDraft(@Path("id") id: String)
 
     @GET("v1/market/quotes")
     suspend fun quotes(@Query("symbols") symbols: List<String>): List<MarketQuoteDto>

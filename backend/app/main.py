@@ -67,6 +67,17 @@ class Holding(HoldingInput):
     created_at: datetime
 
 
+class HoldingDraftInput(BaseModel):
+    name: str = Field(min_length=1, max_length=100)
+    quantity: float = Field(gt=0)
+    average_cost: float = Field(ge=0)
+
+
+class HoldingDraft(HoldingDraftInput):
+    id: str
+    created_at: datetime
+
+
 class ImportResult(BaseModel):
     accepted: int
     rejected_rows: list[int]
@@ -184,6 +195,31 @@ def create_holding(payload: HoldingInput) -> Holding:
 def delete_holding(holding_id: str) -> Response:
     if not store.delete(holding_id):
         raise HTTPException(status_code=404, detail="未找到持仓")
+    return Response(status_code=status.HTTP_204_NO_CONTENT)
+
+
+@app.get("/v1/holding-drafts", response_model=list[HoldingDraft])
+def list_holding_drafts() -> list[HoldingDraft]:
+    return [HoldingDraft.model_validate(item) for item in store.list_drafts()]
+
+
+@app.post("/v1/holding-drafts", response_model=HoldingDraft, status_code=status.HTTP_201_CREATED)
+def create_holding_draft(payload: HoldingDraftInput) -> HoldingDraft:
+    return HoldingDraft.model_validate(store.add_draft(str(uuid4()), **payload.model_dump()))
+
+
+@app.post("/v1/holding-drafts/{draft_id}/confirm", response_model=Holding, status_code=status.HTTP_201_CREATED)
+def confirm_holding_draft(draft_id: str, payload: HoldingInput) -> Holding:
+    confirmed = store.confirm_draft(draft_id, str(uuid4()), **payload.model_dump())
+    if not confirmed:
+        raise HTTPException(status_code=404, detail="未找到待补全持仓")
+    return Holding.model_validate(confirmed)
+
+
+@app.delete("/v1/holding-drafts/{draft_id}", status_code=status.HTTP_204_NO_CONTENT)
+def delete_holding_draft(draft_id: str) -> Response:
+    if not store.delete_draft(draft_id):
+        raise HTTPException(status_code=404, detail="未找到待补全持仓")
     return Response(status_code=status.HTTP_204_NO_CONTENT)
 
 

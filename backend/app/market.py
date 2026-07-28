@@ -20,9 +20,12 @@ class MarketDataUnavailable(RuntimeError):
 class MarketDataService:
     # A cache protects public endpoints from a request per app screen refresh.
     CACHE_SECONDS = 60
+    HK_CACHE_SECONDS = 300
+    DIRECTORY_CACHE_SECONDS = 6 * 60 * 60
 
     def __init__(self) -> None:
         self._cache: dict[str, tuple[float, object, datetime, str]] = {}
+        self._directory_cache: dict[str, tuple[float, object, datetime, str]] = {}
         self._lock = Lock()
 
     def quotes(self, symbols: list[str]) -> list[dict[str, object]]:
@@ -45,7 +48,7 @@ class MarketDataService:
             return []
         matches = {name: [] for name in requested}
         for market, currency in (("a", "CNY"), ("hk", "HKD")):
-            for record in self._lookup_from_frame(self._frame(market), requested, market, currency):
+            for record in self._lookup_from_frame(self._directory_frame(market), requested, market, currency):
                 matches[record.pop("query")].append(record)
         return [{"query": name, "matches": matches[name]} for name in requested]
 
@@ -57,7 +60,8 @@ class MarketDataService:
     def _frame(self, market: str):
         with self._lock:
             cached = self._cache.get(market)
-            if cached and time.monotonic() - cached[0] < self.CACHE_SECONDS:
+            cache_seconds = self.HK_CACHE_SECONDS if market == "hk" else self.CACHE_SECONDS
+            if cached and time.monotonic() - cached[0] < cache_seconds:
                 return cached[1], cached[2], cached[3]
         try:
             import akshare as ak
@@ -83,6 +87,17 @@ class MarketDataService:
         retrieved_at = beijing_now()
         with self._lock:
             self._cache[market] = (time.monotonic(), frame, retrieved_at, source)
+        return frame, retrieved_at, source
+
+    def _directory_frame(self, market: str):
+        """Return a long-lived listing directory; names and codes change far less often than prices."""
+        with self._lock:
+            cached = self._directory_cache.get(market)
+            if cached and time.monotonic() - cached[0] < self.DIRECTORY_CACHE_SECONDS:
+                return cached[1], cached[2], cached[3]
+        frame, retrieved_at, source = self._frame(market)
+        with self._lock:
+            self._directory_cache[market] = (time.monotonic(), frame, retrieved_at, source)
         return frame, retrieved_at, source
 
     @staticmethod
