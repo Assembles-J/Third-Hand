@@ -56,8 +56,10 @@ class AnnouncementService:
                         "explanation": self._explanation(symbol, names_by_symbol.get(symbol, symbol), title),
                         "confidence": 0.95,
                     })
+            # A single code may be unsupported or temporarily unavailable.  An
+            # empty result is safer than failing the whole portfolio feed.
             if not successful_requests:
-                raise AnnouncementDataUnavailable("公开公告源暂时不可用，请稍后刷新。")
+                return []
         except ImportError as error:
             raise AnnouncementDataUnavailable("未安装 AKShare，无法获取公告。") from error
         result = sorted({str(item["source_url"]): item for item in records}.values(), key=lambda item: item["published_at"], reverse=True)
