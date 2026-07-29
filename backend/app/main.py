@@ -8,6 +8,7 @@ from __future__ import annotations
 import csv
 import io
 from datetime import datetime
+from threading import Thread
 from typing import Annotated
 from uuid import uuid4
 
@@ -21,6 +22,8 @@ from app.announcements import AnnouncementDataUnavailable, AnnouncementService
 from app.storage import PortfolioStore
 from app.time_utils import beijing_now
 from app.risk import RiskDataUnavailable, RiskService
+from app.ai_analysis import AiAnalysisService
+from app.portfolio_analysis import assess_holdings
 
 app = FastAPI(title="Third-Hand API", version="0.2.0")
 app.add_middleware(
@@ -48,6 +51,7 @@ class NewsItem(BaseModel):
     related_symbols: list[str]
     explanation: str
     confidence: float = Field(ge=0, le=1)
+    ai_analysis: dict[str, object] | None = None
     disclaimer: str = DISCLAIMER
 
 
@@ -77,6 +81,9 @@ class HoldingDraftInput(BaseModel):
 class HoldingDraft(HoldingDraftInput):
     id: str
     created_at: datetime
+    lookup_status: str = "pending"
+    lookup_message: str = "等待后台查询证券代码"
+    lookup_updated_at: datetime | None = None
 
 
 class HoldingDraftBatchInput(BaseModel):
@@ -138,12 +145,30 @@ class RiskAssessment(BaseModel):
     explanation: str
     disclaimer: str = "基于历史价格的风险统计，不构成对未来价格的预测或任何投资建议。"
 
+class PortfolioAnalysisItem(BaseModel):
+    symbol: str; name: str; action: str; reason: str; evidence: list[str]; disclaimer: str
+class PortfolioAnalysis(BaseModel):
+    items: list[PortfolioAnalysisItem]
+class LearningCaseInput(BaseModel):
+    symbol: str | None = Field(default=None, max_length=16)
+    title: str = Field(min_length=3, max_length=120)
+    context: str = Field(min_length=10, max_length=4000)
+    lesson: str = Field(min_length=5, max_length=2000)
+    outcome: str = Field(min_length=2, max_length=500)
+    position_band: str = Field(min_length=3, max_length=100)
+    planned_action: str = Field(min_length=3, max_length=500)
+    confidence: float = Field(ge=0, le=1)
+    evidence_links: list[str] = Field(default_factory=list, max_length=8)
+class LearningCase(LearningCaseInput):
+    id: str; created_at: datetime
+
 
 store = PortfolioStore()
 market_data = MarketDataService()
 news_service = NewsService()
 announcement_service = AnnouncementService()
 risk_service = RiskService()
+ai_analysis_service = AiAnalysisService(store)
 
 GLOSSARY = {
     "pe": GlossaryCard(term="PE（市盈率）", plain_explanation="股价相对于每股盈利的倍数。它不是越低越好，要结合行业和盈利质量判断。", watch_for="亏损或一次性收益会使 PE 失真。"),
@@ -177,7 +202,9 @@ def feed(symbols: Annotated[list[str], Query()] = []) -> list[NewsItem]:
         return seed_news([])
     names_by_symbol = {str(holding["symbol"]): str(holding["name"]) for holding in holdings}
     try:
-        return [NewsItem.model_validate(item) for item in news_service.fetch(requested, names_by_symbol)]
+        items = [ai_analysis_service.enrich(item) for item in news_service.fetch(requested, names_by_symbol)]
+        store.save_content(items)
+        return [NewsItem.model_validate(item) for item in items]
     except NewsDataUnavailable as error:
         raise HTTPException(status_code=503, detail=str(error)) from error
 
@@ -193,7 +220,9 @@ def announcements(
         requested = [str(holding["symbol"]) for holding in holdings]
     names_by_symbol = {str(holding["symbol"]): str(holding["name"]) for holding in holdings}
     try:
-        return [NewsItem.model_validate(item) for item in announcement_service.fetch(requested, names_by_symbol, days)]
+        items = [ai_analysis_service.enrich(item) for item in announcement_service.fetch(requested, names_by_symbol, days)]
+        store.save_content(items)
+        return [NewsItem.model_validate(item) for item in items]
     except AnnouncementDataUnavailable as error:
         raise HTTPException(status_code=503, detail=str(error)) from error
 
@@ -203,6 +232,44 @@ def refresh_quote_cache(symbols: list[str]) -> None:
         store.save_quotes(market_data.quotes(symbols))
     except MarketDataUnavailable:
         pass
+
+
+def resolve_holding_drafts(draft_ids: list[str]) -> None:
+    """Resolve draft names outside the request path and persist every lookup outcome."""
+    store.mark_drafts_querying(draft_ids)
+    drafts = store.drafts_by_ids(draft_ids)
+    if not drafts:
+        return
+    try:
+        results = market_data.lookup_symbols([str(draft["name"]) for draft in drafts])
+        store.save_symbol_lookups(results)
+    except Exception as error:
+        for draft in drafts:
+            store.set_draft_lookup_status(str(draft["id"]), "failed", f"查询失败：{error}")
+        return
+
+    matches_by_name = {str(result["query"]): list(result.get("matches", [])) for result in results}
+    for draft in drafts:
+        candidates = matches_by_name.get(str(draft["name"]), [])
+        exact = [candidate for candidate in candidates if str(candidate.get("match_type", "")) == "exact"]
+        if len(exact) == 1:
+            candidate = exact[0]
+            store.confirm_draft(
+                str(draft["id"]), str(uuid4()), str(candidate["symbol"]), str(candidate["name"]),
+                float(draft["quantity"]), float(draft["average_cost"]),
+            )
+        elif candidates:
+            store.set_draft_lookup_status(str(draft["id"]), "needs_review", f"找到 {len(candidates)} 个候选代码，请手动补全")
+        else:
+            store.set_draft_lookup_status(str(draft["id"]), "not_found", "未找到可用证券代码，请手动补全")
+
+
+@app.on_event("startup")
+def resume_draft_lookups() -> None:
+    """Resume work persisted before an API container restart."""
+    draft_ids = store.draft_ids_needing_lookup()
+    if draft_ids:
+        Thread(target=resolve_holding_drafts, args=(draft_ids,), daemon=True).start()
 
 
 @app.get("/v1/market/quotes", response_model=list[MarketQuote])
@@ -234,12 +301,27 @@ def market_symbol_lookup(names: Annotated[list[str], Query()]) -> list[SymbolLoo
 def risk_assessments() -> list[RiskAssessment]:
     """Return historical risk statistics for holdings that have a confirmed symbol."""
     try:
-        return [
-            RiskAssessment.model_validate(risk_service.assess(str(holding["symbol"]), str(holding["name"])))
-            for holding in store.list()
-        ]
+        items = [risk_service.assess(str(holding["symbol"]), str(holding["name"])) for holding in store.list()]
+        for item in items: store.save_risk(item)
+        return [RiskAssessment.model_validate(item) for item in items]
     except RiskDataUnavailable as error:
         raise HTTPException(status_code=503, detail=str(error)) from error
+
+@app.get("/v1/portfolio/analysis", response_model=PortfolioAnalysis)
+def portfolio_analysis() -> PortfolioAnalysis:
+    holdings = store.list()
+    payload = assess_holdings(holdings, store.cached_quotes([str(item["symbol"]) for item in holdings]), store)
+    store.save_portfolio_analysis(payload)
+    return PortfolioAnalysis.model_validate(payload)
+
+@app.get("/v1/learning-cases", response_model=list[LearningCase])
+def list_learning_cases(symbol: str | None = None) -> list[LearningCase]:
+    return [LearningCase.model_validate(item) for item in store.learning_cases(symbol)]
+
+@app.post("/v1/learning-cases", response_model=LearningCase, status_code=status.HTTP_201_CREATED)
+def create_learning_case(payload: LearningCaseInput) -> LearningCase:
+    item = {"id": str(uuid4()), **payload.model_dump(), "created_at": beijing_now().isoformat()}
+    return LearningCase.model_validate(store.add_learning_case(item))
 
 
 @app.get("/v1/glossary/{term}", response_model=GlossaryCard)
@@ -273,18 +355,22 @@ def list_holding_drafts() -> list[HoldingDraft]:
 
 
 @app.post("/v1/holding-drafts", response_model=HoldingDraft, status_code=status.HTTP_201_CREATED)
-def create_holding_draft(payload: HoldingDraftInput) -> HoldingDraft:
-    return HoldingDraft.model_validate(store.add_draft(str(uuid4()), **payload.model_dump()))
+def create_holding_draft(payload: HoldingDraftInput, background_tasks: BackgroundTasks) -> HoldingDraft:
+    created = store.add_draft(str(uuid4()), **payload.model_dump())
+    background_tasks.add_task(resolve_holding_drafts, [str(created["id"])])
+    return HoldingDraft.model_validate(created)
 
 
 @app.post("/v1/holding-drafts/batch", response_model=list[HoldingDraft], status_code=status.HTTP_201_CREATED)
-def create_holding_drafts(payload: HoldingDraftBatchInput) -> list[HoldingDraft]:
+def create_holding_drafts(payload: HoldingDraftBatchInput, background_tasks: BackgroundTasks) -> list[HoldingDraft]:
     created_at = beijing_now().isoformat()
     drafts = [
         {"id": str(uuid4()), **item.model_dump(), "created_at": created_at}
         for item in payload.items
     ]
-    return [HoldingDraft.model_validate(item) for item in store.add_drafts(drafts)]
+    created = store.add_drafts(drafts)
+    background_tasks.add_task(resolve_holding_drafts, [str(item["id"]) for item in created])
+    return [HoldingDraft.model_validate(item) for item in created]
 
 
 @app.post("/v1/holding-drafts/{draft_id}/confirm", response_model=Holding, status_code=status.HTTP_201_CREATED)

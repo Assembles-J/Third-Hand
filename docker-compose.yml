@@ -12,6 +12,7 @@ services:
       THIRD_HAND_DB_PATH: /app/data/third_hand.db
       THIRD_HAND_MARKET_PROVIDER: ${THIRD_HAND_MARKET_PROVIDER:-akshare}
       TUSHARE_TOKEN: ${TUSHARE_TOKEN:-}
+      DEEPSEEK_API_KEY: ${DEEPSEEK_API_KEY:-}
     volumes:
       - ./data:/app/data
     ports:

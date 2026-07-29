@@ -25,6 +25,7 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.AccountCircle
+import androidx.compose.material.icons.filled.AdminPanelSettings
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.AutoGraph
 import androidx.compose.material.icons.filled.CameraAlt
@@ -69,8 +70,13 @@ import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
+import java.time.OffsetDateTime
+import java.time.ZoneOffset
+import java.time.format.DateTimeFormatter
 import kotlinx.coroutines.delay
 
 class MainActivity : ComponentActivity() {
@@ -86,8 +92,8 @@ private fun ThirdHandApp() {
     val context = LocalContext.current
     var themeMode by remember { mutableStateOf(ThemeStore.load(context)) }
     var tab by remember { mutableIntStateOf(0) }
-    val labels = listOf("今日", "持仓", "消息", "我的")
-    val icons = listOf(Icons.Filled.AutoGraph, Icons.Filled.Wallet, Icons.AutoMirrored.Filled.Article, Icons.Filled.AccountCircle)
+    val labels = listOf("今日", "持仓", "消息", "我的", "管理")
+    val icons = listOf(Icons.Filled.AutoGraph, Icons.Filled.Wallet, Icons.AutoMirrored.Filled.Article, Icons.Filled.AccountCircle, Icons.Filled.AdminPanelSettings)
     ThirdHandTheme(themeMode) {
         Scaffold(
             bottomBar = {
@@ -108,10 +114,11 @@ private fun ThirdHandApp() {
                     0 -> TodayScreen()
                     1 -> HoldingsScreen()
                     2 -> FeedScreen()
-                    else -> ProfileScreen(
+                    3 -> ProfileScreen(
                         themeMode = themeMode,
                         onThemeModeChange = { mode -> ThemeStore.save(context, mode); themeMode = mode },
                     )
+                    else -> AdminDashboardScreen()
                 }
             }
         }
@@ -254,6 +261,12 @@ private fun TodayScreen() {
         }
     }
     LaunchedEffect(Unit) { refresh() }
+    LaunchedEffect(Unit) {
+        while (true) {
+            delay(2_000)
+            if (drafts.any { it.lookup_status == "pending" || it.lookup_status == "querying" }) refresh()
+        }
+    }
     LazyColumn(contentPadding = androidx.compose.foundation.layout.PaddingValues(bottom = 24.dp), verticalArrangement = Arrangement.spacedBy(14.dp)) {
         item { AppHero("今日行情", "THIRD-HAND · 让资产向阳生长", action = { HeroRefreshAction({ refresh() }, !refreshing) }) }
         item { Column(Modifier.padding(horizontal = 20.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
@@ -276,8 +289,8 @@ private fun TodayScreen() {
         if (holdings.isEmpty() && drafts.isEmpty()) item { StatusCard("先在“持仓”页添加第一只股票，例如小米集团-W（01810）。") }
         if (holdings.isNotEmpty() && quotes.isEmpty()) item { StatusCard("暂未获得任何行情；请检查网络、数据源或证券代码。", error = true) }
         items(quotes) { quote ->
-            val holdingName = holdings.firstOrNull { it.symbol == quote.symbol }?.name
-            QuoteCard(if (holdingName == null) quote else quote.copy(name = holdingName))
+            val holding = holdings.firstOrNull { it.symbol == quote.symbol }
+            QuoteCard(if (holding == null) quote else quote.copy(name = holding.name), holding)
         }
         if (holdings.isNotEmpty()) item { Text("持仓风险观察", modifier = Modifier.padding(start = 20.dp, top = 4.dp, end = 20.dp), style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold) }
         if (riskLoading) item { StatusCard("正在计算历史风险统计…") }
@@ -287,17 +300,49 @@ private fun TodayScreen() {
 }
 
 @Composable
-private fun QuoteCard(quote: MarketQuoteDto) = Card(
+private fun beijingTimestamp(value: String?): String = runCatching {
+    OffsetDateTime.parse(value).withOffsetSameInstant(ZoneOffset.ofHours(8))
+        .format(DateTimeFormatter.ofPattern("MM-dd HH:mm:ss 'UTC+8'"))
+}.getOrElse { value.orEmpty() }
+
+private fun marketNumber(value: Double?): String = when {
+    value == null -> "--"
+    kotlin.math.abs(value) >= 100_000_000 -> String.format("%.2f亿", value / 100_000_000)
+    kotlin.math.abs(value) >= 10_000 -> String.format("%.2f万", value / 10_000)
+    else -> String.format("%.2f", value)
+}
+
+@Composable
+private fun QuoteCard(quote: MarketQuoteDto, holding: HoldingDto?) = Card(
     modifier = Modifier.padding(horizontal = 20.dp).fillMaxWidth(),
     colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
 ) {
-    Column(Modifier.padding(18.dp), verticalArrangement = Arrangement.spacedBy(7.dp)) {
+    Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
         Text("${quote.name} · ${quote.symbol}", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
-        Text("${quote.price ?: "--"} ${quote.currency}", style = MaterialTheme.typography.headlineSmall, color = MaterialTheme.colorScheme.primary, fontWeight = FontWeight.ExtraBold)
-        Text("涨跌幅：${quote.change_percent ?: "--"}%", color = MaterialTheme.colorScheme.tertiary, fontWeight = FontWeight.Bold)
-        Text("${quote.source}｜截至：${quote.as_of ?: quote.retrieved_at}", style = MaterialTheme.typography.bodySmall)
-        Text(if (quote.is_realtime) "实时行情" else "非实时快照", style = MaterialTheme.typography.bodySmall)
-        Text(quote.freshness_note, style = MaterialTheme.typography.bodySmall)
+        Row(verticalAlignment = Alignment.Bottom) {
+            Text(marketNumber(quote.price), modifier = Modifier.weight(1f), style = MaterialTheme.typography.headlineSmall, color = MaterialTheme.colorScheme.primary, fontWeight = FontWeight.ExtraBold)
+            Text("${marketNumber(quote.change)}  ${quote.change_percent ?: "--"}%", color = MaterialTheme.colorScheme.tertiary, fontWeight = FontWeight.Bold)
+        }
+        holding?.let {
+            Row(horizontalArrangement = Arrangement.spacedBy(16.dp)) {
+                HoldingMetric("持仓数量", it.quantity.toString(), Modifier.weight(1f))
+                HoldingMetric("平均成本", it.average_cost.toString(), Modifier.weight(1f))
+            }
+            val floating = quote.price?.let { price -> (price - it.average_cost) * it.quantity }
+            Text("持仓浮动 ${marketNumber(floating)} ${quote.currency}", color = if ((floating ?: 0.0) >= 0) MaterialTheme.colorScheme.tertiary else MaterialTheme.colorScheme.error, style = MaterialTheme.typography.labelLarge, fontWeight = FontWeight.Bold)
+        }
+        HorizontalDivider(color = MaterialTheme.colorScheme.surfaceVariant)
+        Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+            HoldingMetric("开盘", marketNumber(quote.open), Modifier.weight(1f))
+            HoldingMetric("最高", marketNumber(quote.high), Modifier.weight(1f))
+            HoldingMetric("最低", marketNumber(quote.low), Modifier.weight(1f))
+            HoldingMetric("昨收", marketNumber(quote.previous_close), Modifier.weight(1f))
+        }
+        Row(horizontalArrangement = Arrangement.spacedBy(16.dp)) {
+            HoldingMetric("成交量", marketNumber(quote.volume), Modifier.weight(1f))
+            HoldingMetric("成交额", marketNumber(quote.amount), Modifier.weight(1f))
+        }
+        Text("${quote.source}｜更新：${beijingTimestamp(quote.retrieved_at)}", style = MaterialTheme.typography.bodySmall)
     }
 }
 
@@ -330,14 +375,14 @@ private fun HoldingMetric(label: String, value: String, modifier: Modifier = Mod
 @Composable
 private fun HoldingCard(holding: HoldingDto, onDelete: () -> Unit) = Card(
     modifier = Modifier.padding(horizontal = 20.dp).fillMaxWidth(),
-    shape = RoundedCornerShape(20.dp),
+    shape = RoundedCornerShape(14.dp),
     colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
     elevation = CardDefaults.cardElevation(defaultElevation = 2.dp),
 ) {
-    Column(Modifier.padding(18.dp), verticalArrangement = Arrangement.spacedBy(14.dp)) {
-        Row(verticalAlignment = Alignment.Top, horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+    Column(Modifier.padding(horizontal = 14.dp, vertical = 12.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+        Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
             Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(3.dp)) {
-                Text(holding.name, style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.ExtraBold)
+                Text(holding.name, style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.ExtraBold, maxLines = 1, overflow = TextOverflow.Ellipsis)
                 Text(holding.symbol, style = MaterialTheme.typography.labelLarge, color = MaterialTheme.colorScheme.onSurfaceVariant)
             }
             Surface(color = MaterialTheme.colorScheme.tertiaryContainer, shape = RoundedCornerShape(10.dp)) {
@@ -345,7 +390,7 @@ private fun HoldingCard(holding: HoldingDto, onDelete: () -> Unit) = Card(
             }
         }
         HorizontalDivider(color = MaterialTheme.colorScheme.surfaceVariant)
-        Row(horizontalArrangement = Arrangement.spacedBy(16.dp)) {
+        Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
             HoldingMetric("持有数量", holding.quantity.toString(), Modifier.weight(1f))
             HoldingMetric("平均成本", holding.average_cost.toString(), Modifier.weight(1f))
         }
@@ -359,26 +404,34 @@ private fun HoldingCard(holding: HoldingDto, onDelete: () -> Unit) = Card(
 @Composable
 private fun DraftHoldingCard(draft: HoldingDraftDto, onComplete: () -> Unit, onDelete: () -> Unit) = Card(
     modifier = Modifier.padding(horizontal = 20.dp).fillMaxWidth(),
-    shape = RoundedCornerShape(20.dp),
+    shape = RoundedCornerShape(14.dp),
     colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.secondaryContainer),
+    elevation = CardDefaults.cardElevation(defaultElevation = 3.dp),
 ) {
-    Column(Modifier.padding(18.dp), verticalArrangement = Arrangement.spacedBy(14.dp)) {
-        Row(verticalAlignment = Alignment.Top, horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-            Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(3.dp)) {
-                Text(draft.name, style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.ExtraBold)
-                Text("尚缺证券代码，暂不参与行情计算", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSecondaryContainer)
+    val statusText = when (draft.lookup_status.orEmpty()) {
+        "pending", "querying" -> "查询中"
+        "failed" -> "查询失败"
+        "not_found" -> "未找到"
+        else -> "待补全"
+    }
+    Column(Modifier.padding(horizontal = 14.dp, vertical = 12.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+        Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(1.dp)) {
+                Text(draft.name, style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.ExtraBold, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                Text(draft.lookup_message.orEmpty(), style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSecondaryContainer, maxLines = 1, overflow = TextOverflow.Ellipsis)
             }
-            Surface(color = MaterialTheme.colorScheme.surface, shape = RoundedCornerShape(10.dp)) {
-                Text("待补全", Modifier.padding(horizontal = 10.dp, vertical = 5.dp), color = MaterialTheme.colorScheme.secondary, style = MaterialTheme.typography.labelMedium, fontWeight = FontWeight.Bold)
+            Surface(color = MaterialTheme.colorScheme.surface, shape = RoundedCornerShape(8.dp)) {
+                Text(statusText, Modifier.padding(horizontal = 8.dp, vertical = 4.dp), color = MaterialTheme.colorScheme.secondary, style = MaterialTheme.typography.labelMedium, fontWeight = FontWeight.Bold)
             }
         }
         HorizontalDivider(color = MaterialTheme.colorScheme.onSecondaryContainer.copy(alpha = 0.15f))
-        Row(horizontalArrangement = Arrangement.spacedBy(16.dp)) {
-            HoldingMetric("识别数量", draft.quantity.toString(), Modifier.weight(1f))
-            HoldingMetric("识别成本", draft.average_cost.toString(), Modifier.weight(1f))
+        Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+            HoldingMetric("数量", draft.quantity.toString(), Modifier.weight(1f))
+            HoldingMetric("成本", draft.average_cost.toString(), Modifier.weight(1f))
         }
         Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            SecondaryAction("补全代码", Icons.Filled.Search, onComplete, Modifier.weight(1f))
+            TextButton(onClick = onComplete, colors = ButtonDefaults.textButtonColors(contentColor = MaterialTheme.colorScheme.secondary)) { Icon(Icons.Filled.Search, null); Spacer(Modifier.width(4.dp)); Text("补全代码") }
+            Spacer(Modifier.weight(1f))
             TextButton(onClick = onDelete, colors = ButtonDefaults.textButtonColors(contentColor = MaterialTheme.colorScheme.error)) { Text("删除") }
         }
     }
@@ -393,31 +446,23 @@ private fun HoldingsScreen() {
     var error by remember { mutableStateOf<String?>(null) }
     var showAdd by remember { mutableStateOf(false) }
     var editingDraft by remember { mutableStateOf<HoldingDraftDto?>(null) }
-    var preview by remember { mutableStateOf<List<RecognizedHolding>>(emptyList()) }
-    var lookupCandidates by remember { mutableStateOf<Map<String, List<SecurityCandidateDto>>>(emptyMap()) }
-    var lookupLoading by remember { mutableStateOf(false) }
     var scanError by remember { mutableStateOf<String?>(null) }
     val scope = rememberCoroutineScope()
     val imagePicker = rememberLauncherForActivityResult(ActivityResultContracts.OpenMultipleDocuments()) { imageUris ->
         if (imageUris.isNotEmpty()) scope.launch {
             try {
                 scanError = null
-                preview = imageUris.flatMap { ScreenshotOcr.scan(context, it) }.distinctBy { it.name }
-                if (preview.isEmpty()) scanError = "未能识别出完整持仓行，请使用清晰、完整的持仓列表截图。"
+                val recognized = imageUris.flatMap { ScreenshotOcr.scan(context, it) }.distinctBy { it.name }
+                if (recognized.isEmpty()) scanError = "未能识别出完整持仓行，请使用清晰、完整的持仓列表截图。"
                 else {
-                    lookupCandidates = emptyMap()
-                    lookupLoading = true
                     try {
-                        val watchlistSymbols = imageUris.fold(emptyMap<String, String>()) { all, uri -> all + ScreenshotOcr.scanWatchlistSymbols(context, uri) }
-                        val serverMatches = api.symbolLookup(preview.map { it.name }).associate { it.query to it.matches }
-                        lookupCandidates = preview.associate { item ->
-                            val watchlistCode = watchlistSymbols[item.name]
-                            item.name to (watchlistCode?.let { listOf(SecurityCandidateDto(it, item.name, "自选截图", if (it.length == 5) "HKD" else "CNY", "ocr")) } ?: serverMatches[item.name].orEmpty())
-                        }
+                        api.addHoldingDrafts(HoldingDraftBatchInputDto(recognized.map {
+                            HoldingDraftInputDto(it.name, it.quantity, it.averageCost)
+                        }))
+                        scanError = "已录入 ${recognized.size} 条，后台正在查询证券代码。"
+                        drafts = api.holdingDrafts()
                     } catch (exception: Exception) {
-                        scanError = "截图已识别，但证券代码反查暂时不可用；你仍可手动添加。"
-                    } finally {
-                        lookupLoading = false
+                        scanError = "提交识别结果失败：${exception.message ?: "请稍后重试"}"
                     }
                 }
             } catch (exception: Exception) {
@@ -483,69 +528,6 @@ private fun HoldingsScreen() {
             api.confirmHoldingDraft(draft.id, input); editingDraft = null; refresh()
         } catch (exception: Exception) { error = "补全代码失败：${exception.message ?: "请稍后重试"}" } } },
     ) }
-    if (preview.isNotEmpty()) ScreenshotPreviewDialog(
-        items = preview,
-        candidatesByName = lookupCandidates,
-        lookupLoading = lookupLoading,
-        onDismiss = { preview = emptyList(); lookupCandidates = emptyMap(); lookupLoading = false },
-        onSaveAll = { matches, unmatched -> scope.launch { try {
-            matches.forEach { (recognized, candidate) ->
-                api.addHolding(HoldingInputDto(candidate.symbol, candidate.name, recognized.quantity, recognized.averageCost))
-            }
-            if (unmatched.isNotEmpty()) api.addHoldingDrafts(HoldingDraftBatchInputDto(unmatched.map {
-                HoldingDraftInputDto(it.name, it.quantity, it.averageCost)
-            }))
-            preview = emptyList()
-            lookupCandidates = emptyMap()
-            refresh()
-        } catch (exception: Exception) { scanError = "保存识别结果失败：${exception.message ?: "请稍后重试"}" } } },
-    )
-}
-
-@Composable
-private fun ScreenshotPreviewDialog(
-    items: List<RecognizedHolding>,
-    candidatesByName: Map<String, List<SecurityCandidateDto>>,
-    lookupLoading: Boolean,
-    onDismiss: () -> Unit,
-    onSaveAll: (List<Pair<RecognizedHolding, SecurityCandidateDto>>, List<RecognizedHolding>) -> Unit,
-) {
-    val exactMatches = items.mapNotNull { item ->
-        candidatesByName[item.name].orEmpty().firstOrNull { it.match_type == "exact" }?.let { item to it }
-    }
-    val unmatched = items.filter { item -> exactMatches.none { it.first == item } }
-    AlertDialog(
-    onDismissRequest = onDismiss,
-    title = { Text("识别结果", fontWeight = FontWeight.ExtraBold) },
-    text = {
-        Column(
-            modifier = Modifier.heightIn(max = 440.dp).verticalScroll(rememberScrollState()),
-            verticalArrangement = Arrangement.spacedBy(10.dp),
-        ) {
-        Text("已自动采用精确匹配；其余记录会保存为待补全，稍后可在持仓页补代码。", color = MaterialTheme.colorScheme.onSurfaceVariant)
-        Text("${exactMatches.size} 条可直接入库 · ${unmatched.size} 条待补全", style = MaterialTheme.typography.labelLarge, color = MaterialTheme.colorScheme.primary, fontWeight = FontWeight.Bold)
-        items.forEach { item ->
-            val candidate = exactMatches.firstOrNull { it.first == item }?.second
-            Card(colors = CardDefaults.cardColors(containerColor = if (candidate == null) MaterialTheme.colorScheme.surfaceVariant else MaterialTheme.colorScheme.tertiaryContainer), shape = RoundedCornerShape(14.dp)) {
-                Column(Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(3.dp)) {
-                    Text(item.name, fontWeight = FontWeight.Bold)
-                    Text("${item.quantity} 股/份 · 成本 ${item.averageCost}", style = MaterialTheme.typography.bodySmall)
-                    Text(
-                        when {
-                            candidate != null -> "已匹配：${candidate.name}（${candidate.symbol}）"
-                            lookupLoading -> "正在查询证券代码…"
-                            else -> "未找到精确匹配，将作为待补全保存"
-                        },
-                        style = MaterialTheme.typography.bodySmall,
-                        color = if (candidate == null) MaterialTheme.colorScheme.onSurfaceVariant else MaterialTheme.colorScheme.tertiary,
-                    )
-                }
-            }
-        }
-    } },
-    confirmButton = { Button(onClick = { onSaveAll(exactMatches, unmatched) }, shape = RoundedCornerShape(12.dp)) { Text("保存全部") } },
-    dismissButton = { TextButton(onClick = onDismiss) { Text("暂不保存") } },
-)
 }
 
 @Composable
@@ -636,6 +618,10 @@ private fun FeedCard(item: NewsItemDto, uriHandler: androidx.compose.ui.platform
         Text(label, color = MaterialTheme.colorScheme.primary, style = MaterialTheme.typography.labelMedium)
         Text(item.title, style = MaterialTheme.typography.titleMedium)
         Text(item.explanation)
+        item.ai_analysis?.let { analysis ->
+            Text("AI 解读：${analysis["summary"] ?: "已生成，建议结合原文核验。"}", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.primary)
+            Text("影响：${analysis["impact"] ?: "uncertain"}｜置信度：${analysis["confidence"] ?: "low"}", style = MaterialTheme.typography.bodySmall)
+        }
         Text("${item.source_name}｜${item.published_at}", style = MaterialTheme.typography.bodySmall)
         TextButton(onClick = { uriHandler.openUri(item.source_url) }, colors = ButtonDefaults.textButtonColors(contentColor = MaterialTheme.colorScheme.primary)) { Text("查看原文  →", fontWeight = FontWeight.Bold) }
     }

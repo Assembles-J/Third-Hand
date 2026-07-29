@@ -30,7 +30,8 @@ def test_holding_lifecycle_and_feed():
     assert client.delete(f"/v1/holdings/{holding_id}").status_code == 204
 
 
-def test_holding_draft_can_be_confirmed_later():
+def test_holding_draft_can_be_confirmed_later(monkeypatch):
+    monkeypatch.setattr(market_data, "lookup_symbols", lambda names: [{"query": name, "matches": []} for name in names])
     draft = client.post("/v1/holding-drafts", json={"name": "小米集团", "quantity": 100, "average_cost": 45.5})
     assert draft.status_code == 201
     draft_id = draft.json()["id"]
@@ -43,13 +44,25 @@ def test_holding_draft_can_be_confirmed_later():
     assert client.get("/v1/holdings").json()[0]["symbol"] == "01810"
 
 
-def test_holding_drafts_can_be_saved_in_one_request():
+def test_holding_drafts_can_be_saved_in_one_request(monkeypatch):
+    monkeypatch.setattr(market_data, "lookup_symbols", lambda names: [{"query": name, "matches": []} for name in names])
     response = client.post("/v1/holding-drafts/batch", json={"items": [
         {"name": "小米集团", "quantity": 100, "average_cost": 45.5},
         {"name": "贵州茅台", "quantity": 10, "average_cost": 1400},
     ]})
     assert response.status_code == 201
     assert len(response.json()) == 2
+
+
+def test_exact_draft_lookup_is_saved_and_confirmed_in_background(monkeypatch):
+    monkeypatch.setattr(market_data, "lookup_symbols", lambda names: [{
+        "query": names[0],
+        "matches": [{"symbol": "600519", "name": "贵州茅台", "market": "CN", "currency": "CNY", "match_type": "exact"}],
+    }])
+    response = client.post("/v1/holding-drafts", json={"name": "贵州茅台", "quantity": 10, "average_cost": 1400})
+    assert response.status_code == 201
+    assert client.get("/v1/holding-drafts").json() == []
+    assert client.get("/v1/holdings").json()[0]["symbol"] == "600519"
 
 
 def test_import_accepts_valid_rows_and_rejects_invalid_rows():

@@ -32,6 +32,10 @@ data class HoldingDraftDto(
     val quantity: Double,
     val average_cost: Double,
     val created_at: String,
+    // Gson can deserialize explicit JSON null values despite Kotlin defaults.
+    val lookup_status: String? = "pending",
+    val lookup_message: String = "等待后台查询证券代码",
+    val lookup_updated_at: String? = null,
 )
 
 data class HoldingDraftInputDto(
@@ -47,6 +51,13 @@ data class MarketQuoteDto(
     val name: String,
     val price: Double?,
     val change_percent: Double?,
+    val change: Double? = null,
+    val open: Double? = null,
+    val high: Double? = null,
+    val low: Double? = null,
+    val previous_close: Double? = null,
+    val volume: Double? = null,
+    val amount: Double? = null,
     val currency: String,
     val source: String,
     val retrieved_at: String,
@@ -92,9 +103,12 @@ data class NewsItemDto(
     val source_name: String,
     val source_url: String,
     val published_at: String,
+    val ai_analysis: Map<String, Any>? = null,
 )
 
 data class HealthDto(val status: String)
+data class PortfolioAnalysisItemDto(val symbol: String, val name: String, val action: String, val reason: String, val evidence: List<String>, val disclaimer: String)
+data class PortfolioAnalysisDto(val items: List<PortfolioAnalysisItemDto>)
 
 interface ThirdHandApi {
     @GET("health")
@@ -132,6 +146,8 @@ interface ThirdHandApi {
 
     @GET("v1/risk/assessments")
     suspend fun riskAssessments(): List<RiskAssessmentDto>
+    @GET("v1/portfolio/analysis")
+    suspend fun portfolioAnalysis(): PortfolioAnalysisDto
 
     @GET("v1/feed")
     suspend fun feed(@Query("symbols") symbols: List<String>): List<NewsItemDto>
