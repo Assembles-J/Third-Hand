@@ -27,19 +27,27 @@ object ThemeStore {
 }
 
 private val LightColors = lightColorScheme(
-    primary = Color(0xFFD32F2F), onPrimary = Color.White,
-    primaryContainer = Color(0xFFFFDAD6), onPrimaryContainer = Color(0xFF410002),
-    secondary = Color(0xFF775651), onSecondary = Color.White,
-    surface = Color(0xFFFFFBFF), onSurface = Color(0xFF201A19),
-    surfaceVariant = Color(0xFFF5DDDA), onSurfaceVariant = Color(0xFF534341),
+    primary = Color(0xFFE45121), onPrimary = Color.White,
+    primaryContainer = Color(0xFFFFD9C9), onPrimaryContainer = Color(0xFF4A1100),
+    secondary = Color(0xFFB53A22), onSecondary = Color.White,
+    secondaryContainer = Color(0xFFFFDDD1), onSecondaryContainer = Color(0xFF421000),
+    tertiary = Color(0xFF2D7A4A), onTertiary = Color.White,
+    tertiaryContainer = Color(0xFFC7F1D0), onTertiaryContainer = Color(0xFF003917),
+    background = Color(0xFFFFF8F3), onBackground = Color(0xFF261714),
+    surface = Color(0xFFFFF8F3), onSurface = Color(0xFF261714),
+    surfaceVariant = Color(0xFFF7E6DE), onSurfaceVariant = Color(0xFF59413A),
 )
 
 private val DarkColors = darkColorScheme(
-    primary = Color(0xFFFFB4AB), onPrimary = Color(0xFF690005),
-    primaryContainer = Color(0xFF93000A), onPrimaryContainer = Color(0xFFFFDAD6),
-    secondary = Color(0xFFE7BDB7), onSecondary = Color(0xFF442924),
-    surface = Color(0xFF201A19), onSurface = Color(0xFFEDE0DE),
-    surfaceVariant = Color(0xFF534341), onSurfaceVariant = Color(0xFFD8C2BF),
+    primary = Color(0xFFFFB59D), onPrimary = Color(0xFF621A04),
+    primaryContainer = Color(0xFF8A2E14), onPrimaryContainer = Color(0xFFFFD9C9),
+    secondary = Color(0xFFFFB5A0), onSecondary = Color(0xFF641B09),
+    secondaryContainer = Color(0xFF85301C), onSecondaryContainer = Color(0xFFFFD9D0),
+    tertiary = Color(0xFFA8DCB1), onTertiary = Color(0xFF003919),
+    tertiaryContainer = Color(0xFF155D32), onTertiaryContainer = Color(0xFFC7F1D0),
+    background = Color(0xFF211713), onBackground = Color(0xFFF6EDE8),
+    surface = Color(0xFF211713), onSurface = Color(0xFFF6EDE8),
+    surfaceVariant = Color(0xFF51413B), onSurfaceVariant = Color(0xFFDBC9C2),
 )
 
 @Composable

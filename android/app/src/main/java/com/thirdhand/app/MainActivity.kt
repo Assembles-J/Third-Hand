@@ -6,18 +6,35 @@ import androidx.activity.result.contract.ActivityResultContracts
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.background
+import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.AccountCircle
+import androidx.compose.material.icons.filled.Add
+import androidx.compose.material.icons.filled.AutoGraph
+import androidx.compose.material.icons.filled.CameraAlt
+import androidx.compose.material.icons.filled.Refresh
+import androidx.compose.material.icons.filled.Wallet
+import androidx.compose.material.icons.automirrored.filled.Article
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.NavigationBar
 import androidx.compose.material3.NavigationBarItem
@@ -27,7 +44,7 @@ import androidx.compose.material3.RadioButton
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
-import androidx.compose.material3.TopAppBar
+import androidx.compose.material3.Surface
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
@@ -40,6 +57,10 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalUriHandler
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.Alignment
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.Brush
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import kotlinx.coroutines.launch
 
@@ -57,42 +78,79 @@ private fun ThirdHandApp() {
     var themeMode by remember { mutableStateOf(ThemeStore.load(context)) }
     var tab by remember { mutableIntStateOf(0) }
     val labels = listOf("今日", "持仓", "消息", "我的")
+    val icons = listOf(Icons.Filled.AutoGraph, Icons.Filled.Wallet, Icons.AutoMirrored.Filled.Article, Icons.Filled.AccountCircle)
     ThirdHandTheme(themeMode) {
         Scaffold(
-            topBar = { TopAppBar(title = { Text("Third-Hand") }) },
             bottomBar = {
-                NavigationBar {
+                NavigationBar(containerColor = MaterialTheme.colorScheme.surface) {
                     labels.forEachIndexed { index, label ->
-                        NavigationBarItem(selected = tab == index, onClick = { tab = index }, icon = {}, label = { Text(label) })
+                        NavigationBarItem(
+                            selected = tab == index,
+                            onClick = { tab = index },
+                            icon = { Icon(icons[index], contentDescription = label) },
+                            label = { Text(label) },
+                        )
                     }
                 }
             },
         ) { padding ->
-            when (tab) {
-                0 -> TodayScreen(Modifier.padding(padding))
-                1 -> HoldingsScreen(Modifier.padding(padding))
-                2 -> FeedScreen(Modifier.padding(padding))
-                else -> ProfileScreen(
-                    modifier = Modifier.padding(padding),
-                    themeMode = themeMode,
-                    onThemeModeChange = { mode -> ThemeStore.save(context, mode); themeMode = mode },
-                )
+            Surface(modifier = Modifier.fillMaxSize().padding(padding), color = MaterialTheme.colorScheme.background) {
+                when (tab) {
+                    0 -> TodayScreen()
+                    1 -> HoldingsScreen()
+                    2 -> FeedScreen()
+                    else -> ProfileScreen(
+                        themeMode = themeMode,
+                        onThemeModeChange = { mode -> ThemeStore.save(context, mode); themeMode = mode },
+                    )
+                }
             }
         }
     }
 }
 
 @Composable
-private fun TodayScreen(modifier: Modifier) {
+private fun AppHero(title: String, eyebrow: String, action: (@Composable () -> Unit)? = null) {
+    Box(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clip(RoundedCornerShape(bottomStart = 28.dp, bottomEnd = 28.dp))
+            .background(Brush.linearGradient(listOf(Color(0xFFB8321E), Color(0xFFF06A23), Color(0xFFFFA63D))))
+            .padding(start = 20.dp, top = 24.dp, end = 16.dp, bottom = 22.dp),
+    ) {
+        Column(verticalArrangement = Arrangement.spacedBy(5.dp)) {
+            Text(eyebrow, color = Color(0xFFFFE5C6), style = MaterialTheme.typography.labelMedium, fontWeight = FontWeight.Bold)
+            Text(title, color = Color.White, style = MaterialTheme.typography.headlineMedium, fontWeight = FontWeight.ExtraBold)
+        }
+        if (action != null) Box(Modifier.align(Alignment.CenterEnd)) { action() }
+    }
+}
+
+@Composable
+private fun TodayScreen() {
     val context = LocalContext.current
     val api = ApiClient.service(context)
     var holdings by remember { mutableStateOf<List<HoldingDto>>(emptyList()) }
     var drafts by remember { mutableStateOf<List<HoldingDraftDto>>(emptyList()) }
     var quotes by remember { mutableStateOf<List<MarketQuoteDto>>(emptyList()) }
+    var risks by remember { mutableStateOf<List<RiskAssessmentDto>>(emptyList()) }
     var error by remember { mutableStateOf<String?>(null) }
     var refreshing by remember { mutableStateOf(false) }
     var refreshMessage by remember { mutableStateOf<String?>(null) }
+    var riskLoading by remember { mutableStateOf(false) }
+    var riskError by remember { mutableStateOf<String?>(null) }
     val scope = rememberCoroutineScope()
+    fun refreshRiskAssessments() = scope.launch {
+        riskLoading = true
+        riskError = null
+        try {
+            risks = api.riskAssessments()
+        } catch (exception: Exception) {
+            riskError = "风险评估暂时不可用，不影响行情展示。"
+        } finally {
+            riskLoading = false
+        }
+    }
     fun refresh() = scope.launch {
         try {
             refreshing = true
@@ -107,6 +165,7 @@ private fun TodayScreen(modifier: Modifier) {
             }
             if (holdings.isEmpty()) {
                 quotes = emptyList()
+                risks = emptyList()
                 refreshMessage = if (drafts.isNotEmpty()) "待补全记录没有证券代码，暂时无法拉取行情。" else "还没有正式持仓可供查询。"
                 return@launch
             }
@@ -116,20 +175,24 @@ private fun TodayScreen(modifier: Modifier) {
             } catch (exception: Exception) {
                 error = "持仓已加载；行情暂时不可用，请稍后刷新。"
             }
+            refreshRiskAssessments()
         } finally {
             refreshing = false
         }
     }
     LaunchedEffect(Unit) { refresh() }
-    LazyColumn(modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
-        item { Text("今日关注", style = MaterialTheme.typography.headlineSmall) }
-        item { Text("行情来自公开源快照，显示北京时间与数据来源，不构成投资建议。") }
-        item { Button(onClick = { refresh() }, enabled = !refreshing) { Text(if (refreshing) "正在刷新…" else "刷新行情") } }
-        error?.let { message -> item { Text(message, color = MaterialTheme.colorScheme.error) } }
-        refreshMessage?.let { message -> item { Text(message, color = MaterialTheme.colorScheme.primary) } }
+    LazyColumn(contentPadding = androidx.compose.foundation.layout.PaddingValues(bottom = 24.dp), verticalArrangement = Arrangement.spacedBy(14.dp)) {
+        item { AppHero("今日行情", "THIRD-HAND · 让资产向阳生长", action = { IconButton(onClick = { refresh() }, enabled = !refreshing) { Icon(Icons.Filled.Refresh, "刷新行情", tint = Color.White) } }) }
+        item { Column(Modifier.padding(horizontal = 20.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+            Text("把握正在发生的机会", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold)
+            Text("行情来自公开源快照，仅供参考，不构成投资建议。", color = MaterialTheme.colorScheme.onSurfaceVariant, style = MaterialTheme.typography.bodySmall)
+        } }
+        item { Button(modifier = Modifier.padding(horizontal = 20.dp), onClick = { refresh() }, enabled = !refreshing) { Icon(Icons.Filled.Refresh, null); Spacer(Modifier.width(6.dp)); Text(if (refreshing) "正在刷新…" else "刷新行情") } }
+        error?.let { message -> item { Text(message, modifier = Modifier.padding(horizontal = 20.dp), color = MaterialTheme.colorScheme.error) } }
+        refreshMessage?.let { message -> item { Text(message, modifier = Modifier.padding(horizontal = 20.dp), color = MaterialTheme.colorScheme.primary, fontWeight = FontWeight.Bold) } }
         if (drafts.isNotEmpty()) item {
             Card(
-                modifier = Modifier.fillMaxWidth(),
+                modifier = Modifier.padding(horizontal = 20.dp).fillMaxWidth(),
                 colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.secondaryContainer),
             ) {
                 Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
@@ -138,27 +201,54 @@ private fun TodayScreen(modifier: Modifier) {
                 }
             }
         }
-        if (holdings.isEmpty() && drafts.isEmpty()) item { Text("先在“持仓”页手动添加一只股票，例如小米集团-W（01810）。") }
-        if (holdings.isNotEmpty() && quotes.isEmpty()) item { Text("已保存 ${holdings.size} 条持仓，行情加载失败不会影响持仓展示。") }
+        if (holdings.isEmpty() && drafts.isEmpty()) item { Text("先在“持仓”页手动添加一只股票，例如小米集团-W（01810）。", modifier = Modifier.padding(horizontal = 20.dp)) }
+        if (holdings.isNotEmpty() && quotes.isEmpty()) item { Text("已保存 ${holdings.size} 条持仓，行情加载失败不会影响持仓展示。", modifier = Modifier.padding(horizontal = 20.dp)) }
         items(quotes) { quote ->
             val holdingName = holdings.firstOrNull { it.symbol == quote.symbol }?.name
             QuoteCard(if (holdingName == null) quote else quote.copy(name = holdingName))
         }
+        if (holdings.isNotEmpty()) item { Text("持仓风险观察", modifier = Modifier.padding(start = 20.dp, top = 4.dp, end = 20.dp), style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold) }
+        if (riskLoading) item { Text("正在计算历史风险统计…", modifier = Modifier.padding(horizontal = 20.dp)) }
+        riskError?.let { message -> item { Text(message, color = MaterialTheme.colorScheme.error) } }
+        items(risks, key = { it.symbol }) { assessment -> RiskAssessmentCard(assessment) }
     }
 }
 
 @Composable
-private fun QuoteCard(quote: MarketQuoteDto) = Card(Modifier.fillMaxWidth()) {
-    Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
-        Text("${quote.name} · ${quote.symbol}", style = MaterialTheme.typography.titleMedium)
-        Text("最新价：${quote.price ?: "--"} ${quote.currency}    涨跌幅：${quote.change_percent ?: "--"}%")
-        Text("${quote.source}｜获取：${quote.retrieved_at}", style = MaterialTheme.typography.bodySmall)
+private fun QuoteCard(quote: MarketQuoteDto) = Card(
+    modifier = Modifier.padding(horizontal = 20.dp).fillMaxWidth(),
+    colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
+) {
+    Column(Modifier.padding(18.dp), verticalArrangement = Arrangement.spacedBy(7.dp)) {
+        Text("${quote.name} · ${quote.symbol}", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
+        Text("${quote.price ?: "--"} ${quote.currency}", style = MaterialTheme.typography.headlineSmall, color = MaterialTheme.colorScheme.primary, fontWeight = FontWeight.ExtraBold)
+        Text("涨跌幅：${quote.change_percent ?: "--"}%", color = MaterialTheme.colorScheme.tertiary, fontWeight = FontWeight.Bold)
+        Text("${quote.source}｜截至：${quote.as_of ?: quote.retrieved_at}", style = MaterialTheme.typography.bodySmall)
+        Text(if (quote.is_realtime) "实时行情" else "非实时快照", style = MaterialTheme.typography.bodySmall)
         Text(quote.freshness_note, style = MaterialTheme.typography.bodySmall)
     }
 }
 
 @Composable
-private fun HoldingsScreen(modifier: Modifier) {
+private fun RiskAssessmentCard(assessment: RiskAssessmentDto) {
+    val containerColor = when (assessment.risk_level) {
+        "高" -> MaterialTheme.colorScheme.errorContainer
+        "中" -> MaterialTheme.colorScheme.secondaryContainer
+        else -> MaterialTheme.colorScheme.tertiaryContainer
+    }
+    Card(Modifier.padding(horizontal = 20.dp).fillMaxWidth(), colors = CardDefaults.cardColors(containerColor = containerColor)) {
+        Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+            Text("${assessment.name} · 风险${assessment.risk_level}", style = MaterialTheme.typography.titleMedium)
+            Text("历史下行概率 ${assessment.historical_downside_probability}% · 年化波动 ${assessment.annualized_volatility_percent}%")
+            Text("口径：${assessment.horizon_trading_days} 个交易日累计跌幅 ≥ ${assessment.downside_threshold_percent}%；样本 ${assessment.sample_count} 个，置信度 ${assessment.confidence}。", style = MaterialTheme.typography.bodySmall)
+            Text(assessment.explanation, style = MaterialTheme.typography.bodySmall)
+            Text(assessment.disclaimer, style = MaterialTheme.typography.bodySmall)
+        }
+    }
+}
+
+@Composable
+private fun HoldingsScreen() {
     val context = LocalContext.current
     val api = ApiClient.service(context)
     var holdings by remember { mutableStateOf<List<HoldingDto>>(emptyList()) }
@@ -202,21 +292,21 @@ private fun HoldingsScreen(modifier: Modifier) {
         catch (exception: Exception) { error = "读取持仓失败：${exception.message ?: "请确认后端正在运行"}" }
     }
     LaunchedEffect(Unit) { refresh() }
-    LazyColumn(modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
-        item { Text("我的持仓", style = MaterialTheme.typography.headlineSmall) }
-        item { Text("识别结果可先保存，稍后补充证券代码再确认入库。") }
+    LazyColumn(contentPadding = androidx.compose.foundation.layout.PaddingValues(bottom = 24.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+        item { AppHero("我的持仓", "资产根系 · 记录每一次成长") }
+        item { Text("识别结果可先保存，稍后补充证券代码再确认入库。", modifier = Modifier.padding(horizontal = 20.dp), color = MaterialTheme.colorScheme.onSurfaceVariant) }
         item {
             Card(
-                modifier = Modifier.fillMaxWidth(),
+                modifier = Modifier.padding(horizontal = 20.dp).fillMaxWidth(),
                 colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.primaryContainer),
             ) {
                 Row(Modifier.padding(16.dp), horizontalArrangement = Arrangement.SpaceBetween) {
-                    Column { Text("已入库", style = MaterialTheme.typography.labelLarge); Text("${holdings.size} 条", style = MaterialTheme.typography.headlineSmall) }
-                    Column { Text("待补全", style = MaterialTheme.typography.labelLarge); Text("${drafts.size} 条", style = MaterialTheme.typography.headlineSmall) }
+                    Column { Text("已入库", style = MaterialTheme.typography.labelLarge); Text("${holdings.size} 条", style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.ExtraBold) }
+                    Column { Text("待补全", style = MaterialTheme.typography.labelLarge); Text("${drafts.size} 条", style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.ExtraBold) }
                 }
             }
         }
-        item { Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) { Button(onClick = { showAdd = true }) { Text("手动添加") }; OutlinedButton(onClick = { imagePicker.launch("image/*") }) { Text("识别截图") }; OutlinedButton(onClick = { refresh() }) { Text("刷新") } } }
+        item { Row(Modifier.padding(horizontal = 20.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) { Button(onClick = { showAdd = true }) { Icon(Icons.Filled.Add, null); Text("手动添加") }; OutlinedButton(onClick = { imagePicker.launch("image/*") }) { Icon(Icons.Filled.CameraAlt, null); Text("识别截图") }; OutlinedButton(onClick = { refresh() }) { Icon(Icons.Filled.Refresh, null); Text("刷新") } } }
         error?.let { message -> item { Text(message, color = MaterialTheme.colorScheme.error) } }
         scanError?.let { message -> item { Text(message, color = MaterialTheme.colorScheme.error) } }
         if (drafts.isNotEmpty()) item { Text("待补全代码", style = MaterialTheme.typography.titleMedium) }
@@ -342,7 +432,7 @@ private fun AddHoldingDialog(
 }
 
 @Composable
-private fun FeedScreen(modifier: Modifier) {
+private fun FeedScreen() {
     val context = LocalContext.current
     val uriHandler = LocalUriHandler.current
     val api = ApiClient.service(context)
@@ -357,21 +447,21 @@ private fun FeedScreen(modifier: Modifier) {
         error = null
     } catch (exception: Exception) { error = exception.message } }
     LaunchedEffect(Unit) { refresh() }
-    LazyColumn(modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
-        item { Text("关联消息", style = MaterialTheme.typography.headlineSmall) }
-        item { Text("正式公告优先展示；新闻用于补充背景，均请以原文为准。") }
-        item { Button(onClick = { refresh() }) { Text("刷新") } }
-        error?.let { item { Text(it ?: "", color = MaterialTheme.colorScheme.error) } }
-        if (announcements.isNotEmpty()) item { Text("正式公告", style = MaterialTheme.typography.titleMedium) }
+    LazyColumn(contentPadding = androidx.compose.foundation.layout.PaddingValues(bottom = 24.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+        item { AppHero("关联消息", "消息枝叶 · 捕捉与你有关的变化") }
+        item { Text("正式公告优先展示；新闻用于补充背景，均请以原文为准。", modifier = Modifier.padding(horizontal = 20.dp), color = MaterialTheme.colorScheme.onSurfaceVariant) }
+        item { Button(modifier = Modifier.padding(horizontal = 20.dp), onClick = { refresh() }) { Icon(Icons.Filled.Refresh, null); Spacer(Modifier.width(6.dp)); Text("刷新") } }
+        error?.let { item { Text(it ?: "", modifier = Modifier.padding(horizontal = 20.dp), color = MaterialTheme.colorScheme.error) } }
+        if (announcements.isNotEmpty()) item { Text("正式公告", modifier = Modifier.padding(horizontal = 20.dp), style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold) }
         items(announcements) { item -> FeedCard(item, uriHandler, "公告") }
-        if (feed.isNotEmpty()) item { Text("相关新闻", style = MaterialTheme.typography.titleMedium) }
+        if (feed.isNotEmpty()) item { Text("相关新闻", modifier = Modifier.padding(horizontal = 20.dp), style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold) }
         items(feed) { item -> FeedCard(item, uriHandler, "新闻") }
     }
 }
 
 @Composable
-private fun FeedCard(item: NewsItemDto, uriHandler: androidx.compose.ui.platform.UriHandler, label: String) = Card(Modifier.fillMaxWidth()) {
-    Column(Modifier.padding(16.dp)) {
+private fun FeedCard(item: NewsItemDto, uriHandler: androidx.compose.ui.platform.UriHandler, label: String) = Card(Modifier.padding(horizontal = 20.dp).fillMaxWidth()) {
+    Column(Modifier.padding(18.dp), verticalArrangement = Arrangement.spacedBy(5.dp)) {
         Text(label, color = MaterialTheme.colorScheme.primary, style = MaterialTheme.typography.labelMedium)
         Text(item.title, style = MaterialTheme.typography.titleMedium)
         Text(item.explanation)
@@ -381,16 +471,16 @@ private fun FeedCard(item: NewsItemDto, uriHandler: androidx.compose.ui.platform
 }
 
 @Composable
-private fun ProfileScreen(modifier: Modifier, themeMode: ThemeMode, onThemeModeChange: (ThemeMode) -> Unit) {
+private fun ProfileScreen(themeMode: ThemeMode, onThemeModeChange: (ThemeMode) -> Unit) {
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
     var baseUrl by remember { mutableStateOf(EndpointStore.baseUrl(context)) }
     var connectionStatus by remember { mutableStateOf<String?>(null) }
-    Column(modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
-        Text("我的", style = MaterialTheme.typography.headlineSmall)
-        Text("服务地址（模拟器默认 10.0.2.2；实机填写电脑局域网 IP 或 HTTPS 域名）")
-        OutlinedTextField(baseUrl, { baseUrl = it }, label = { Text("例如 http://192.168.1.10:8000/") }, modifier = Modifier.fillMaxWidth())
-        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+    LazyColumn(contentPadding = androidx.compose.foundation.layout.PaddingValues(bottom = 24.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+        item { AppHero("我的", "守护资产的每一段生长") }
+        item { Text("服务地址（模拟器默认 10.0.2.2；实机填写电脑局域网 IP 或 HTTPS 域名）", modifier = Modifier.padding(horizontal = 20.dp), color = MaterialTheme.colorScheme.onSurfaceVariant) }
+        item { OutlinedTextField(baseUrl, { baseUrl = it }, label = { Text("例如 http://192.168.1.10:8000/") }, modifier = Modifier.padding(horizontal = 20.dp).fillMaxWidth()) }
+        item { Row(Modifier.padding(horizontal = 20.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
             Button(onClick = { EndpointStore.saveBaseUrl(context, baseUrl); baseUrl = EndpointStore.baseUrl(context); connectionStatus = "已保存：$baseUrl" }) { Text("保存地址") }
             OutlinedButton(onClick = {
                 EndpointStore.saveBaseUrl(context, baseUrl)
@@ -401,18 +491,18 @@ private fun ProfileScreen(modifier: Modifier, themeMode: ThemeMode, onThemeModeC
                     } catch (exception: Exception) { "连接失败：${exception.message ?: "请检查网络、地址和后端"}" }
                 }
             }) { Text("测试连接") }
-        }
-        connectionStatus?.let { Text(it, color = if (it == "连接成功") MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.error) }
-        Text("外观", style = MaterialTheme.typography.titleMedium)
-        ThemeMode.entries.forEach { mode ->
+        } }
+        connectionStatus?.let { item { Text(it, modifier = Modifier.padding(horizontal = 20.dp), color = if (it == "连接成功") MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.error) } }
+        item { Text("外观", modifier = Modifier.padding(horizontal = 20.dp), style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold) }
+        items(ThemeMode.entries) { mode ->
             Row(
-                modifier = Modifier.fillMaxWidth().clickable { onThemeModeChange(mode) },
+                modifier = Modifier.padding(horizontal = 20.dp).fillMaxWidth().clip(RoundedCornerShape(16.dp)).clickable { onThemeModeChange(mode) }.padding(12.dp),
                 verticalAlignment = Alignment.CenterVertically,
             ) {
                 RadioButton(selected = themeMode == mode, onClick = { onThemeModeChange(mode) })
                 Text(mode.label)
             }
         }
-        Text("当前为本地 MVP。持仓数据存储在后端 SQLite；请在生产部署前补充账号认证与备份。")
+        item { Text("当前为本地 MVP。持仓数据存储在后端 SQLite；请在生产部署前补充账号认证与备份。", modifier = Modifier.padding(horizontal = 20.dp), style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant) }
     }
 }

@@ -1,6 +1,6 @@
 from fastapi.testclient import TestClient
 
-from app.main import announcement_service, app, market_data, news_service, store
+from app.main import announcement_service, app, market_data, news_service, risk_service, store
 from app.time_utils import beijing_now
 
 client = TestClient(app)
@@ -75,11 +75,29 @@ def test_symbol_lookup_returns_candidates(monkeypatch):
     assert response.json()[0]["matches"][0]["symbol"] == "01810"
 
 
-def test_market_quote_uses_adapter(monkeypatch):
-    monkeypatch.setattr(market_data, "quotes", lambda symbols: [{"symbol": "01810", "price": 45.5, "currency": "HKD"}])
+def test_risk_assessments_are_returned_for_confirmed_holdings(monkeypatch):
+    client.post("/v1/holdings", json={"symbol": "01810", "name": "小米集团-W", "quantity": 100, "average_cost": 45.5})
+    monkeypatch.setattr(risk_service, "assess", lambda symbol, name: {
+        "symbol": symbol, "name": name, "horizon_trading_days": 5, "downside_threshold_percent": 5.0,
+        "historical_downside_probability": 12.5, "annualized_volatility_percent": 31.2,
+        "risk_level": "中", "confidence": "高", "sample_count": 180, "as_of": "2026-07-28",
+        "explanation": "历史样本统计。",
+    })
+    response = client.get("/v1/risk/assessments")
+    assert response.status_code == 200
+    assert response.json()[0]["historical_downside_probability"] == 12.5
+
+
+def test_market_quote_uses_adapter_and_exposes_freshness_metadata(monkeypatch):
+    monkeypatch.setattr(market_data, "quotes", lambda symbols: [{
+        "symbol": "01810", "price": 45.5, "currency": "HKD", "as_of": "2026-07-28",
+        "is_realtime": False, "license_scope": "public-source-review-required",
+    }])
     response = client.get("/v1/market/quotes", params=[("symbols", "01810")])
     assert response.status_code == 200
     assert response.json()[0]["symbol"] == "01810"
+    assert response.json()[0]["is_realtime"] is False
+    assert response.json()[0]["as_of"] == "2026-07-28"
 
 
 def test_feed_uses_news_adapter(monkeypatch):

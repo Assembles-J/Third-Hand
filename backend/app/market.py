@@ -3,7 +3,8 @@ from __future__ import annotations
 
 import time
 import re
-from datetime import datetime
+import os
+from datetime import datetime, timedelta
 from threading import Lock
 
 from app.time_utils import beijing_now
@@ -27,6 +28,10 @@ class MarketDataService:
         self._cache: dict[str, tuple[float, object, datetime, str]] = {}
         self._directory_cache: dict[str, tuple[float, object, datetime, str]] = {}
         self._lock = Lock()
+        self._provider = os.getenv("THIRD_HAND_MARKET_PROVIDER", "akshare").lower()
+        self._tushare_token = os.getenv("TUSHARE_TOKEN", "").strip()
+        if self._provider not in {"akshare", "tushare", "auto"}:
+            raise ValueError("THIRD_HAND_MARKET_PROVIDER must be akshare, tushare, or auto")
 
     def quotes(self, symbols: list[str]) -> list[dict[str, object]]:
         normalized = list(dict.fromkeys(symbol.strip().upper() for symbol in symbols if symbol.strip()))
@@ -38,8 +43,51 @@ class MarketDataService:
         if hk_symbols:
             quotes.extend(self._hk_quotes(hk_symbols))
         if a_symbols:
-            quotes.extend(self._from_frame(self._frame("a"), a_symbols, "CNY", "公开源快照，不应用于交易执行。"))
+            if self._use_tushare():
+                try:
+                    quotes.extend(self._tushare_a_quotes(a_symbols))
+                except MarketDataUnavailable:
+                    if self._provider != "auto":
+                        raise
+                    quotes.extend(self._from_frame(self._frame("a"), a_symbols, "CNY", "Tushare 不可用时的公开源快照，不应用于交易执行。"))
+            else:
+                quotes.extend(self._from_frame(self._frame("a"), a_symbols, "CNY", "公开源快照，不应用于交易执行。"))
         return quotes
+
+    def _use_tushare(self) -> bool:
+        return bool(self._tushare_token) and self._provider in {"tushare", "auto"}
+
+    def _tushare_a_quotes(self, symbols: list[str]) -> list[dict[str, object]]:
+        """Personal-research A-share end-of-day snapshots; never label as real-time."""
+        try:
+            import tushare as ts
+        except ImportError as error:
+            raise MarketDataUnavailable("未安装 Tushare，请在 backend 虚拟环境运行 pip install -r requirements.txt。", "tushare_not_installed") from error
+        records: list[dict[str, object]] = []
+        try:
+            client = ts.pro_api(self._tushare_token)
+            start_date = (beijing_now() - timedelta(days=10)).strftime("%Y%m%d")
+            for symbol in symbols:
+                exchange = "BJ" if symbol.startswith(("4", "8")) else ("SH" if symbol.startswith(("5", "6", "9")) else "SZ")
+                frame = client.daily(ts_code=f"{symbol}.{exchange}", start_date=start_date)
+                if frame is None or frame.empty:
+                    continue
+                latest = frame.iloc[0]
+                close = float(latest["close"])
+                pre_close = float(latest["pre_close"])
+                records.append({
+                    "symbol": symbol, "name": symbol, "price": close,
+                    "change": round(close - pre_close, 4), "change_percent": round(float(latest["pct_chg"]), 2),
+                    "open": latest.get("open"), "high": latest.get("high"), "low": latest.get("low"),
+                    "previous_close": pre_close, "volume": latest.get("vol"), "amount": latest.get("amount"),
+                    "currency": "CNY", "source": "Tushare Pro", "retrieved_at": beijing_now(),
+                    "as_of": str(latest["trade_date"]), "is_realtime": False, "delay_seconds": None,
+                    "license_scope": "personal-research-only",
+                    "freshness_note": "个人研究用盘后日线快照，不是实时行情，也不得用于交易执行。",
+                })
+        except Exception as error:
+            raise MarketDataUnavailable("Tushare 盘后行情暂时不可用，请稍后刷新。", "tushare_unavailable") from error
+        return records
 
     @staticmethod
     def _hk_quotes(symbols: list[str]) -> list[dict[str, object]]:
@@ -63,7 +111,9 @@ class MarketDataService:
                     "change_percent": change_percent, "open": latest.get("open"), "high": latest.get("high"),
                     "low": latest.get("low"), "previous_close": previous_close, "volume": latest.get("volume"),
                     "amount": latest.get("amount"), "currency": "HKD", "source": "新浪财经 / AKShare",
-                    "retrieved_at": beijing_now(), "freshness_note": "最近交易日收盘价，不应用于交易执行。",
+                    "retrieved_at": beijing_now(), "as_of": str(latest.name), "is_realtime": False,
+                    "delay_seconds": None, "license_scope": "public-source-review-required",
+                    "freshness_note": "最近交易日收盘快照，不是实时行情，也不得用于交易执行。",
                 })
             except Exception as error:
                 raise MarketDataUnavailable("港股行情源暂时不可用，请稍后刷新。") from error
@@ -143,6 +193,8 @@ class MarketDataService:
             "high": record.get("最高"), "low": record.get("最低"), "previous_close": record.get("昨收"),
             "volume": record.get("成交量"), "amount": record.get("成交额"), "currency": currency,
             "source": source, "retrieved_at": retrieved_at, "freshness_note": freshness_note,
+            "as_of": retrieved_at.date().isoformat(), "is_realtime": False, "delay_seconds": None,
+            "license_scope": "public-source-review-required",
         } for record in records]
 
     @staticmethod

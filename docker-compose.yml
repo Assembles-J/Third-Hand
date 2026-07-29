@@ -10,6 +10,8 @@ services:
     environment:
       TZ: Asia/Shanghai
       THIRD_HAND_DB_PATH: /app/data/third_hand.db
+      THIRD_HAND_MARKET_PROVIDER: ${THIRD_HAND_MARKET_PROVIDER:-akshare}
+      TUSHARE_TOKEN: ${TUSHARE_TOKEN:-}
     volumes:
       - ./data:/app/data
     ports:

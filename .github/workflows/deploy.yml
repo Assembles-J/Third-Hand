@@ -49,10 +49,13 @@ jobs:
           overwrite: true
       - name: Build and start services
         uses: appleboy/ssh-action@v1.2.2
+        env:
+          TUSHARE_TOKEN: ${{ secrets.TUSHARE_TOKEN }}
         with:
           host: ${{ secrets.SERVER_IP }}
           username: ${{ secrets.SERVER_USER }}
           key: ${{ secrets.SERVER_SSH_KEY }}
+          envs: TUSHARE_TOKEN
           script: |
             set -e
             cd /opt/third-hand
@@ -60,6 +63,11 @@ jobs:
               cp .env.example .env
               echo "Created initial .env from .env.example"
             fi
+            # The secret stays out of the repository and the workflow logs.
+            umask 077
+            sed -i '/^TUSHARE_TOKEN=/d; /^THIRD_HAND_MARKET_PROVIDER=/d' .env
+            printf '%s\n' 'THIRD_HAND_MARKET_PROVIDER=auto' >> .env
+            printf 'TUSHARE_TOKEN=%s\n' "$TUSHARE_TOKEN" >> .env
             if docker compose version >/dev/null 2>&1; then
               docker compose up -d --build --remove-orphans
               docker compose ps

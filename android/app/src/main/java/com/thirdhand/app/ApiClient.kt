@@ -51,6 +51,10 @@ data class MarketQuoteDto(
     val source: String,
     val retrieved_at: String,
     val freshness_note: String,
+    val as_of: String? = null,
+    val is_realtime: Boolean = false,
+    val delay_seconds: Int? = null,
+    val license_scope: String = "unknown",
 )
 
 data class SecurityCandidateDto(
@@ -64,6 +68,21 @@ data class SecurityCandidateDto(
 data class SymbolLookupResultDto(
     val query: String,
     val matches: List<SecurityCandidateDto>,
+)
+
+data class RiskAssessmentDto(
+    val symbol: String,
+    val name: String,
+    val horizon_trading_days: Int,
+    val downside_threshold_percent: Double,
+    val historical_downside_probability: Double,
+    val annualized_volatility_percent: Double,
+    val risk_level: String,
+    val confidence: String,
+    val sample_count: Int,
+    val as_of: String,
+    val explanation: String,
+    val disclaimer: String,
 )
 
 data class NewsItemDto(
@@ -110,6 +129,9 @@ interface ThirdHandApi {
 
     @GET("v1/market/symbols")
     suspend fun symbolLookup(@Query("names") names: List<String>): List<SymbolLookupResultDto>
+
+    @GET("v1/risk/assessments")
+    suspend fun riskAssessments(): List<RiskAssessmentDto>
 
     @GET("v1/feed")
     suspend fun feed(@Query("symbols") symbols: List<String>): List<NewsItemDto>

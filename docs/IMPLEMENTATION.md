@@ -12,7 +12,9 @@
 
 持仓使用 SQLite 保存，默认文件为 `backend/data/third_hand.db`；Docker 环境使用项目根目录的 `data/` 卷，因此容器重启不会清空持仓。它适合单实例 MVP；生产接入多用户登录后，再评估 PostgreSQL。无论使用何种数据库，都应补充认证、静态加密、备份和删除/导出机制。
 
-行情适配器会将相同市场的全量公开快照缓存 60 秒，避免每次 App 刷新都请求公开网站。港股 `01810`（小米集团-W）走 `stock_hk_spot_em`；A 股走 `stock_zh_a_spot_em`。这是信息展示与提醒用途的公开源快照，绝不能用作下单、止损或任何交易执行依据。
+行情适配器会将相同市场的全量公开快照缓存 60 秒，避免每次 App 刷新都请求公开网站。默认 A 股走 `stock_zh_a_spot_em`，港股 `01810`（小米集团-W）走最近交易日的日线收盘快照；二者均非实时行情，绝不能用作下单、止损或任何交易执行依据。
+
+个人研究模式可配置 `THIRD_HAND_MARKET_PROVIDER=auto` 与自己的 `TUSHARE_TOKEN`，让 A 股优先使用 Tushare Pro 的盘后日线；不可用时会降级 AKShare。接口会明确返回 `as_of`、`is_realtime`、`delay_seconds` 与 `license_scope`；客户端必须展示这些字段。公告仍以巨潮资讯和各交易所原文为事实依据。港股实时行情应通过 HKEX 授权供应商接入，不能以公开抓取源替代。
 
 信息流会按持仓调用 AKShare 的公开个股新闻接口，保留原文链接、来源、发布时间和关联代码，并以 5 分钟缓存限制请求频率。新闻源不可用时接口返回 `503`，不会用过时示例消息伪装成实时新闻。原文仍是用户核查事实的依据。
 
@@ -76,7 +78,7 @@ Compose 默认只将 API 绑定到 `127.0.0.1:8000`，因此公网无法直接�
 
 `Deploy` 工作流只允许手动运行，并要求 GitHub Environment `production`。在仓库的 **Settings → Secrets and variables → Actions** 中配置：
 
-- Secrets：`SERVER_IP`、`SERVER_USER`、`SERVER_SSH_KEY`。
+- Secrets：`SERVER_IP`、`SERVER_USER`、`SERVER_SSH_KEY`、`TUSHARE_TOKEN`。
 - 部署目录固定为 `/opt/third-hand`，无需再配置 `SERVER_PATH`。
 
 部署工作流与现有 Group-IM 项目一样使用 Appleboy 的 SSH/SCP Action，不再要求 `SERVER_KNOWN_HOSTS`。部署用户只应拥有目标部署目录及 Docker Compose 所需的最小权限。

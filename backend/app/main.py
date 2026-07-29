@@ -20,6 +20,7 @@ from app.news import NewsDataUnavailable, NewsService
 from app.announcements import AnnouncementDataUnavailable, AnnouncementService
 from app.storage import PortfolioStore
 from app.time_utils import beijing_now
+from app.risk import RiskDataUnavailable, RiskService
 
 app = FastAPI(title="Third-Hand API", version="0.2.0")
 app.add_middleware(
@@ -101,10 +102,48 @@ class SymbolLookupResult(BaseModel):
     matches: list[SecurityCandidate]
 
 
+class MarketQuote(BaseModel):
+    symbol: str
+    name: str = ""
+    price: float | None = None
+    change: float | None = None
+    change_percent: float | None = None
+    open: float | None = None
+    high: float | None = None
+    low: float | None = None
+    previous_close: float | None = None
+    volume: float | None = None
+    amount: float | None = None
+    currency: str
+    source: str = ""
+    retrieved_at: datetime | None = None
+    as_of: str | None = None
+    is_realtime: bool = False
+    delay_seconds: int | None = None
+    license_scope: str = "unknown"
+    freshness_note: str = ""
+
+
+class RiskAssessment(BaseModel):
+    symbol: str
+    name: str
+    horizon_trading_days: int
+    downside_threshold_percent: float
+    historical_downside_probability: float
+    annualized_volatility_percent: float
+    risk_level: str
+    confidence: str
+    sample_count: int
+    as_of: str
+    explanation: str
+    disclaimer: str = "基于历史价格的风险统计，不构成对未来价格的预测或任何投资建议。"
+
+
 store = PortfolioStore()
 market_data = MarketDataService()
 news_service = NewsService()
 announcement_service = AnnouncementService()
+risk_service = RiskService()
 
 GLOSSARY = {
     "pe": GlossaryCard(term="PE（市盈率）", plain_explanation="股价相对于每股盈利的倍数。它不是越低越好，要结合行业和盈利质量判断。", watch_for="亏损或一次性收益会使 PE 失真。"),
@@ -159,11 +198,11 @@ def announcements(
         raise HTTPException(status_code=503, detail=str(error)) from error
 
 
-@app.get("/v1/market/quotes")
-def market_quotes(symbols: Annotated[list[str], Query()]) -> list[dict[str, object]]:
-    """Return cached public-source snapshots for A shares and Hong Kong listings."""
+@app.get("/v1/market/quotes", response_model=list[MarketQuote])
+def market_quotes(symbols: Annotated[list[str], Query()]) -> list[MarketQuote]:
+    """Return snapshots with explicit as-of, delay, and licensing metadata."""
     try:
-        return market_data.quotes(symbols)
+        return [MarketQuote.model_validate(item) for item in market_data.quotes(symbols)]
     except MarketDataUnavailable as error:
         raise HTTPException(status_code=503, detail={"message": str(error), "code": error.code}) from error
 
@@ -175,6 +214,18 @@ def market_symbol_lookup(names: Annotated[list[str], Query()]) -> list[SymbolLoo
         return [SymbolLookupResult.model_validate(item) for item in market_data.lookup_symbols(names)]
     except MarketDataUnavailable as error:
         raise HTTPException(status_code=503, detail={"message": str(error), "code": error.code}) from error
+
+
+@app.get("/v1/risk/assessments", response_model=list[RiskAssessment])
+def risk_assessments() -> list[RiskAssessment]:
+    """Return historical risk statistics for holdings that have a confirmed symbol."""
+    try:
+        return [
+            RiskAssessment.model_validate(risk_service.assess(str(holding["symbol"]), str(holding["name"])))
+            for holding in store.list()
+        ]
+    except RiskDataUnavailable as error:
+        raise HTTPException(status_code=503, detail=str(error)) from error
 
 
 @app.get("/v1/glossary/{term}", response_model=GlossaryCard)
