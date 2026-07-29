@@ -11,7 +11,7 @@ from datetime import datetime
 from typing import Annotated
 from uuid import uuid4
 
-from fastapi import FastAPI, HTTPException, Query, Response, status
+from fastapi import BackgroundTasks, FastAPI, HTTPException, Query, Response, status
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field, field_validator
 
@@ -198,11 +198,25 @@ def announcements(
         raise HTTPException(status_code=503, detail=str(error)) from error
 
 
-@app.get("/v1/market/quotes", response_model=list[MarketQuote])
-def market_quotes(symbols: Annotated[list[str], Query()]) -> list[MarketQuote]:
-    """Return snapshots with explicit as-of, delay, and licensing metadata."""
+def refresh_quote_cache(symbols: list[str]) -> None:
     try:
-        return [MarketQuote.model_validate(item) for item in market_data.quotes(symbols)]
+        store.save_quotes(market_data.quotes(symbols))
+    except MarketDataUnavailable:
+        pass
+
+
+@app.get("/v1/market/quotes", response_model=list[MarketQuote])
+def market_quotes(symbols: Annotated[list[str], Query()], background_tasks: BackgroundTasks) -> list[MarketQuote]:
+    """Return the last saved snapshot immediately, then refresh it in the background."""
+    requested = list(dict.fromkeys(symbol.strip().upper() for symbol in symbols if symbol.strip()))
+    cached = store.cached_quotes(requested)
+    if cached:
+        background_tasks.add_task(refresh_quote_cache, requested)
+        return [MarketQuote.model_validate(item) for item in cached]
+    try:
+        quotes = market_data.quotes(requested)
+        store.save_quotes(quotes)
+        return [MarketQuote.model_validate(item) for item in quotes]
     except MarketDataUnavailable as error:
         raise HTTPException(status_code=503, detail={"message": str(error), "code": error.code}) from error
 

@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import os
 import sqlite3
+import json
 from pathlib import Path
 from threading import Lock
 
@@ -43,6 +44,13 @@ class PortfolioStore:
                         quantity REAL NOT NULL CHECK (quantity > 0),
                         average_cost REAL NOT NULL CHECK (average_cost >= 0),
                         created_at TEXT NOT NULL
+                    )
+                """)
+                connection.execute("""
+                    CREATE TABLE IF NOT EXISTS market_quote_cache (
+                        symbol TEXT PRIMARY KEY,
+                        payload TEXT NOT NULL,
+                        updated_at TEXT NOT NULL
                     )
                 """)
 
@@ -122,3 +130,24 @@ class PortfolioStore:
         with self._connect() as connection:
             connection.execute("DELETE FROM holdings")
             connection.execute("DELETE FROM holding_drafts")
+            connection.execute("DELETE FROM market_quote_cache")
+
+    def cached_quotes(self, symbols: list[str]) -> list[dict[str, object]]:
+        if not symbols:
+            return []
+        placeholders = ",".join("?" for _ in symbols)
+        with self._connect() as connection:
+            rows = connection.execute(f"SELECT payload FROM market_quote_cache WHERE symbol IN ({placeholders})", symbols).fetchall()
+        return [json.loads(str(row["payload"])) for row in rows]
+
+    def save_quotes(self, quotes: list[dict[str, object]]) -> None:
+        if not quotes:
+            return
+        timestamp = beijing_now().isoformat()
+        rows = [(str(quote["symbol"]), json.dumps(quote, ensure_ascii=False, default=str), timestamp) for quote in quotes]
+        with self._connect() as connection:
+            connection.executemany(
+                "INSERT INTO market_quote_cache (symbol, payload, updated_at) VALUES (?, ?, ?) "
+                "ON CONFLICT(symbol) DO UPDATE SET payload=excluded.payload, updated_at=excluded.updated_at",
+                rows,
+            )

@@ -12,6 +12,24 @@ data class RecognizedHolding(val name: String, val quantity: Double, val average
 
 /** On-device OCR: screenshots stay on the phone and are never uploaded to Third-Hand. */
 object ScreenshotOcr {
+    /** Extract name/code pairs from a watchlist screenshot before parsing holdings. */
+    suspend fun scanWatchlistSymbols(context: Context, imageUri: Uri): Map<String, String> {
+        val image = InputImage.fromFilePath(context, imageUri)
+        val recognizer = TextRecognition.getClient(ChineseTextRecognizerOptions.Builder().build())
+        val lines = try { recognizer.process(image).await().textBlocks.flatMap { it.lines } } finally { recognizer.close() }
+        val codePattern = Regex("(?<!\\d)(?:HK\\s*)?(\\d{5,6})(?!\\d)", RegexOption.IGNORE_CASE)
+        return lines.mapNotNull { nameLine ->
+            val name = nameLine.text.trim()
+            val box = nameLine.boundingBox ?: return@mapNotNull null
+            if (!name.contains(Regex("[\\u4e00-\\u9fff]"))) return@mapNotNull null
+            val code = lines.firstNotNullOfOrNull { candidate ->
+                val candidateBox = candidate.boundingBox ?: return@firstNotNullOfOrNull null
+                if (abs(candidateBox.top - box.top) < 70) codePattern.find(candidate.text)?.groupValues?.get(1) else null
+            }
+            code?.let { name to it }
+        }.toMap()
+    }
+
     suspend fun scan(context: Context, imageUri: Uri): List<RecognizedHolding> {
         val image = InputImage.fromFilePath(context, imageUri)
         val recognizer = TextRecognition.getClient(ChineseTextRecognizerOptions.Builder().build())
