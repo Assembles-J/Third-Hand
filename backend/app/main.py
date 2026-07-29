@@ -7,14 +7,17 @@ from __future__ import annotations
 
 import csv
 import io
+import os
 import time
 from datetime import datetime
+from pathlib import Path
 from threading import Thread
 from typing import Annotated
 from uuid import uuid4
 
 from fastapi import BackgroundTasks, FastAPI, HTTPException, Query, Response, status
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import FileResponse
 from pydantic import BaseModel, Field, field_validator
 
 from app.market import MarketDataService, MarketDataUnavailable
@@ -25,6 +28,7 @@ from app.time_utils import beijing_now
 from app.risk import RiskDataUnavailable, RiskService
 from app.ai_analysis import AiAnalysisService
 from app.portfolio_analysis import assess_holdings
+from app.technical_analysis import TechnicalAnalysisService
 
 app = FastAPI(title="Third-Hand API", version="0.2.0")
 APP_STARTED_AT = time.monotonic()
@@ -54,6 +58,13 @@ class AdminOverview(BaseModel):
     cached_quotes_count: int
     cached_content_count: int
     database_bytes: int
+
+
+class AppUpdate(BaseModel):
+    version_code: int = Field(ge=1)
+    version_name: str = Field(min_length=1)
+    apk_url: str
+    changelog: str = ""
 
 
 class NewsItem(BaseModel):
@@ -160,9 +171,9 @@ class RiskAssessment(BaseModel):
     disclaimer: str = "基于历史价格的风险统计，不构成对未来价格的预测或任何投资建议。"
 
 class PortfolioAnalysisItem(BaseModel):
-    symbol: str; name: str; action: str; reason: str; evidence: list[str]; confidence_percent: int = Field(ge=0, le=100); rule_snapshot: dict[str, object] | None = None; disclaimer: str
+    symbol: str; name: str; action: str; reason: str; evidence: list[str]; confidence_percent: int = Field(ge=0, le=100); rule_snapshot: dict[str, object] | None = None; analysis_trace: list[dict[str, str]] = Field(default_factory=list); disclaimer: str
 class PortfolioAnalysis(BaseModel):
-    id: str; items: list[PortfolioAnalysisItem]
+    id: str; generated_at: datetime; items: list[PortfolioAnalysisItem]
 class LearningCaseInput(BaseModel):
     symbol: str | None = Field(default=None, max_length=16)
     title: str = Field(min_length=3, max_length=120)
@@ -194,6 +205,7 @@ news_service = NewsService()
 announcement_service = AnnouncementService()
 risk_service = RiskService()
 ai_analysis_service = AiAnalysisService(store)
+technical_analysis_service = TechnicalAnalysisService()
 
 GLOSSARY = {
     "pe": GlossaryCard(term="PE（市盈率）", plain_explanation="股价相对于每股盈利的倍数。它不是越低越好，要结合行业和盈利质量判断。", watch_for="亏损或一次性收益会使 PE 失真。"),
@@ -215,6 +227,47 @@ def seed_news(symbols: list[str]) -> list[NewsItem]:
 @app.get("/health")
 def health() -> dict[str, str]:
     return {"status": "ok"}
+
+
+def configured_release_apk() -> Path | None:
+    """Return the configured APK only when it remains inside the releases directory."""
+    filename = os.getenv("APP_UPDATE_APK_FILE", "").strip()
+    if not filename or Path(filename).name != filename:
+        return None
+    release_directory = Path(os.getenv("APP_UPDATE_DIRECTORY", "/app/releases")).resolve()
+    candidate = (release_directory / filename).resolve()
+    try:
+        candidate.relative_to(release_directory)
+    except ValueError:
+        return None
+    return candidate if candidate.is_file() else None
+
+
+@app.get("/v1/app-update/apk", response_class=FileResponse, responses={404: {"description": "Release APK not found"}})
+def download_app_update() -> FileResponse:
+    apk = configured_release_apk()
+    if apk is None:
+        raise HTTPException(status_code=404, detail="Release APK is not configured")
+    return FileResponse(
+        apk,
+        media_type="application/vnd.android.package-archive",
+        filename=apk.name,
+        headers={"Cache-Control": "no-store"},
+    )
+
+
+@app.get("/v1/app-update", response_model=AppUpdate, responses={204: {"description": "No update configured"}})
+def app_update() -> Response | AppUpdate:
+    """Return metadata for the APK served by this API deployment."""
+    public_base_url = os.getenv("APP_PUBLIC_BASE_URL", "").strip().rstrip("/")
+    if configured_release_apk() is None or not public_base_url.startswith("https://"):
+        return Response(status_code=status.HTTP_204_NO_CONTENT)
+    return AppUpdate(
+        version_code=int(os.getenv("APP_UPDATE_VERSION_CODE", "1")),
+        version_name=os.getenv("APP_UPDATE_VERSION_NAME", "0.1.0"),
+        apk_url=f"{public_base_url}/v1/app-update/apk",
+        changelog=os.getenv("APP_UPDATE_CHANGELOG", ""),
+    )
 
 
 @app.get("/v1/admin/overview", response_model=AdminOverview)
@@ -355,7 +408,8 @@ def risk_assessments() -> list[RiskAssessment]:
 @app.get("/v1/portfolio/analysis", response_model=PortfolioAnalysis)
 def portfolio_analysis() -> PortfolioAnalysis:
     holdings = store.list()
-    payload = assess_holdings(holdings, store.cached_quotes([str(item["symbol"]) for item in holdings]), store)
+    payload = assess_holdings(holdings, store.cached_quotes([str(item["symbol"]) for item in holdings]), store, technical_analysis_service)
+    payload["generated_at"] = beijing_now().isoformat()
     store.save_portfolio_analysis(payload)
     store.save_analysis_run(payload)
     return PortfolioAnalysis.model_validate(payload)

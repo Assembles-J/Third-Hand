@@ -13,8 +13,15 @@ services:
       THIRD_HAND_MARKET_PROVIDER: ${THIRD_HAND_MARKET_PROVIDER:-akshare}
       TUSHARE_TOKEN: ${TUSHARE_TOKEN:-}
       DEEPSEEK_API_KEY: ${DEEPSEEK_API_KEY:-}
+      APP_PUBLIC_BASE_URL: ${APP_PUBLIC_BASE_URL:-}
+      APP_UPDATE_DIRECTORY: /app/releases
+      APP_UPDATE_APK_FILE: ${APP_UPDATE_APK_FILE:-}
+      APP_UPDATE_VERSION_CODE: ${APP_UPDATE_VERSION_CODE:-1}
+      APP_UPDATE_VERSION_NAME: ${APP_UPDATE_VERSION_NAME:-0.1.0}
+      APP_UPDATE_CHANGELOG: ${APP_UPDATE_CHANGELOG:-}
     volumes:
       - ./data:/app/data
+      - ./releases:/app/releases:ro
     ports:
       # Temporary direct access for debugging. Restrict this to localhost again before production.
       - "0.0.0.0:${API_PORT:-8000}:8000"

@@ -15,20 +15,27 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.gestures.detectHorizontalDragGestures
 import androidx.compose.foundation.background
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.animation.core.animateDpAsState
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.AccountCircle
 import androidx.compose.material.icons.filled.AdminPanelSettings
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.AutoGraph
 import androidx.compose.material.icons.filled.CameraAlt
+import androidx.compose.material.icons.filled.ChevronRight
+import androidx.compose.material.icons.filled.Delete
+import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.Search
 import androidx.compose.material.icons.filled.Wallet
@@ -66,6 +73,8 @@ import androidx.compose.ui.platform.LocalUriHandler
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.clipToBounds
+import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
@@ -76,6 +85,7 @@ import androidx.compose.ui.unit.dp
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import java.time.OffsetDateTime
+import java.time.LocalDate
 import java.time.ZoneOffset
 import java.time.format.DateTimeFormatter
 import kotlinx.coroutines.delay
@@ -308,11 +318,16 @@ private fun TodayScreen() {
     }
 }
 
-@Composable
-private fun beijingTimestamp(value: String?): String = runCatching {
-    OffsetDateTime.parse(value).withOffsetSameInstant(ZoneOffset.ofHours(8))
-        .format(DateTimeFormatter.ofPattern("MM-dd HH:mm:ss 'UTC+8'"))
-}.getOrElse { value.orEmpty() }
+private fun beijingTimestamp(value: String?): String {
+    if (value.isNullOrBlank()) return "—"
+    return runCatching {
+        OffsetDateTime.parse(value).withOffsetSameInstant(ZoneOffset.ofHours(8))
+            .format(DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss"))
+    }.getOrElse {
+        runCatching { LocalDate.parse(value).format(DateTimeFormatter.ISO_LOCAL_DATE) }
+            .getOrElse { value.replace('T', ' ').substringBefore("+").substringBefore("Z") }
+    }
+}
 
 private fun marketNumber(value: Double?): String = when {
     value == null -> "--"
@@ -415,7 +430,7 @@ private fun HoldingCard(holding: HoldingDto, onDelete: () -> Unit) = Card(
             HoldingMetric("平均成本", holding.average_cost.toString(), Modifier.weight(1f))
         }
         Row(verticalAlignment = Alignment.CenterVertically) {
-            Text("已记录 · ${holding.created_at}", modifier = Modifier.weight(1f), style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            Text("已记录 · ${beijingTimestamp(holding.created_at)}", modifier = Modifier.weight(1f), style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
             TextButton(onClick = onDelete, colors = ButtonDefaults.textButtonColors(contentColor = MaterialTheme.colorScheme.error)) { Text("删除") }
         }
     }
@@ -464,11 +479,17 @@ private fun HoldingsScreen() {
     var holdings by remember { mutableStateOf<List<HoldingDto>>(emptyList()) }
     var drafts by remember { mutableStateOf<List<HoldingDraftDto>>(emptyList()) }
     var quotesBySymbol by remember { mutableStateOf<Map<String, MarketQuoteDto>>(emptyMap()) }
+    var analysisBySymbol by remember { mutableStateOf<Map<String, PortfolioAnalysisItemDto>>(emptyMap()) }
+    var analysisRun by remember { mutableStateOf<PortfolioAnalysisDto?>(null) }
     var error by remember { mutableStateOf<String?>(null) }
     var quoteError by remember { mutableStateOf<String?>(null) }
     var showAdd by remember { mutableStateOf(false) }
     var editingDraft by remember { mutableStateOf<HoldingDraftDto?>(null) }
     var editingHolding by remember { mutableStateOf<HoldingDto?>(null) }
+    var revealedHoldingId by remember { mutableStateOf<String?>(null) }
+    var deleteCandidate by remember { mutableStateOf<HoldingDto?>(null) }
+    var showMarketStatusDetails by remember { mutableStateOf(false) }
+    var showAnalysisDetails by remember { mutableStateOf(false) }
     var scanError by remember { mutableStateOf<String?>(null) }
     val scope = rememberCoroutineScope()
     val imagePicker = rememberLauncherForActivityResult(ActivityResultContracts.OpenMultipleDocuments()) { imageUris ->
@@ -497,6 +518,8 @@ private fun HoldingsScreen() {
         try {
             holdings = api.holdings()
             drafts = api.holdingDrafts()
+            analysisRun = try { api.portfolioAnalysis() } catch (_: Exception) { null }
+            analysisBySymbol = analysisRun?.items?.associateBy { it.symbol } ?: emptyMap()
             error = null
             quoteError = null
             quotesBySymbol = if (holdings.isEmpty()) emptyMap() else try {
@@ -528,8 +551,17 @@ private fun HoldingsScreen() {
                 TextButton(onClick = { imagePicker.launch(arrayOf("image/*")) }) { Icon(Icons.Filled.CameraAlt, null); Text("导入") }
             }
         }
+        item {
+            MarketStatusEntry(
+                quotes = quotesBySymbol.values.toList(),
+                error = quoteError,
+                onClick = { showMarketStatusDetails = true },
+            )
+        }
+        if (analysisBySymbol.isNotEmpty()) item {
+            AnalysisEntry(count = analysisBySymbol.size, onClick = { showAnalysisDetails = true })
+        }
         error?.let { message -> item { StatusCard(message, error = true) } }
-        quoteError?.let { message -> item { Text(message, Modifier.padding(horizontal = 14.dp), color = MaterialTheme.colorScheme.onSurfaceVariant, style = MaterialTheme.typography.bodySmall) } }
         scanError?.let { message -> item { StatusCard(message, error = true) } }
         if (drafts.isNotEmpty()) item { Text("待补全代码", modifier = Modifier.padding(start = 20.dp, top = 6.dp, end = 20.dp), style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold) }
         items(drafts, key = { it.id }) { draft ->
@@ -545,7 +577,10 @@ private fun HoldingsScreen() {
                 holding = holding,
                 quote = quotesBySymbol[holding.symbol],
                 onEdit = { editingHolding = holding },
-                onDelete = { scope.launch { api.deleteHolding(holding.id); refresh() } },
+                isDeleteRevealed = revealedHoldingId == holding.id,
+                onRevealDelete = { revealedHoldingId = holding.id },
+                onCloseDelete = { revealedHoldingId = null },
+                onDelete = { deleteCandidate = holding },
             )
         }
     }
@@ -569,6 +604,41 @@ private fun HoldingsScreen() {
         onDismiss = { editingHolding = null },
         onSave = { input -> scope.launch { try { api.updateHolding(holding.id, input); editingHolding = null; refresh() } catch (_: Exception) { error = "更新持仓失败，请稍后重试。" } } },
     ) }
+    deleteCandidate?.let { holding -> AlertDialog(
+        onDismissRequest = { deleteCandidate = null },
+        icon = { Icon(Icons.Filled.Delete, null, tint = MaterialTheme.colorScheme.error) },
+        title = { Text("删除持仓？") },
+        text = { Text("确认删除 ${holding.name}（${holding.symbol}）的持仓记录吗？此操作不可撤销。") },
+        confirmButton = {
+            Button(
+                onClick = { scope.launch { api.deleteHolding(holding.id); deleteCandidate = null; revealedHoldingId = null; refresh() } },
+                colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.error),
+            ) { Text("删除") }
+        },
+        dismissButton = { TextButton(onClick = { deleteCandidate = null }) { Text("取消") } },
+    ) }
+    if (showMarketStatusDetails) AlertDialog(
+        onDismissRequest = { showMarketStatusDetails = false },
+        title = { Text("行情状态") },
+        text = {
+            val quote = quotesBySymbol.values.firstOrNull()
+            Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                Text(if (quoteError == null && quote != null) "行情更新正常" else "行情更新异常", fontWeight = FontWeight.Bold)
+                quote?.let {
+                    Text("来源：${it.source}", style = MaterialTheme.typography.bodySmall)
+                    Text("更新时间：${beijingTimestamp(it.retrieved_at)}", style = MaterialTheme.typography.bodySmall)
+                    if (it.freshness_note.isNotBlank()) Text("数据说明：${it.freshness_note}", style = MaterialTheme.typography.bodySmall)
+                }
+                quoteError?.let { Text("摘要：$it", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.error) }
+            }
+        },
+        confirmButton = { TextButton(onClick = { showMarketStatusDetails = false }) { Text("知道了") } },
+    )
+    if (showAnalysisDetails) AnalysisDetailDialog(
+        analysis = analysisRun,
+        fallbackItems = analysisBySymbol.values.toList(),
+        onDismiss = { showAnalysisDetails = false },
+    )
 }
 
 private fun formatPositionValue(value: Double): String = "%.2f".format(value)
@@ -595,8 +665,17 @@ private fun PositionHeader(label: String, modifier: Modifier, alignment: TextAli
 )
 
 @Composable
-private fun HoldingTableRow(holding: HoldingDto, quote: MarketQuoteDto?, onEdit: () -> Unit, onDelete: () -> Unit) {
+private fun HoldingTableRow(
+    holding: HoldingDto,
+    quote: MarketQuoteDto?,
+    onEdit: () -> Unit,
+    isDeleteRevealed: Boolean,
+    onRevealDelete: () -> Unit,
+    onCloseDelete: () -> Unit,
+    onDelete: () -> Unit,
+) {
     val currentPrice = quote?.price
+    val currency = quote?.currency ?: "CNY"
     val marketValue = currentPrice?.let { it * holding.quantity }
     val pnl = currentPrice?.let { (it - holding.average_cost) * holding.quantity }
     val pnlPercent = currentPrice?.let { if (holding.average_cost == 0.0) null else (it - holding.average_cost) / holding.average_cost * 100 }
@@ -605,18 +684,47 @@ private fun HoldingTableRow(holding: HoldingDto, quote: MarketQuoteDto?, onEdit:
         pnl >= 0 -> Color(0xFFD32F2F)
         else -> Color(0xFF178A4B)
     }
-    Column(Modifier.fillMaxWidth()) {
+    val deleteOffset by animateDpAsState(if (isDeleteRevealed) (-76).dp else 0.dp, label = "holdingDeleteOffset")
+    var horizontalDrag by remember(holding.id) { mutableStateOf(0f) }
+    Box(Modifier.fillMaxWidth().clipToBounds()) {
         Row(
-            Modifier.fillMaxWidth().padding(horizontal = 10.dp, vertical = 9.dp),
+            Modifier.align(Alignment.CenterEnd).width(76.dp)
+                .background(MaterialTheme.colorScheme.error).clickable(onClick = onDelete),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.Center,
+        ) {
+            Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                Icon(Icons.Filled.Delete, "删除 ${holding.name}", tint = MaterialTheme.colorScheme.onError)
+                Text("删除", color = MaterialTheme.colorScheme.onError, style = MaterialTheme.typography.labelSmall)
+            }
+        }
+        Row(
+            Modifier.fillMaxWidth().offset(x = deleteOffset)
+                .background(MaterialTheme.colorScheme.background)
+                .pointerInput(holding.id, isDeleteRevealed) {
+                    detectHorizontalDragGestures(
+                        onDragStart = { horizontalDrag = 0f },
+                        onHorizontalDrag = { _, dragAmount -> horizontalDrag += dragAmount },
+                        onDragEnd = {
+                            if (horizontalDrag < -32f) onRevealDelete()
+                            else if (horizontalDrag > 20f) onCloseDelete()
+                        },
+                    )
+                }
+                .clickable { if (isDeleteRevealed) onCloseDelete() else onEdit() }
+                .padding(horizontal = 8.dp, vertical = 4.dp),
             verticalAlignment = Alignment.CenterVertically,
         ) {
             Column(Modifier.weight(1.15f)) {
-                Text(holding.name, maxLines = 1, overflow = TextOverflow.Ellipsis, fontWeight = FontWeight.SemiBold, style = MaterialTheme.typography.bodyMedium)
-                Text(marketValue?.let(::formatPositionValue) ?: "市值待更新", color = MaterialTheme.colorScheme.onSurfaceVariant, style = MaterialTheme.typography.labelSmall)
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Text(holding.name, modifier = Modifier.weight(1f, false), maxLines = 1, overflow = TextOverflow.Ellipsis, fontWeight = FontWeight.SemiBold, style = MaterialTheme.typography.bodySmall)
+                    Text(marketTag(currency), modifier = Modifier.padding(start = 3.dp), color = MaterialTheme.colorScheme.onSurfaceVariant, style = MaterialTheme.typography.labelSmall)
+                }
+                Text(marketValue?.let { "${formatCurrency(it, currency)} · ${rmbEstimate(it, currency)}" } ?: "市值待更新", color = MaterialTheme.colorScheme.onSurfaceVariant, style = MaterialTheme.typography.labelSmall, maxLines = 1)
             }
             PositionValueCell(
-                main = pnl?.let(::signedPositionValue) ?: "—",
-                sub = pnlPercent?.let { "${if (it >= 0) "+" else ""}${"%.2f".format(it)}%" } ?: "待更新",
+                main = pnl?.let { signedCurrencyValue(it, currency) } ?: "—",
+                sub = pnlPercent?.let { percent -> "${if (percent >= 0) "+" else ""}${"%.2f".format(percent)}%" }?.let { percent -> pnl?.let { "$percent · ${rmbEstimate(it, currency)}" } } ?: "待更新",
                 color = pnlColor, modifier = Modifier.weight(1f),
             )
             PositionValueCell(
@@ -624,20 +732,196 @@ private fun HoldingTableRow(holding: HoldingDto, quote: MarketQuoteDto?, onEdit:
                 color = MaterialTheme.colorScheme.onSurface, modifier = Modifier.weight(.78f),
             )
             PositionValueCell(
-                main = formatPositionValue(holding.average_cost), sub = currentPrice?.let(::formatPositionValue) ?: "—",
+                main = formatCurrency(holding.average_cost, currency),
+                sub = currentPrice?.let { "现 ${formatCurrency(it, currency)} · ${rmbEstimate(it, currency)}" } ?: "—",
                 color = MaterialTheme.colorScheme.onSurface, modifier = Modifier.weight(1f),
             )
+            if (!isDeleteRevealed) Icon(Icons.Filled.ChevronRight, "编辑 ${holding.name}", tint = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.width(12.dp))
         }
-        Row(Modifier.fillMaxWidth().padding(horizontal = 10.dp), horizontalArrangement = Arrangement.End) {
-            TextButton(onClick = onEdit, contentPadding = androidx.compose.foundation.layout.PaddingValues(horizontal = 4.dp, vertical = 0.dp)) {
-                Text("编辑", style = MaterialTheme.typography.labelSmall)
-            }
-            TextButton(onClick = onDelete, contentPadding = androidx.compose.foundation.layout.PaddingValues(horizontal = 4.dp, vertical = 0.dp)) {
-                Text("删除", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.error)
-            }
-        }
+    }
+    Column(Modifier.fillMaxWidth()) {
         HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = .65f))
     }
+}
+
+@Composable
+private fun MarketStatusEntry(quotes: List<MarketQuoteDto>, error: String?, onClick: () -> Unit) {
+    val quote = quotes.firstOrNull()
+    val status = when {
+        error != null -> "更新异常"
+        quote == null -> "等待更新"
+        else -> "行情正常"
+    }
+    val color = if (error == null && quote != null) MaterialTheme.colorScheme.tertiary else MaterialTheme.colorScheme.error
+    Row(
+        Modifier.fillMaxWidth().padding(horizontal = 14.dp, vertical = 2.dp).clickable(onClick = onClick),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Text("行情状态", style = MaterialTheme.typography.labelMedium)
+        Spacer(Modifier.width(8.dp))
+        Text(status, color = color, style = MaterialTheme.typography.labelSmall, fontWeight = FontWeight.Bold)
+        Spacer(Modifier.weight(1f))
+        Text(quote?.let { "${it.source} · ${beijingTimestamp(it.retrieved_at)}" } ?: "查看详情", color = MaterialTheme.colorScheme.onSurfaceVariant, style = MaterialTheme.typography.labelSmall, maxLines = 1, overflow = TextOverflow.Ellipsis)
+        Icon(Icons.Filled.ChevronRight, "查看行情状态", tint = MaterialTheme.colorScheme.onSurfaceVariant)
+    }
+}
+
+@Composable
+private fun AnalysisEntry(count: Int, onClick: () -> Unit) = Row(
+    Modifier.fillMaxWidth().padding(horizontal = 14.dp, vertical = 2.dp).clickable(onClick = onClick),
+    verticalAlignment = Alignment.CenterVertically,
+) {
+    Text("组合复核", style = MaterialTheme.typography.labelMedium)
+    Spacer(Modifier.width(8.dp))
+    Text("$count 条结果", color = MaterialTheme.colorScheme.primary, style = MaterialTheme.typography.labelSmall)
+    Spacer(Modifier.weight(1f))
+    Text("查看详情", color = MaterialTheme.colorScheme.onSurfaceVariant, style = MaterialTheme.typography.labelSmall)
+    Icon(Icons.Filled.ChevronRight, "查看组合复核", tint = MaterialTheme.colorScheme.onSurfaceVariant)
+}
+
+@Composable
+private fun AnalysisDetailDialog(
+    analysis: PortfolioAnalysisDto?,
+    fallbackItems: List<PortfolioAnalysisItemDto>,
+    onDismiss: () -> Unit,
+) {
+    val items = analysis?.items ?: fallbackItems
+    var expandedSymbols by remember { mutableStateOf(items.firstOrNull()?.symbol?.let(::setOf) ?: emptySet()) }
+    Dialog(onDismissRequest = onDismiss) {
+        Surface(
+            modifier = Modifier.fillMaxWidth().heightIn(max = 620.dp),
+            shape = RoundedCornerShape(18.dp),
+            color = MaterialTheme.colorScheme.surface,
+        ) {
+            Column(Modifier.padding(vertical = 10.dp)) {
+                Row(
+                    Modifier.fillMaxWidth().padding(start = 18.dp, end = 8.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    Column(Modifier.weight(1f)) {
+                        Text("组合复核详情", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold)
+                        Text(
+                            analysis?.generated_at?.let { "分析批次 ${analysis.id.take(8)} · ${beijingTimestamp(it)}" } ?: "当前复核结果",
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            style = MaterialTheme.typography.labelSmall,
+                        )
+                    }
+                    IconButton(onClick = onDismiss) { Icon(Icons.Filled.Close, "关闭") }
+                }
+                HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
+                LazyColumn(contentPadding = androidx.compose.foundation.layout.PaddingValues(horizontal = 18.dp, vertical = 8.dp)) {
+                    items(items, key = { it.symbol }) { item ->
+                        AnalysisDetailItem(
+                            item = item,
+                            expanded = item.symbol in expandedSymbols,
+                            onToggle = {
+                                expandedSymbols = if (item.symbol in expandedSymbols) expandedSymbols - item.symbol else expandedSymbols + item.symbol
+                            },
+                        )
+                    }
+                    item {
+                        Text(
+                            "说明：复核记录展示本次后台所使用的缓存快照、规则和处理状态；它用于核验信息，不构成交易指令或投资建议。",
+                            modifier = Modifier.padding(top = 8.dp),
+                            style = MaterialTheme.typography.labelSmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                    }
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun AnalysisDetailItem(item: PortfolioAnalysisItemDto, expanded: Boolean, onToggle: () -> Unit) {
+    Column(Modifier.fillMaxWidth().clickable(onClick = onToggle).padding(vertical = 10.dp)) {
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Column(Modifier.weight(1f)) {
+                Text("${item.name} · ${item.symbol}", fontWeight = FontWeight.SemiBold, style = MaterialTheme.typography.bodyMedium)
+                Text(analysisActionLabel(item.action), color = analysisActionColor(item.action), style = MaterialTheme.typography.labelSmall, fontWeight = FontWeight.Bold)
+            }
+            Text("证据 ${item.confidence_percent}%", color = MaterialTheme.colorScheme.onSurfaceVariant, style = MaterialTheme.typography.labelSmall)
+            Icon(if (expanded) Icons.Filled.Close else Icons.Filled.ChevronRight, if (expanded) "收起详情" else "展开详情", tint = MaterialTheme.colorScheme.onSurfaceVariant)
+        }
+        Text(item.reason, modifier = Modifier.padding(top = 4.dp), style = MaterialTheme.typography.bodySmall, maxLines = if (expanded) Int.MAX_VALUE else 2, overflow = TextOverflow.Ellipsis)
+        if (expanded) {
+            Text("触发证据", modifier = Modifier.padding(top = 10.dp), color = MaterialTheme.colorScheme.primary, style = MaterialTheme.typography.labelSmall, fontWeight = FontWeight.Bold)
+            if (item.evidence.isEmpty()) Text("本次没有可用的量化证据。", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            item.evidence.forEach { Text("• $it", style = MaterialTheme.typography.bodySmall) }
+            item.rule_snapshot?.let { rule ->
+                Text("命中规则", modifier = Modifier.padding(top = 10.dp), color = MaterialTheme.colorScheme.primary, style = MaterialTheme.typography.labelSmall, fontWeight = FontWeight.Bold)
+                Text(
+                    "${if (rule["scope"] == "symbol") "个股规则" else "全局规则"} · v${rule["version"] ?: "—"} · 亏损复核 ${rule["loss_review_percent"] ?: "—"}% · 波动复核 ${rule["volatility_review_percent"] ?: "—"}%",
+                    style = MaterialTheme.typography.bodySmall,
+                )
+            }
+            Text("后台处理轨迹", modifier = Modifier.padding(top = 10.dp), color = MaterialTheme.colorScheme.primary, style = MaterialTheme.typography.labelSmall, fontWeight = FontWeight.Bold)
+            if (item.analysis_trace.isEmpty()) Text("该分析批次未记录可展示的处理轨迹。", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            item.analysis_trace.forEach { step ->
+                Row(Modifier.padding(top = 5.dp), verticalAlignment = Alignment.Top) {
+                    Text("●", color = analysisTraceColor(step.status), style = MaterialTheme.typography.bodySmall)
+                    Column(Modifier.padding(start = 7.dp)) {
+                        Text("${step.stage} · ${analysisTraceStatus(step.status)}", style = MaterialTheme.typography.labelSmall, fontWeight = FontWeight.SemiBold)
+                        Text(step.detail, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    }
+                }
+            }
+            Text(item.disclaimer, modifier = Modifier.padding(top = 8.dp), style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+        }
+        HorizontalDivider(Modifier.padding(top = 10.dp), color = MaterialTheme.colorScheme.outlineVariant)
+    }
+}
+
+@Composable
+private fun analysisActionColor(action: String): Color = when (action) {
+    "risk_review" -> MaterialTheme.colorScheme.error
+    "wait_for_confirmation" -> MaterialTheme.colorScheme.primary
+    else -> MaterialTheme.colorScheme.tertiary
+}
+
+private fun analysisTraceStatus(status: String): String = when (status) {
+    "ok" -> "已完成"
+    "missing" -> "缺少数据"
+    "unavailable" -> "暂不可用"
+    "default" -> "默认规则"
+    else -> "已记录"
+}
+
+@Composable
+private fun analysisTraceColor(status: String): Color = when (status) {
+    "ok" -> MaterialTheme.colorScheme.tertiary
+    "missing", "unavailable" -> MaterialTheme.colorScheme.error
+    else -> MaterialTheme.colorScheme.primary
+}
+
+private fun analysisActionLabel(action: String): String = when (action) {
+    "observe" -> "观察"
+    "risk_review" -> "风险复核"
+    "wait_for_confirmation" -> "等待确认"
+    "data_insufficient" -> "数据不足"
+    else -> "复核"
+}
+
+private fun marketTag(currency: String): String = when (currency) {
+    "HKD" -> "港股·HKD"
+    "CNY" -> "A股·CNY"
+    else -> currency
+}
+
+private fun formatCurrency(value: Double, currency: String): String = when (currency) {
+    "HKD" -> "HK$${formatPositionValue(value)}"
+    "USD" -> "US$${formatPositionValue(value)}"
+    else -> "¥${formatPositionValue(value)}"
+}
+
+private fun signedCurrencyValue(value: Double, currency: String): String = if (value >= 0) "+${formatCurrency(value, currency)}" else formatCurrency(value, currency)
+
+private fun rmbEstimate(value: Double, currency: String): String = when (currency) {
+    "CNY" -> formatCurrency(value, "CNY")
+    "HKD" -> "约 ¥${formatPositionValue(value * 0.92)}"
+    "USD" -> "约 ¥${formatPositionValue(value * 7.20)}"
+    else -> "约 ¥—"
 }
 
 @Composable
@@ -738,7 +1022,7 @@ private fun FeedCard(item: NewsItemDto, uriHandler: androidx.compose.ui.platform
             Text("AI 解读：${analysis["summary"] ?: "已生成，建议结合原文核验。"}", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.primary)
             Text("影响：${analysis["impact"] ?: "uncertain"}｜置信度：${analysis["confidence"] ?: "low"}", style = MaterialTheme.typography.bodySmall)
         }
-        Text("${item.source_name}｜${item.published_at}", style = MaterialTheme.typography.bodySmall)
+        Text("${item.source_name}｜${beijingTimestamp(item.published_at)}", style = MaterialTheme.typography.bodySmall)
         TextButton(onClick = { uriHandler.openUri(item.source_url) }, colors = ButtonDefaults.textButtonColors(contentColor = MaterialTheme.colorScheme.primary)) { Text("查看原文  →", fontWeight = FontWeight.Bold) }
     }
 }
@@ -749,6 +1033,39 @@ private fun ProfileScreen(themeMode: ThemeMode, onThemeModeChange: (ThemeMode) -
     val scope = rememberCoroutineScope()
     var baseUrl by remember { mutableStateOf(EndpointStore.baseUrl(context)) }
     var connectionStatus by remember { mutableStateOf<String?>(null) }
+    var availableUpdate by remember { mutableStateOf<AppUpdate?>(null) }
+    var updateStatus by remember { mutableStateOf<String?>(null) }
+    var checkingUpdate by remember { mutableStateOf(false) }
+    fun checkForUpdate() {
+        scope.launch {
+            checkingUpdate = true
+            updateStatus = null
+            try {
+                availableUpdate = AppUpdateManager.check(context)
+                if (availableUpdate == null) updateStatus = "已是最新版本"
+            } catch (_: Exception) {
+                updateStatus = "暂时无法检查更新，请确认服务地址和网络"
+            } finally {
+                checkingUpdate = false
+            }
+        }
+    }
+    LaunchedEffect(Unit) { checkForUpdate() }
+    availableUpdate?.let { update ->
+        AlertDialog(
+            onDismissRequest = { availableUpdate = null },
+            title = { Text("发现新版本 ${update.versionName}") },
+            text = { Text(update.changelog.ifBlank { "已准备好新版本，建议更新后继续使用。" }) },
+            dismissButton = { TextButton(onClick = { availableUpdate = null }) { Text("稍后") } },
+            confirmButton = {
+                TextButton(onClick = {
+                    if (!AppUpdateManager.downloadAndInstall(context, update)) {
+                        updateStatus = "请允许“安装未知应用”后，再点检查更新并安装"
+                    }
+                }) { Text("下载并安装") }
+            },
+        )
+    }
     LazyColumn(contentPadding = androidx.compose.foundation.layout.PaddingValues(bottom = 24.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
         item { AppHero("我的", "守护资产的每一段生长") }
         item { Text("服务地址（模拟器默认 10.0.2.2；实机填写电脑局域网 IP 或 HTTPS 域名）", modifier = Modifier.padding(horizontal = 20.dp), color = MaterialTheme.colorScheme.onSurfaceVariant) }
@@ -765,6 +1082,11 @@ private fun ProfileScreen(themeMode: ThemeMode, onThemeModeChange: (ThemeMode) -
             }, Modifier.fillMaxWidth())
         } }
         connectionStatus?.let { item { StatusCard(it, positive = it == "连接成功", error = it != "连接成功") } }
+        item { Text("应用更新", modifier = Modifier.padding(horizontal = 20.dp), style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold) }
+        item { Column(Modifier.padding(horizontal = 20.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+            SecondaryAction(if (checkingUpdate) "正在检查…" else "检查更新", Icons.Filled.Refresh, { checkForUpdate() }, Modifier.fillMaxWidth())
+            updateStatus?.let { StatusCard(it, positive = it == "已是最新版本", error = it != "已是最新版本") }
+        } }
         item { Text("外观", modifier = Modifier.padding(horizontal = 20.dp), style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold) }
         items(ThemeMode.entries) { mode ->
             Row(

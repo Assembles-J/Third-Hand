@@ -2,6 +2,7 @@ package com.thirdhand.app
 
 import android.content.Context
 import retrofit2.Retrofit
+import retrofit2.Response
 import retrofit2.converter.gson.GsonConverterFactory
 import retrofit2.http.Body
 import retrofit2.http.DELETE
@@ -108,6 +109,12 @@ data class NewsItemDto(
 )
 
 data class HealthDto(val status: String)
+data class AppUpdateDto(
+    val version_code: Int,
+    val version_name: String,
+    val apk_url: String,
+    val changelog: String = "",
+)
 data class AdminOverviewDto(
     val status: String,
     val generated_at: String,
@@ -119,8 +126,9 @@ data class AdminOverviewDto(
     val cached_content_count: Int,
     val database_bytes: Int,
 )
-data class PortfolioAnalysisItemDto(val symbol: String, val name: String, val action: String, val reason: String, val evidence: List<String>, val confidence_percent: Int, val disclaimer: String)
-data class PortfolioAnalysisDto(val items: List<PortfolioAnalysisItemDto>)
+data class AnalysisTraceStepDto(val stage: String, val status: String, val detail: String)
+data class PortfolioAnalysisItemDto(val symbol: String, val name: String, val action: String, val reason: String, val evidence: List<String>, val confidence_percent: Int, val rule_snapshot: Map<String, Any>? = null, val analysis_trace: List<AnalysisTraceStepDto> = emptyList(), val disclaimer: String)
+data class PortfolioAnalysisDto(val id: String, val generated_at: String, val items: List<PortfolioAnalysisItemDto>)
 data class GlossaryCardDto(val term: String, val plain_explanation: String, val watch_for: String)
 data class LearningCaseDto(
     val id: String, val symbol: String?, val title: String, val context: String, val lesson: String,
@@ -149,6 +157,9 @@ data class PersonalRuleInputDto(
 interface ThirdHandApi {
     @GET("health")
     suspend fun health(): HealthDto
+
+    @GET("v1/app-update")
+    suspend fun appUpdate(): Response<AppUpdateDto>
 
     @GET("v1/admin/overview")
     suspend fun adminOverview(): AdminOverviewDto

@@ -22,6 +22,7 @@ htmlcov/
 !.env.example
 backend/data/
 data/
+releases/
 *.db
 *.sqlite
 *.sqlite3
