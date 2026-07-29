@@ -57,10 +57,12 @@ class PortfolioStore:
             "average_cost": average_cost, "created_at": beijing_now().isoformat(),
         }
         with self._connect() as connection:
-            connection.execute(
-                "INSERT INTO holdings (id, symbol, name, quantity, average_cost, created_at) VALUES (:id, :symbol, :name, :quantity, :average_cost, :created_at)",
-                item,
-            )
+            existing = connection.execute("SELECT id FROM holdings WHERE symbol = ? ORDER BY created_at DESC LIMIT 1", (symbol,)).fetchone()
+            if existing:
+                item["id"] = str(existing["id"])
+                connection.execute("UPDATE holdings SET name=:name, quantity=:quantity, average_cost=:average_cost, created_at=:created_at WHERE id=:id", item)
+            else:
+                connection.execute("INSERT INTO holdings (id, symbol, name, quantity, average_cost, created_at) VALUES (:id, :symbol, :name, :quantity, :average_cost, :created_at)", item)
         return item
 
     def list_drafts(self) -> list[dict[str, object]]:
@@ -97,10 +99,12 @@ class PortfolioStore:
             draft = connection.execute("SELECT id FROM holding_drafts WHERE id = ?", (draft_id,)).fetchone()
             if not draft:
                 return None
-            connection.execute(
-                "INSERT INTO holdings (id, symbol, name, quantity, average_cost, created_at) VALUES (:id, :symbol, :name, :quantity, :average_cost, :created_at)",
-                item,
-            )
+            existing = connection.execute("SELECT id FROM holdings WHERE symbol = ? ORDER BY created_at DESC LIMIT 1", (symbol,)).fetchone()
+            if existing:
+                item["id"] = str(existing["id"])
+                connection.execute("UPDATE holdings SET name=:name, quantity=:quantity, average_cost=:average_cost, created_at=:created_at WHERE id=:id", item)
+            else:
+                connection.execute("INSERT INTO holdings (id, symbol, name, quantity, average_cost, created_at) VALUES (:id, :symbol, :name, :quantity, :average_cost, :created_at)", item)
             connection.execute("DELETE FROM holding_drafts WHERE id = ?", (draft_id,))
         return item
 

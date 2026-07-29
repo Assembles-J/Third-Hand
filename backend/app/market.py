@@ -38,20 +38,36 @@ class MarketDataService:
         if not normalized:
             return []
         hk_symbols = [symbol.zfill(5) for symbol in normalized if self._is_hk(symbol)]
-        a_symbols = [symbol for symbol in normalized if not self._is_hk(symbol)]
+        a_symbols = [symbol for symbol in normalized if not self._is_hk(symbol) and len(symbol) == 6 and symbol.isdigit()]
+        invalid_symbols = [symbol for symbol in normalized if symbol not in hk_symbols and symbol not in a_symbols]
         quotes: list[dict[str, object]] = []
         if hk_symbols:
             quotes.extend(self._hk_quotes(hk_symbols))
         if a_symbols:
+            etf_symbols = [symbol for symbol in a_symbols if symbol.startswith(("15", "16", "51", "56", "58"))]
+            stock_symbols = [symbol for symbol in a_symbols if symbol not in etf_symbols]
             if self._use_tushare():
                 try:
                     quotes.extend(self._tushare_a_quotes(a_symbols))
                 except MarketDataUnavailable:
                     if self._provider != "auto":
                         raise
-                    quotes.extend(self._from_frame(self._frame("a"), a_symbols, "CNY", "Tushare 不可用时的公开源快照，不应用于交易执行。"))
+                    quotes.extend(self._public_a_quotes(stock_symbols, etf_symbols, "Tushare 不可用时的公开源快照，不应用于交易执行。"))
             else:
-                quotes.extend(self._from_frame(self._frame("a"), a_symbols, "CNY", "公开源快照，不应用于交易执行。"))
+                quotes.extend(self._public_a_quotes(stock_symbols, etf_symbols, "公开源快照，不应用于交易执行。"))
+        returned = {str(quote["symbol"]) for quote in quotes}
+        for symbol in normalized:
+            if symbol not in returned:
+                reason = "证券代码应为 6 位 A 股/ETF 或 5 位港股代码。" if symbol in invalid_symbols else "未找到该代码的行情；请核对证券代码或稍后重试。"
+                quotes.append({"symbol": symbol, "name": symbol, "price": None, "change": None, "change_percent": None,
+                    "currency": "CNY", "source": "代码校验", "retrieved_at": beijing_now(), "as_of": None,
+                    "is_realtime": False, "delay_seconds": None, "license_scope": "n/a", "freshness_note": reason})
+        return quotes
+
+    def _public_a_quotes(self, stock_symbols: list[str], etf_symbols: list[str], freshness_note: str) -> list[dict[str, object]]:
+        quotes = self._from_frame(self._frame("a"), stock_symbols, "CNY", freshness_note) if stock_symbols else []
+        if etf_symbols:
+            quotes.extend(self._from_frame(self._frame("etf"), etf_symbols, "CNY", freshness_note))
         return quotes
 
     def _use_tushare(self) -> bool:
@@ -69,7 +85,8 @@ class MarketDataService:
             start_date = (beijing_now() - timedelta(days=10)).strftime("%Y%m%d")
             for symbol in symbols:
                 exchange = "BJ" if symbol.startswith(("4", "8")) else ("SH" if symbol.startswith(("5", "6", "9")) else "SZ")
-                frame = client.daily(ts_code=f"{symbol}.{exchange}", start_date=start_date)
+                is_etf = symbol.startswith(("15", "16", "51", "56", "58"))
+                frame = (client.fund_daily if is_etf else client.daily)(ts_code=f"{symbol}.{exchange}", start_date=start_date)
                 if frame is None or frame.empty:
                     continue
                 latest = frame.iloc[0]
@@ -125,7 +142,7 @@ class MarketDataService:
         if not requested:
             return []
         matches = {name: [] for name in requested}
-        for market, currency in (("a", "CNY"), ("hk", "HKD")):
+        for market, currency in (("a", "CNY"), ("etf", "CNY"), ("hk", "HKD")):
             for record in self._lookup_from_frame(self._directory_frame(market), requested, market, currency):
                 matches[record.pop("query")].append(record)
         return [{"query": name, "matches": matches[name]} for name in requested]
@@ -157,6 +174,9 @@ class MarketDataService:
                     # The Eastmoney endpoint is paginated and may close connections.
                     frame = ak.stock_hk_spot()
                     source = "新浪财经 / AKShare"
+            elif market == "etf":
+                frame = ak.fund_etf_spot_em()
+                source = "东方财富 / AKShare"
             else:
                 frame = ak.stock_zh_a_spot_em()
                 source = "东方财富 / AKShare"
@@ -227,7 +247,7 @@ class MarketDataService:
                     "query": query,
                     "symbol": str(row[code_column]),
                     "name": str(row[name_column]),
-                    "market": "HK" if market == "hk" else "CN",
+                    "market": "HK" if market == "hk" else ("ETF" if market == "etf" else "CN"),
                     "currency": currency,
                     "match_type": match_type,
                 })

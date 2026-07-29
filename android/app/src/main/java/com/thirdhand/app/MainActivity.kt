@@ -26,13 +26,16 @@ import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.AutoGraph
 import androidx.compose.material.icons.filled.CameraAlt
 import androidx.compose.material.icons.filled.Refresh
+import androidx.compose.material.icons.filled.Search
 import androidx.compose.material.icons.filled.Wallet
 import androidx.compose.material.icons.automirrored.filled.Article
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
+import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.FilledTonalButton
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
@@ -60,6 +63,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import kotlinx.coroutines.launch
@@ -127,6 +131,62 @@ private fun AppHero(title: String, eyebrow: String, action: (@Composable () -> U
 }
 
 @Composable
+private fun PrimaryAction(
+    label: String,
+    icon: ImageVector,
+    onClick: () -> Unit,
+    modifier: Modifier = Modifier,
+    enabled: Boolean = true,
+) = Button(
+    onClick = onClick,
+    enabled = enabled,
+    modifier = modifier.height(52.dp),
+    shape = RoundedCornerShape(16.dp),
+    colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.primary),
+    elevation = ButtonDefaults.buttonElevation(defaultElevation = 2.dp, pressedElevation = 0.dp),
+) {
+    Icon(icon, contentDescription = null)
+    Spacer(Modifier.width(8.dp))
+    Text(label, fontWeight = FontWeight.Bold)
+}
+
+@Composable
+private fun SecondaryAction(label: String, icon: ImageVector, onClick: () -> Unit, modifier: Modifier = Modifier) =
+    FilledTonalButton(
+        onClick = onClick,
+        modifier = modifier.height(48.dp),
+        shape = RoundedCornerShape(14.dp),
+        colors = ButtonDefaults.filledTonalButtonColors(containerColor = MaterialTheme.colorScheme.primaryContainer),
+    ) {
+        Icon(icon, contentDescription = null)
+        Spacer(Modifier.width(6.dp))
+        Text(label, fontWeight = FontWeight.SemiBold)
+    }
+
+@Composable
+private fun HeroRefreshAction(onClick: () -> Unit, enabled: Boolean = true) = IconButton(
+    onClick = onClick,
+    enabled = enabled,
+    modifier = Modifier
+        .clip(RoundedCornerShape(14.dp))
+        .background(Color(0x33FFFFFF)),
+) {
+    Icon(Icons.Filled.Refresh, contentDescription = "刷新", tint = Color.White)
+}
+
+@Composable
+private fun StatusCard(message: String, positive: Boolean = false, error: Boolean = false) {
+    val colors = when {
+        error -> CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.errorContainer)
+        positive -> CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.tertiaryContainer)
+        else -> CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.secondaryContainer)
+    }
+    Card(Modifier.padding(horizontal = 20.dp).fillMaxWidth(), colors = colors, shape = RoundedCornerShape(16.dp)) {
+        Text(message, Modifier.padding(14.dp), color = if (error) MaterialTheme.colorScheme.onErrorContainer else MaterialTheme.colorScheme.onSurface, fontWeight = FontWeight.Medium)
+    }
+}
+
+@Composable
 private fun TodayScreen() {
     val context = LocalContext.current
     val api = ApiClient.service(context)
@@ -182,14 +242,13 @@ private fun TodayScreen() {
     }
     LaunchedEffect(Unit) { refresh() }
     LazyColumn(contentPadding = androidx.compose.foundation.layout.PaddingValues(bottom = 24.dp), verticalArrangement = Arrangement.spacedBy(14.dp)) {
-        item { AppHero("今日行情", "THIRD-HAND · 让资产向阳生长", action = { IconButton(onClick = { refresh() }, enabled = !refreshing) { Icon(Icons.Filled.Refresh, "刷新行情", tint = Color.White) } }) }
+        item { AppHero("今日行情", "THIRD-HAND · 让资产向阳生长", action = { HeroRefreshAction({ refresh() }, !refreshing) }) }
         item { Column(Modifier.padding(horizontal = 20.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
             Text("把握正在发生的机会", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold)
             Text("行情来自公开源快照，仅供参考，不构成投资建议。", color = MaterialTheme.colorScheme.onSurfaceVariant, style = MaterialTheme.typography.bodySmall)
         } }
-        item { Button(modifier = Modifier.padding(horizontal = 20.dp), onClick = { refresh() }, enabled = !refreshing) { Icon(Icons.Filled.Refresh, null); Spacer(Modifier.width(6.dp)); Text(if (refreshing) "正在刷新…" else "刷新行情") } }
-        error?.let { message -> item { Text(message, modifier = Modifier.padding(horizontal = 20.dp), color = MaterialTheme.colorScheme.error) } }
-        refreshMessage?.let { message -> item { Text(message, modifier = Modifier.padding(horizontal = 20.dp), color = MaterialTheme.colorScheme.primary, fontWeight = FontWeight.Bold) } }
+        error?.let { message -> item { StatusCard(message, error = true) } }
+        refreshMessage?.let { message -> item { StatusCard(message, positive = true) } }
         if (drafts.isNotEmpty()) item {
             Card(
                 modifier = Modifier.padding(horizontal = 20.dp).fillMaxWidth(),
@@ -201,15 +260,15 @@ private fun TodayScreen() {
                 }
             }
         }
-        if (holdings.isEmpty() && drafts.isEmpty()) item { Text("先在“持仓”页手动添加一只股票，例如小米集团-W（01810）。", modifier = Modifier.padding(horizontal = 20.dp)) }
-        if (holdings.isNotEmpty() && quotes.isEmpty()) item { Text("已保存 ${holdings.size} 条持仓，行情加载失败不会影响持仓展示。", modifier = Modifier.padding(horizontal = 20.dp)) }
+        if (holdings.isEmpty() && drafts.isEmpty()) item { StatusCard("先在“持仓”页添加第一只股票，例如小米集团-W（01810）。") }
+        if (holdings.isNotEmpty() && quotes.isEmpty()) item { StatusCard("暂未获得任何行情；请检查网络、数据源或证券代码。", error = true) }
         items(quotes) { quote ->
             val holdingName = holdings.firstOrNull { it.symbol == quote.symbol }?.name
             QuoteCard(if (holdingName == null) quote else quote.copy(name = holdingName))
         }
         if (holdings.isNotEmpty()) item { Text("持仓风险观察", modifier = Modifier.padding(start = 20.dp, top = 4.dp, end = 20.dp), style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold) }
-        if (riskLoading) item { Text("正在计算历史风险统计…", modifier = Modifier.padding(horizontal = 20.dp)) }
-        riskError?.let { message -> item { Text(message, color = MaterialTheme.colorScheme.error) } }
+        if (riskLoading) item { StatusCard("正在计算历史风险统计…") }
+        riskError?.let { message -> item { StatusCard(message, error = true) } }
         items(risks, key = { it.symbol }) { assessment -> RiskAssessmentCard(assessment) }
     }
 }
@@ -306,34 +365,39 @@ private fun HoldingsScreen() {
                 }
             }
         }
-        item { Row(Modifier.padding(horizontal = 20.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) { Button(onClick = { showAdd = true }) { Icon(Icons.Filled.Add, null); Text("手动添加") }; OutlinedButton(onClick = { imagePicker.launch("image/*") }) { Icon(Icons.Filled.CameraAlt, null); Text("识别截图") }; OutlinedButton(onClick = { refresh() }) { Icon(Icons.Filled.Refresh, null); Text("刷新") } } }
-        error?.let { message -> item { Text(message, color = MaterialTheme.colorScheme.error) } }
-        scanError?.let { message -> item { Text(message, color = MaterialTheme.colorScheme.error) } }
-        if (drafts.isNotEmpty()) item { Text("待补全代码", style = MaterialTheme.typography.titleMedium) }
+        item {
+            Column(Modifier.padding(horizontal = 20.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                PrimaryAction("手动添加持仓", Icons.Filled.Add, { showAdd = true }, Modifier.fillMaxWidth())
+                SecondaryAction("从持仓截图导入", Icons.Filled.CameraAlt, { imagePicker.launch("image/*") }, Modifier.fillMaxWidth())
+            }
+        }
+        error?.let { message -> item { StatusCard(message, error = true) } }
+        scanError?.let { message -> item { StatusCard(message, error = true) } }
+        if (drafts.isNotEmpty()) item { Text("待补全代码", modifier = Modifier.padding(start = 20.dp, top = 6.dp, end = 20.dp), style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold) }
         items(drafts, key = { it.id }) { draft ->
             Card(
-                modifier = Modifier.fillMaxWidth(),
+                modifier = Modifier.padding(horizontal = 20.dp).fillMaxWidth(),
                 colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.secondaryContainer),
             ) {
                 Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
-                    Text(draft.name, style = MaterialTheme.typography.titleMedium)
+                    Text(draft.name, style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
                     Text("待补充证券代码 · 数量 ${draft.quantity} · 成本 ${draft.average_cost}")
                     Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                        Button(onClick = { editingDraft = draft }) { Text("补全代码") }
-                        TextButton(onClick = { scope.launch { api.deleteHoldingDraft(draft.id); refresh() } }) { Text("删除") }
+                        SecondaryAction("补全代码", Icons.Filled.Add, { editingDraft = draft })
+                        TextButton(onClick = { scope.launch { api.deleteHoldingDraft(draft.id); refresh() } }, colors = ButtonDefaults.textButtonColors(contentColor = MaterialTheme.colorScheme.error)) { Text("删除") }
                     }
                 }
             }
         }
-        if (holdings.isNotEmpty()) item { Text("已入库持仓", style = MaterialTheme.typography.titleMedium) }
+        if (holdings.isNotEmpty()) item { Text("已入库持仓", modifier = Modifier.padding(start = 20.dp, top = 6.dp, end = 20.dp), style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold) }
         items(holdings, key = { it.id }) { holding ->
-            Card(Modifier.fillMaxWidth(), colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant)) {
+            Card(Modifier.padding(horizontal = 20.dp).fillMaxWidth(), colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant)) {
                 Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
                     Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                        Text("${holding.name} · ${holding.symbol}", style = MaterialTheme.typography.titleMedium)
+                        Text("${holding.name} · ${holding.symbol}", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
                     }
                     Text("数量 ${holding.quantity}　·　平均成本 ${holding.average_cost}")
-                    TextButton(onClick = { scope.launch { api.deleteHolding(holding.id); refresh() } }) { Text("删除") }
+                    TextButton(onClick = { scope.launch { api.deleteHolding(holding.id); refresh() } }, colors = ButtonDefaults.textButtonColors(contentColor = MaterialTheme.colorScheme.error)) { Text("删除") }
                 }
             }
         }
@@ -395,14 +459,12 @@ private fun ScreenshotPreviewDialog(
             val candidates = candidatesByName[item.name].orEmpty()
             if (candidates.isEmpty()) Text(if (lookupLoading) "正在反查证券代码…" else "未找到候选代码，请手动添加。")
             candidates.forEach { candidate ->
-                TextButton(onClick = { onSave(item, candidate) }) {
-                    Text("确认 ${candidate.name}（${candidate.symbol} · ${candidate.market}）")
-                }
+                SecondaryAction("确认 ${candidate.name}（${candidate.symbol}）", Icons.Filled.Add, { onSave(item, candidate) }, Modifier.fillMaxWidth())
             }
-            OutlinedButton(onClick = { onSaveDraft(item) }) { Text("先保存，稍后补代码") }
+            SecondaryAction("先保存，稍后补代码", Icons.Filled.Add, { onSaveDraft(item) }, Modifier.fillMaxWidth())
         }
     } },
-    confirmButton = { TextButton(onClick = { onSaveAllDrafts(items) }) { Text("全部保存，稍后补代码") } },
+    confirmButton = { Button(onClick = { onSaveAllDrafts(items) }, shape = RoundedCornerShape(12.dp)) { Text("全部保存") } },
     dismissButton = { TextButton(onClick = onDismiss) { Text("暂不保存") } },
 )
 
@@ -413,20 +475,45 @@ private fun AddHoldingDialog(
     title: String = "添加持仓",
     initial: HoldingInputDto? = null,
 ) {
+    val context = LocalContext.current
+    val api = ApiClient.service(context)
+    val scope = rememberCoroutineScope()
     var symbol by remember { mutableStateOf(initial?.symbol.orEmpty()) }
     var name by remember { mutableStateOf(initial?.name.orEmpty()) }
     var quantity by remember { mutableStateOf(initial?.quantity?.toString().orEmpty()) }
     var cost by remember { mutableStateOf(initial?.average_cost?.toString().orEmpty()) }
+    var candidates by remember { mutableStateOf<List<SecurityCandidateDto>>(emptyList()) }
+    var lookupMessage by remember { mutableStateOf<String?>(null) }
     AlertDialog(
         onDismissRequest = onDismiss,
         title = { Text(title) },
         text = { Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-            OutlinedTextField(symbol, { symbol = it }, label = { Text("代码，例如 01810") })
-            OutlinedTextField(name, { name = it }, label = { Text("名称") })
-            OutlinedTextField(quantity, { quantity = it }, label = { Text("数量") })
-            OutlinedTextField(cost, { cost = it }, label = { Text("平均成本") })
+            OutlinedTextField(symbol, { symbol = it }, label = { Text("代码，例如 01810") }, modifier = Modifier.fillMaxWidth())
+            OutlinedTextField(name, { name = it }, label = { Text("名称") }, modifier = Modifier.fillMaxWidth())
+            SecondaryAction("按名称查询代码", Icons.Filled.Search, {
+                scope.launch {
+                    lookupMessage = null
+                    candidates = emptyList()
+                    try {
+                        candidates = api.symbolLookup(listOf(name)).firstOrNull()?.matches.orEmpty()
+                        if (candidates.isEmpty()) lookupMessage = "没有找到候选证券，请检查名称。"
+                    } catch (exception: Exception) {
+                        lookupMessage = "代码查询失败，请稍后重试。"
+                    }
+                }
+            })
+            candidates.forEach { candidate ->
+                FilledTonalButton(
+                    onClick = { symbol = candidate.symbol; name = candidate.name; candidates = emptyList() },
+                    modifier = Modifier.fillMaxWidth(),
+                    shape = RoundedCornerShape(12.dp),
+                ) { Text("使用 ${candidate.name}（${candidate.symbol} · ${candidate.market}）") }
+            }
+            lookupMessage?.let { Text(it, color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.bodySmall) }
+            OutlinedTextField(quantity, { quantity = it }, label = { Text("数量") }, modifier = Modifier.fillMaxWidth())
+            OutlinedTextField(cost, { cost = it }, label = { Text("平均成本") }, modifier = Modifier.fillMaxWidth())
         } },
-        confirmButton = { TextButton(onClick = { onSave(HoldingInputDto(symbol, name, quantity.toDoubleOrNull() ?: 0.0, cost.toDoubleOrNull() ?: -1.0)) }) { Text("保存") } },
+        confirmButton = { Button(onClick = { onSave(HoldingInputDto(symbol, name, quantity.toDoubleOrNull() ?: 0.0, cost.toDoubleOrNull() ?: -1.0)) }, shape = RoundedCornerShape(12.dp)) { Text("保存持仓") } },
         dismissButton = { TextButton(onClick = onDismiss) { Text("取消") } },
     )
 }
@@ -448,10 +535,9 @@ private fun FeedScreen() {
     } catch (exception: Exception) { error = exception.message } }
     LaunchedEffect(Unit) { refresh() }
     LazyColumn(contentPadding = androidx.compose.foundation.layout.PaddingValues(bottom = 24.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
-        item { AppHero("关联消息", "消息枝叶 · 捕捉与你有关的变化") }
+        item { AppHero("关联消息", "消息枝叶 · 捕捉与你有关的变化", action = { HeroRefreshAction(onClick = { refresh() }) }) }
         item { Text("正式公告优先展示；新闻用于补充背景，均请以原文为准。", modifier = Modifier.padding(horizontal = 20.dp), color = MaterialTheme.colorScheme.onSurfaceVariant) }
-        item { Button(modifier = Modifier.padding(horizontal = 20.dp), onClick = { refresh() }) { Icon(Icons.Filled.Refresh, null); Spacer(Modifier.width(6.dp)); Text("刷新") } }
-        error?.let { item { Text(it ?: "", modifier = Modifier.padding(horizontal = 20.dp), color = MaterialTheme.colorScheme.error) } }
+        error?.let { item { StatusCard(it ?: "消息暂时不可用", error = true) } }
         if (announcements.isNotEmpty()) item { Text("正式公告", modifier = Modifier.padding(horizontal = 20.dp), style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold) }
         items(announcements) { item -> FeedCard(item, uriHandler, "公告") }
         if (feed.isNotEmpty()) item { Text("相关新闻", modifier = Modifier.padding(horizontal = 20.dp), style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold) }
@@ -466,7 +552,7 @@ private fun FeedCard(item: NewsItemDto, uriHandler: androidx.compose.ui.platform
         Text(item.title, style = MaterialTheme.typography.titleMedium)
         Text(item.explanation)
         Text("${item.source_name}｜${item.published_at}", style = MaterialTheme.typography.bodySmall)
-        TextButton(onClick = { uriHandler.openUri(item.source_url) }) { Text("查看原文") }
+        TextButton(onClick = { uriHandler.openUri(item.source_url) }, colors = ButtonDefaults.textButtonColors(contentColor = MaterialTheme.colorScheme.primary)) { Text("查看原文  →", fontWeight = FontWeight.Bold) }
     }
 }
 
@@ -480,9 +566,8 @@ private fun ProfileScreen(themeMode: ThemeMode, onThemeModeChange: (ThemeMode) -
         item { AppHero("我的", "守护资产的每一段生长") }
         item { Text("服务地址（模拟器默认 10.0.2.2；实机填写电脑局域网 IP 或 HTTPS 域名）", modifier = Modifier.padding(horizontal = 20.dp), color = MaterialTheme.colorScheme.onSurfaceVariant) }
         item { OutlinedTextField(baseUrl, { baseUrl = it }, label = { Text("例如 http://192.168.1.10:8000/") }, modifier = Modifier.padding(horizontal = 20.dp).fillMaxWidth()) }
-        item { Row(Modifier.padding(horizontal = 20.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            Button(onClick = { EndpointStore.saveBaseUrl(context, baseUrl); baseUrl = EndpointStore.baseUrl(context); connectionStatus = "已保存：$baseUrl" }) { Text("保存地址") }
-            OutlinedButton(onClick = {
+        item { Column(Modifier.padding(horizontal = 20.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+            PrimaryAction("保存并测试连接", Icons.Filled.Refresh, {
                 EndpointStore.saveBaseUrl(context, baseUrl)
                 scope.launch {
                     connectionStatus = try {
@@ -490,13 +575,13 @@ private fun ProfileScreen(themeMode: ThemeMode, onThemeModeChange: (ThemeMode) -
                         if (status == "ok") "连接成功" else "服务返回：$status"
                     } catch (exception: Exception) { "连接失败：${exception.message ?: "请检查网络、地址和后端"}" }
                 }
-            }) { Text("测试连接") }
+            }, Modifier.fillMaxWidth())
         } }
-        connectionStatus?.let { item { Text(it, modifier = Modifier.padding(horizontal = 20.dp), color = if (it == "连接成功") MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.error) } }
+        connectionStatus?.let { item { StatusCard(it, positive = it == "连接成功", error = it != "连接成功") } }
         item { Text("外观", modifier = Modifier.padding(horizontal = 20.dp), style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold) }
         items(ThemeMode.entries) { mode ->
             Row(
-                modifier = Modifier.padding(horizontal = 20.dp).fillMaxWidth().clip(RoundedCornerShape(16.dp)).clickable { onThemeModeChange(mode) }.padding(12.dp),
+                modifier = Modifier.padding(horizontal = 20.dp).fillMaxWidth().clip(RoundedCornerShape(16.dp)).background(if (themeMode == mode) MaterialTheme.colorScheme.primaryContainer else MaterialTheme.colorScheme.surfaceVariant).clickable { onThemeModeChange(mode) }.padding(12.dp),
                 verticalAlignment = Alignment.CenterVertically,
             ) {
                 RadioButton(selected = themeMode == mode, onClick = { onThemeModeChange(mode) })
