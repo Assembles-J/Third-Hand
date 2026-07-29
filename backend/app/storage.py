@@ -71,10 +71,24 @@ class PortfolioStore:
                 connection.execute("CREATE TABLE IF NOT EXISTS risk_cache (symbol TEXT PRIMARY KEY, payload TEXT NOT NULL, updated_at TEXT NOT NULL)")
                 connection.execute("CREATE TABLE IF NOT EXISTS portfolio_analysis_cache (analysis_key TEXT PRIMARY KEY, payload TEXT NOT NULL, updated_at TEXT NOT NULL)")
                 connection.execute("CREATE TABLE IF NOT EXISTS learning_cases (id TEXT PRIMARY KEY, symbol TEXT, title TEXT NOT NULL, context TEXT NOT NULL, lesson TEXT NOT NULL, outcome TEXT NOT NULL, position_band TEXT NOT NULL DEFAULT '', planned_action TEXT NOT NULL DEFAULT '', confidence REAL NOT NULL DEFAULT 0.5, evidence_links TEXT NOT NULL DEFAULT '[]', created_at TEXT NOT NULL)")
+                connection.execute("CREATE TABLE IF NOT EXISTS research_rules (id TEXT PRIMARY KEY, category TEXT NOT NULL, title TEXT NOT NULL, trigger_text TEXT NOT NULL, guidance TEXT NOT NULL, confidence_ceiling REAL NOT NULL, source_url TEXT NOT NULL, version TEXT NOT NULL)")
                 self._ensure_column(connection, "learning_cases", "position_band", "TEXT NOT NULL DEFAULT ''")
                 self._ensure_column(connection, "learning_cases", "planned_action", "TEXT NOT NULL DEFAULT ''")
                 self._ensure_column(connection, "learning_cases", "confidence", "REAL NOT NULL DEFAULT 0.5")
                 self._ensure_column(connection, "learning_cases", "evidence_links", "TEXT NOT NULL DEFAULT '[]'")
+                self._seed_research_rules(connection)
+
+    @staticmethod
+    def _seed_research_rules(connection: sqlite3.Connection) -> None:
+        rules = [
+            ("position-cap","仓位","单一标的集中度","单一标的占比超过个人预设上限","先复核集中度与相关性；不以单日涨跌作为增加暴露理由。",0.8,"https://investor.sse.com.cn/","v1"),
+            ("event-verify","公告","重大公告核验","出现业绩预告、回购、减持、诉讼或监管事件","优先打开正式公告，核验主体、金额、期限和适用范围。",0.9,"https://www.cninfo.com.cn/","v1"),
+            ("loss-review","风险","成本大幅偏离","现价较成本显著下跌","先区分市场波动、基本面变化和流动性风险；复核仓位上限，不追补。",0.75,"https://investor.sse.com.cn/","v1"),
+            ("valuation-context","估值","估值口径","使用PE/PB等估值指标","核验盈利质量、一次性损益与行业可比性；亏损企业不以PE单独判断。",0.75,"https://www.sse.com.cn/","v1"),
+            ("etf-risk","ETF","ETF跟踪风险","持有行业或主题ETF","核验跟踪指数、成分集中度、规模、流动性及折溢价，避免把ETF视作天然分散。",0.85,"https://www.csindex.com.cn/","v1"),
+            ("news-not-fact","信息","新闻与事实边界","新闻来源非正式披露","新闻仅作线索；关键事实以交易所、巨潮或公司公告原文为准。",0.95,"https://www.cninfo.com.cn/","v1"),
+        ]
+        connection.executemany("INSERT OR IGNORE INTO research_rules VALUES (?, ?, ?, ?, ?, ?, ?, ?)", rules)
 
     @staticmethod
     def _ensure_column(connection: sqlite3.Connection, table: str, column: str, definition: str) -> None:
@@ -276,3 +290,7 @@ class PortfolioStore:
         query, params = ("SELECT * FROM learning_cases WHERE symbol=? OR symbol IS NULL ORDER BY created_at DESC", [symbol]) if symbol else ("SELECT * FROM learning_cases ORDER BY created_at DESC", [])
         with self._connect() as connection: rows = connection.execute(query, params).fetchall()
         return [{**dict(row), "evidence_links": json.loads(str(row["evidence_links"]))} for row in rows]
+
+    def research_rules(self) -> list[dict[str, object]]:
+        with self._connect() as connection: rows = connection.execute("SELECT * FROM research_rules ORDER BY category, id").fetchall()
+        return [dict(row) for row in rows]

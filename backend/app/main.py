@@ -161,6 +161,8 @@ class LearningCaseInput(BaseModel):
     evidence_links: list[str] = Field(default_factory=list, max_length=8)
 class LearningCase(LearningCaseInput):
     id: str; created_at: datetime
+class ResearchRule(BaseModel):
+    id: str; category: str; title: str; trigger_text: str; guidance: str; confidence_ceiling: float; source_url: str; version: str
 
 
 store = PortfolioStore()
@@ -322,6 +324,10 @@ def list_learning_cases(symbol: str | None = None) -> list[LearningCase]:
 def create_learning_case(payload: LearningCaseInput) -> LearningCase:
     item = {"id": str(uuid4()), **payload.model_dump(), "created_at": beijing_now().isoformat()}
     return LearningCase.model_validate(store.add_learning_case(item))
+
+@app.get("/v1/research-rules", response_model=list[ResearchRule])
+def research_rules() -> list[ResearchRule]:
+    return [ResearchRule.model_validate(item) for item in store.research_rules()]
 
 
 @app.get("/v1/glossary/{term}", response_model=GlossaryCard)
