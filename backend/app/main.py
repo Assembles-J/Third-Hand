@@ -171,7 +171,7 @@ class RiskAssessment(BaseModel):
     disclaimer: str = "基于历史价格的风险统计，不构成对未来价格的预测或任何投资建议。"
 
 class PortfolioAnalysisItem(BaseModel):
-    symbol: str; name: str; action: str; reason: str; evidence: list[str]; confidence_percent: int = Field(ge=0, le=100); rule_snapshot: dict[str, object] | None = None; analysis_trace: list[dict[str, str]] = Field(default_factory=list); disclaimer: str
+    symbol: str; name: str; action: str; reason: str; evidence: list[str]; confidence_percent: int = Field(ge=0, le=100); rule_snapshot: dict[str, object] | None = None; technical_snapshot: dict[str, object] | None = None; analysis_trace: list[dict[str, str]] = Field(default_factory=list); disclaimer: str
 class PortfolioAnalysis(BaseModel):
     id: str; generated_at: datetime; items: list[PortfolioAnalysisItem]
 class LearningCaseInput(BaseModel):
