@@ -206,6 +206,7 @@ private fun TodayScreen() {
     var drafts by remember { mutableStateOf<List<HoldingDraftDto>>(emptyList()) }
     var quotes by remember { mutableStateOf<List<MarketQuoteDto>>(emptyList()) }
     var risks by remember { mutableStateOf<List<RiskAssessmentDto>>(emptyList()) }
+    var portfolioAnalysis by remember { mutableStateOf<List<PortfolioAnalysisItemDto>>(emptyList()) }
     var error by remember { mutableStateOf<String?>(null) }
     var refreshing by remember { mutableStateOf(false) }
     var refreshMessage by remember { mutableStateOf<String?>(null) }
@@ -223,6 +224,9 @@ private fun TodayScreen() {
             riskLoading = false
         }
     }
+    fun refreshPortfolioAnalysis() = scope.launch {
+        try { portfolioAnalysis = api.portfolioAnalysis().items } catch (_: Exception) { portfolioAnalysis = emptyList() }
+    }
     fun refresh() = scope.launch {
         try {
             refreshing = true
@@ -238,6 +242,7 @@ private fun TodayScreen() {
             if (holdings.isEmpty()) {
                 quotes = emptyList()
                 risks = emptyList()
+                portfolioAnalysis = emptyList()
                 refreshMessage = if (drafts.isNotEmpty()) "待补全记录没有证券代码，暂时无法拉取行情。" else "还没有正式持仓可供查询。"
                 return@launch
             }
@@ -256,6 +261,7 @@ private fun TodayScreen() {
                 error = "持仓已加载；行情暂时不可用，请稍后刷新。"
             }
             refreshRiskAssessments()
+            refreshPortfolioAnalysis()
         } finally {
             refreshing = false
         }
@@ -296,6 +302,8 @@ private fun TodayScreen() {
         if (riskLoading) item { StatusCard("正在计算历史风险统计…") }
         riskError?.let { message -> item { StatusCard(message, error = true) } }
         items(risks, key = { it.symbol }) { assessment -> RiskAssessmentCard(assessment) }
+        if (portfolioAnalysis.isNotEmpty()) item { Text("持仓复核建议", modifier = Modifier.padding(horizontal = 20.dp), style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold) }
+        items(portfolioAnalysis, key = { it.symbol }) { item -> PortfolioAnalysisCard(item) }
     }
 }
 
@@ -361,6 +369,17 @@ private fun RiskAssessmentCard(assessment: RiskAssessmentDto) {
             Text(assessment.explanation, style = MaterialTheme.typography.bodySmall)
             Text(assessment.disclaimer, style = MaterialTheme.typography.bodySmall)
         }
+    }
+}
+
+@Composable
+private fun PortfolioAnalysisCard(item: PortfolioAnalysisItemDto) = Card(Modifier.padding(horizontal = 20.dp).fillMaxWidth()) {
+    Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+        Text("${item.name} · ${item.action}", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
+        Text("证据置信度 ${item.confidence_percent}%", color = MaterialTheme.colorScheme.primary, style = MaterialTheme.typography.bodySmall)
+        Text(item.reason)
+        item.evidence.forEach { Text("• $it", style = MaterialTheme.typography.bodySmall) }
+        Text(item.disclaimer, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
     }
 }
 

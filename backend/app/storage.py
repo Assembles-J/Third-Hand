@@ -72,6 +72,8 @@ class PortfolioStore:
                 connection.execute("CREATE TABLE IF NOT EXISTS portfolio_analysis_cache (analysis_key TEXT PRIMARY KEY, payload TEXT NOT NULL, updated_at TEXT NOT NULL)")
                 connection.execute("CREATE TABLE IF NOT EXISTS learning_cases (id TEXT PRIMARY KEY, symbol TEXT, title TEXT NOT NULL, context TEXT NOT NULL, lesson TEXT NOT NULL, outcome TEXT NOT NULL, position_band TEXT NOT NULL DEFAULT '', planned_action TEXT NOT NULL DEFAULT '', confidence REAL NOT NULL DEFAULT 0.5, evidence_links TEXT NOT NULL DEFAULT '[]', created_at TEXT NOT NULL)")
                 connection.execute("CREATE TABLE IF NOT EXISTS research_rules (id TEXT PRIMARY KEY, category TEXT NOT NULL, title TEXT NOT NULL, trigger_text TEXT NOT NULL, guidance TEXT NOT NULL, confidence_ceiling REAL NOT NULL, source_url TEXT NOT NULL, version TEXT NOT NULL)")
+                connection.execute("CREATE TABLE IF NOT EXISTS personal_rules (id TEXT PRIMARY KEY, scope TEXT NOT NULL, symbol TEXT, max_position_percent REAL NOT NULL, loss_review_percent REAL NOT NULL, volatility_review_percent REAL NOT NULL, enabled INTEGER NOT NULL DEFAULT 1, version INTEGER NOT NULL DEFAULT 1, updated_at TEXT NOT NULL)")
+                connection.execute("CREATE TABLE IF NOT EXISTS analysis_runs (id TEXT PRIMARY KEY, payload TEXT NOT NULL, created_at TEXT NOT NULL)")
                 self._ensure_column(connection, "learning_cases", "position_band", "TEXT NOT NULL DEFAULT ''")
                 self._ensure_column(connection, "learning_cases", "planned_action", "TEXT NOT NULL DEFAULT ''")
                 self._ensure_column(connection, "learning_cases", "confidence", "REAL NOT NULL DEFAULT 0.5")
@@ -232,6 +234,21 @@ class PortfolioStore:
             connection.execute("DELETE FROM market_quote_cache")
             connection.execute("DELETE FROM symbol_lookup_cache")
 
+    def admin_summary(self) -> dict[str, int]:
+        """Return only aggregate, non-sensitive operational counters for the admin console."""
+        with self._connect() as connection:
+            counts = {
+                "holdings_count": connection.execute("SELECT COUNT(*) FROM holdings").fetchone()[0],
+                "draft_count": connection.execute("SELECT COUNT(*) FROM holding_drafts").fetchone()[0],
+                "pending_draft_count": connection.execute(
+                    "SELECT COUNT(*) FROM holding_drafts WHERE lookup_status IN ('pending', 'querying', 'needs_review')"
+                ).fetchone()[0],
+                "cached_quotes_count": connection.execute("SELECT COUNT(*) FROM market_quote_cache").fetchone()[0],
+                "cached_content_count": connection.execute("SELECT COUNT(*) FROM content_cache").fetchone()[0],
+            }
+        counts["database_bytes"] = self.database_path.stat().st_size if self.database_path.exists() else 0
+        return {key: int(value) for key, value in counts.items()}
+
     def cached_quotes(self, symbols: list[str]) -> list[dict[str, object]]:
         if not symbols:
             return []
@@ -294,3 +311,16 @@ class PortfolioStore:
     def research_rules(self) -> list[dict[str, object]]:
         with self._connect() as connection: rows = connection.execute("SELECT * FROM research_rules ORDER BY category, id").fetchall()
         return [dict(row) for row in rows]
+
+    def personal_rules(self) -> list[dict[str, object]]:
+        with self._connect() as connection: rows = connection.execute("SELECT * FROM personal_rules ORDER BY scope, symbol").fetchall()
+        return [dict(row) for row in rows]
+
+    def save_personal_rule(self, item: dict[str, object]) -> dict[str, object]:
+        with self._connect() as connection:
+            connection.execute("INSERT INTO personal_rules (id,scope,symbol,max_position_percent,loss_review_percent,volatility_review_percent,enabled,version,updated_at) VALUES (:id,:scope,:symbol,:max_position_percent,:loss_review_percent,:volatility_review_percent,:enabled,:version,:updated_at) ON CONFLICT(id) DO UPDATE SET scope=excluded.scope,symbol=excluded.symbol,max_position_percent=excluded.max_position_percent,loss_review_percent=excluded.loss_review_percent,volatility_review_percent=excluded.volatility_review_percent,enabled=excluded.enabled,version=personal_rules.version+1,updated_at=excluded.updated_at", item)
+        return item
+
+    def save_analysis_run(self, item: dict[str, object]) -> None:
+        with self._connect() as connection:
+            connection.execute("INSERT INTO analysis_runs (id, payload, created_at) VALUES (?, ?, ?)", (str(item["id"]), json.dumps(item, ensure_ascii=False, default=str), beijing_now().isoformat()))

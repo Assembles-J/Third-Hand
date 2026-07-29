@@ -14,6 +14,46 @@ def test_health():
     assert client.get("/health").json() == {"status": "ok"}
 
 
+def test_admin_overview_exposes_aggregate_operational_data_only():
+    client.post("/v1/holdings", json={"symbol": "600519", "name": "贵州茅台", "quantity": 1, "average_cost": 1450})
+    response = client.get("/v1/admin/overview")
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["status"] == "ok"
+    assert payload["holdings_count"] == 1
+    assert payload["database_bytes"] > 0
+    assert "holdings" not in payload
+
+
+def test_portfolio_analysis_returns_a_review_payload():
+    response = client.get("/v1/portfolio/analysis")
+    assert response.status_code == 200
+    assert response.json()["items"] == []
+
+
+def test_learning_cases_can_be_created_and_listed():
+    payload = {
+        "title": "公告核验练习", "context": "阅读公告后记录需要核验的事实与数据来源。",
+        "lesson": "先确认原文、发布日期与适用范围。", "outcome": "完成核验清单。",
+        "position_band": "低仓位", "planned_action": "保留观察记录", "confidence": 0.7,
+    }
+    created = client.post("/v1/learning-cases", json=payload)
+    assert created.status_code == 201
+    assert client.get("/v1/learning-cases").json()[0]["id"] == created.json()["id"]
+
+
+def test_research_and_personal_rules_are_available():
+    rules = client.get("/v1/research-rules")
+    assert rules.status_code == 200
+    assert rules.json()
+    saved = client.post("/v1/personal-rules", json={
+        "scope": "global", "max_position_percent": 20, "loss_review_percent": 12,
+        "volatility_review_percent": 35, "enabled": True,
+    })
+    assert saved.status_code == 200
+    assert client.get("/v1/personal-rules").json()[0]["scope"] == "global"
+
+
 def test_glossary():
     response = client.get("/v1/glossary/%E5%9B%9E%E8%B4%AD")
     assert response.status_code == 200

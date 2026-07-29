@@ -107,12 +107,50 @@ data class NewsItemDto(
 )
 
 data class HealthDto(val status: String)
-data class PortfolioAnalysisItemDto(val symbol: String, val name: String, val action: String, val reason: String, val evidence: List<String>, val disclaimer: String)
+data class AdminOverviewDto(
+    val status: String,
+    val generated_at: String,
+    val uptime_seconds: Int,
+    val holdings_count: Int,
+    val draft_count: Int,
+    val pending_draft_count: Int,
+    val cached_quotes_count: Int,
+    val cached_content_count: Int,
+    val database_bytes: Int,
+)
+data class PortfolioAnalysisItemDto(val symbol: String, val name: String, val action: String, val reason: String, val evidence: List<String>, val confidence_percent: Int, val disclaimer: String)
 data class PortfolioAnalysisDto(val items: List<PortfolioAnalysisItemDto>)
+data class GlossaryCardDto(val term: String, val plain_explanation: String, val watch_for: String)
+data class LearningCaseDto(
+    val id: String, val symbol: String?, val title: String, val context: String, val lesson: String,
+    val outcome: String, val position_band: String, val planned_action: String, val confidence: Double,
+    val evidence_links: List<String>, val created_at: String,
+)
+data class LearningCaseInputDto(
+    val symbol: String? = null, val title: String, val context: String, val lesson: String,
+    val outcome: String, val position_band: String, val planned_action: String, val confidence: Double,
+    val evidence_links: List<String> = emptyList(),
+)
+data class ResearchRuleDto(
+    val id: String, val category: String, val title: String, val trigger_text: String,
+    val guidance: String, val confidence_ceiling: Double, val source_url: String, val version: String,
+)
+data class PersonalRuleDto(
+    val id: String, val scope: String, val symbol: String?, val max_position_percent: Double,
+    val loss_review_percent: Double, val volatility_review_percent: Double, val enabled: Boolean,
+    val version: Int, val updated_at: String,
+)
+data class PersonalRuleInputDto(
+    val scope: String, val symbol: String? = null, val max_position_percent: Double,
+    val loss_review_percent: Double, val volatility_review_percent: Double, val enabled: Boolean = true,
+)
 
 interface ThirdHandApi {
     @GET("health")
     suspend fun health(): HealthDto
+
+    @GET("v1/admin/overview")
+    suspend fun adminOverview(): AdminOverviewDto
 
     @GET("v1/holdings")
     suspend fun holdings(): List<HoldingDto>
@@ -148,6 +186,24 @@ interface ThirdHandApi {
     suspend fun riskAssessments(): List<RiskAssessmentDto>
     @GET("v1/portfolio/analysis")
     suspend fun portfolioAnalysis(): PortfolioAnalysisDto
+
+    @GET("v1/learning-cases")
+    suspend fun learningCases(@Query("symbol") symbol: String? = null): List<LearningCaseDto>
+
+    @POST("v1/learning-cases")
+    suspend fun createLearningCase(@Body item: LearningCaseInputDto): LearningCaseDto
+
+    @GET("v1/research-rules")
+    suspend fun researchRules(): List<ResearchRuleDto>
+
+    @GET("v1/personal-rules")
+    suspend fun personalRules(): List<PersonalRuleDto>
+
+    @POST("v1/personal-rules")
+    suspend fun savePersonalRule(@Body item: PersonalRuleInputDto): PersonalRuleDto
+
+    @GET("v1/glossary/{term}")
+    suspend fun glossary(@Path("term") term: String): GlossaryCardDto
 
     @GET("v1/feed")
     suspend fun feed(@Query("symbols") symbols: List<String>): List<NewsItemDto>

@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import csv
 import io
+import time
 from datetime import datetime
 from threading import Thread
 from typing import Annotated
@@ -26,6 +27,7 @@ from app.ai_analysis import AiAnalysisService
 from app.portfolio_analysis import assess_holdings
 
 app = FastAPI(title="Third-Hand API", version="0.2.0")
+APP_STARTED_AT = time.monotonic()
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["http://localhost", "http://127.0.0.1"],
@@ -40,6 +42,18 @@ class GlossaryCard(BaseModel):
     term: str
     plain_explanation: str
     watch_for: str
+
+
+class AdminOverview(BaseModel):
+    status: str
+    generated_at: datetime
+    uptime_seconds: int
+    holdings_count: int
+    draft_count: int
+    pending_draft_count: int
+    cached_quotes_count: int
+    cached_content_count: int
+    database_bytes: int
 
 
 class NewsItem(BaseModel):
@@ -146,9 +160,9 @@ class RiskAssessment(BaseModel):
     disclaimer: str = "基于历史价格的风险统计，不构成对未来价格的预测或任何投资建议。"
 
 class PortfolioAnalysisItem(BaseModel):
-    symbol: str; name: str; action: str; reason: str; evidence: list[str]; disclaimer: str
+    symbol: str; name: str; action: str; reason: str; evidence: list[str]; confidence_percent: int = Field(ge=0, le=100); rule_snapshot: dict[str, object] | None = None; disclaimer: str
 class PortfolioAnalysis(BaseModel):
-    items: list[PortfolioAnalysisItem]
+    id: str; items: list[PortfolioAnalysisItem]
 class LearningCaseInput(BaseModel):
     symbol: str | None = Field(default=None, max_length=16)
     title: str = Field(min_length=3, max_length=120)
@@ -163,6 +177,15 @@ class LearningCase(LearningCaseInput):
     id: str; created_at: datetime
 class ResearchRule(BaseModel):
     id: str; category: str; title: str; trigger_text: str; guidance: str; confidence_ceiling: float; source_url: str; version: str
+class PersonalRuleInput(BaseModel):
+    scope: str = Field(pattern="^(global|symbol)$")
+    symbol: str | None = None
+    max_position_percent: float = Field(gt=0, le=100)
+    loss_review_percent: float = Field(gt=0, le=100)
+    volatility_review_percent: float = Field(gt=0, le=200)
+    enabled: bool = True
+class PersonalRule(PersonalRuleInput):
+    id: str; version: int; updated_at: datetime
 
 
 store = PortfolioStore()
@@ -194,8 +217,19 @@ def health() -> dict[str, str]:
     return {"status": "ok"}
 
 
+@app.get("/v1/admin/overview", response_model=AdminOverview)
+def admin_overview() -> AdminOverview:
+    """Read-only aggregate health data; no holdings, identities, or credentials are exposed."""
+    return AdminOverview(
+        status="ok",
+        generated_at=beijing_now(),
+        uptime_seconds=int(time.monotonic() - APP_STARTED_AT),
+        **store.admin_summary(),
+    )
+
+
 @app.get("/v1/feed", response_model=list[NewsItem])
-def feed(symbols: Annotated[list[str], Query()] = []) -> list[NewsItem]:
+def feed(background_tasks: BackgroundTasks, symbols: Annotated[list[str], Query()] = []) -> list[NewsItem]:
     requested = [symbol.strip().upper() for symbol in symbols if symbol.strip()]
     holdings = store.list()
     if not requested:
@@ -204,7 +238,11 @@ def feed(symbols: Annotated[list[str], Query()] = []) -> list[NewsItem]:
         return seed_news([])
     names_by_symbol = {str(holding["symbol"]): str(holding["name"]) for holding in holdings}
     try:
-        items = [ai_analysis_service.enrich(item) for item in news_service.fetch(requested, names_by_symbol)]
+        items = news_service.fetch(requested, names_by_symbol)
+        for item in items:
+            cached = store.cached_analysis(str(item["id"]))
+            if cached: item["ai_analysis"] = cached
+            else: background_tasks.add_task(ai_analysis_service.enrich, item)
         store.save_content(items)
         return [NewsItem.model_validate(item) for item in items]
     except NewsDataUnavailable as error:
@@ -213,6 +251,7 @@ def feed(symbols: Annotated[list[str], Query()] = []) -> list[NewsItem]:
 
 @app.get("/v1/announcements", response_model=list[NewsItem])
 def announcements(
+    background_tasks: BackgroundTasks,
     symbols: Annotated[list[str], Query()] = [],
     days: Annotated[int, Query(ge=1, le=90)] = 30,
 ) -> list[NewsItem]:
@@ -222,7 +261,11 @@ def announcements(
         requested = [str(holding["symbol"]) for holding in holdings]
     names_by_symbol = {str(holding["symbol"]): str(holding["name"]) for holding in holdings}
     try:
-        items = [ai_analysis_service.enrich(item) for item in announcement_service.fetch(requested, names_by_symbol, days)]
+        items = announcement_service.fetch(requested, names_by_symbol, days)
+        for item in items:
+            cached = store.cached_analysis(str(item["id"]))
+            if cached: item["ai_analysis"] = cached
+            else: background_tasks.add_task(ai_analysis_service.enrich, item)
         store.save_content(items)
         return [NewsItem.model_validate(item) for item in items]
     except AnnouncementDataUnavailable as error:
@@ -314,6 +357,7 @@ def portfolio_analysis() -> PortfolioAnalysis:
     holdings = store.list()
     payload = assess_holdings(holdings, store.cached_quotes([str(item["symbol"]) for item in holdings]), store)
     store.save_portfolio_analysis(payload)
+    store.save_analysis_run(payload)
     return PortfolioAnalysis.model_validate(payload)
 
 @app.get("/v1/learning-cases", response_model=list[LearningCase])
@@ -328,6 +372,15 @@ def create_learning_case(payload: LearningCaseInput) -> LearningCase:
 @app.get("/v1/research-rules", response_model=list[ResearchRule])
 def research_rules() -> list[ResearchRule]:
     return [ResearchRule.model_validate(item) for item in store.research_rules()]
+
+@app.get("/v1/personal-rules", response_model=list[PersonalRule])
+def list_personal_rules() -> list[PersonalRule]:
+    return [PersonalRule.model_validate(item) for item in store.personal_rules()]
+
+@app.post("/v1/personal-rules", response_model=PersonalRule)
+def save_personal_rule(payload: PersonalRuleInput) -> PersonalRule:
+    item = {"id": str(uuid4()), **payload.model_dump(), "version": 1, "updated_at": beijing_now().isoformat()}
+    return PersonalRule.model_validate(store.save_personal_rule(item))
 
 
 @app.get("/v1/glossary/{term}", response_model=GlossaryCard)

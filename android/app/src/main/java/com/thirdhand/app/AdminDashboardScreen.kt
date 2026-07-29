@@ -45,11 +45,13 @@ import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
@@ -71,11 +73,22 @@ private val ConsoleQuiet = Color(0xFF9DA9A3)
 
 @Composable
 fun AdminDashboardScreen() {
+    val context = LocalContext.current
+    val api = remember(context) { ApiClient.service(context) }
     var refreshIndex by remember { mutableIntStateOf(0) }
+    var overview by remember { mutableStateOf<AdminOverviewDto?>(null) }
+    var monitoringError by remember { mutableStateOf<String?>(null) }
     var refreshInterval by remember { mutableStateOf("30 秒") }
     var safeMode by remember { mutableStateOf(true) }
     var savedMessage by remember { mutableStateOf<String?>(null) }
     var showMaintenanceWarning by remember { mutableStateOf(false) }
+
+    LaunchedEffect(refreshIndex) {
+        monitoringError = null
+        runCatching { api.adminOverview() }
+            .onSuccess { overview = it }
+            .onFailure { monitoringError = "无法读取后端监控数据：${it.message ?: "请检查服务地址"}" }
+    }
 
     if (showMaintenanceWarning) AlertDialog(
         onDismissRequest = { showMaintenanceWarning = false },
@@ -90,12 +103,13 @@ fun AdminDashboardScreen() {
         modifier = Modifier.background(ConsoleCanvas).verticalScroll(rememberScrollState()).padding(horizontal = 16.dp, vertical = 18.dp),
         verticalArrangement = Arrangement.spacedBy(14.dp),
     ) {
-        ConsoleHeader(refreshIndex, { refreshIndex += 1; savedMessage = "监控数据已刷新" }, { showMaintenanceWarning = true })
-        ConsoleMetricGrid()
-        ThroughputPanel()
-        AlertPanel()
-        CapacityPanel()
-        JobPanel()
+        ConsoleHeader(refreshIndex, overview, { refreshIndex += 1; savedMessage = "正在刷新后端监控数据" }, { showMaintenanceWarning = true })
+        monitoringError?.let { ConsoleCard { Text(it, color = ConsoleCoral, style = MaterialTheme.typography.bodySmall) } }
+        ConsoleMetricGrid(overview)
+        ThroughputPanel(overview)
+        AlertPanel(overview)
+        CapacityPanel(overview)
+        JobPanel(overview)
         QuickConfigPanel(refreshInterval, { refreshInterval = it }, safeMode, { safeMode = it }) {
             savedMessage = "配置已保存，将在下一个刷新周期生效"
         }
@@ -112,7 +126,7 @@ fun AdminDashboardScreen() {
 }
 
 @Composable
-private fun ConsoleHeader(refreshIndex: Int, onRefresh: () -> Unit, onMaintenance: () -> Unit) {
+private fun ConsoleHeader(refreshIndex: Int, overview: AdminOverviewDto?, onRefresh: () -> Unit, onMaintenance: () -> Unit) {
     Row(verticalAlignment = Alignment.Top) {
         Column(Modifier.weight(1f)) {
             Text("系统总览", color = ConsoleText, style = MaterialTheme.typography.headlineMedium, fontWeight = FontWeight.Bold)
@@ -121,7 +135,7 @@ private fun ConsoleHeader(refreshIndex: Int, onRefresh: () -> Unit, onMaintenanc
             Row(verticalAlignment = Alignment.CenterVertically) {
                 Box(Modifier.size(8.dp).background(ConsoleMint))
                 Spacer(Modifier.width(7.dp))
-                Text("全部服务正常 · 14:02:${44 + refreshIndex}", color = ConsoleMint, style = MaterialTheme.typography.labelMedium)
+                Text(if (overview?.status == "ok") "后端服务正常 · 已刷新" else "正在读取后端状态… ${refreshIndex}", color = ConsoleMint, style = MaterialTheme.typography.labelMedium)
             }
         }
         IconButton(onClick = onRefresh) { Icon(Icons.Filled.Refresh, "刷新监控数据", tint = ConsoleText) }
@@ -131,12 +145,12 @@ private fun ConsoleHeader(refreshIndex: Int, onRefresh: () -> Unit, onMaintenanc
 
 @OptIn(ExperimentalLayoutApi::class)
 @Composable
-private fun ConsoleMetricGrid() {
+private fun ConsoleMetricGrid(overview: AdminOverviewDto?) {
     FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-        MetricCell("API 可用性", "99.98%", "+0.02%", ConsoleMint, Icons.Filled.Bolt)
-        MetricCell("活跃用户", "1,284", "+12.4%", ConsoleMint, Icons.Filled.Security)
-        MetricCell("任务吞吐", "18.6k/h", "-2.1%", ConsoleCoral, Icons.Filled.CloudSync)
-        MetricCell("今日 LLM 成本", "¥426.80", "预计", ConsoleGold, Icons.Filled.Memory)
+        MetricCell("API 状态", if (overview?.status == "ok") "在线" else "—", "实时后端", ConsoleMint, Icons.Filled.Bolt)
+        MetricCell("已入库持仓", overview?.holdings_count?.toString() ?: "—", "聚合数量", ConsoleMint, Icons.Filled.Security)
+        MetricCell("待处理草稿", overview?.pending_draft_count?.toString() ?: "—", "需人工核验", ConsoleGold, Icons.Filled.CloudSync)
+        MetricCell("缓存行情", overview?.cached_quotes_count?.toString() ?: "—", "本地快照", ConsoleTeal, Icons.Filled.Memory)
     }
 }
 
@@ -157,20 +171,20 @@ private fun MetricCell(label: String, value: String, hint: String, accent: Color
 }
 
 @Composable
-private fun ThroughputPanel() = ConsoleCard {
-    SectionLabel("请求与任务吞吐", "24H · 每 30 秒更新")
+private fun ThroughputPanel(overview: AdminOverviewDto?) = ConsoleCard {
+    SectionLabel("系统数据链路", "后端实时概览")
     Spacer(Modifier.height(16.dp)); TopologyTrace(); Spacer(Modifier.height(18.dp))
-    Text("过去 24 小时请求 / 完成任务", color = ConsoleQuiet, style = MaterialTheme.typography.labelSmall)
+    Text("每分钟吞吐需接入指标采集器；当前展示已连接的后端组件。", color = ConsoleQuiet, style = MaterialTheme.typography.labelSmall)
     Spacer(Modifier.height(8.dp))
     Row(Modifier.fillMaxWidth().height(88.dp), horizontalArrangement = Arrangement.spacedBy(4.dp), verticalAlignment = Alignment.Bottom) {
-        listOf(28, 42, 35, 56, 49, 68, 60, 78, 63, 88, 72, 82).forEachIndexed { index, height ->
-            Box(Modifier.weight(1f).height(height.dp).background(if (index == 8) ConsoleCoral else ConsoleTeal))
+        listOf(28, 42, 35, 56, 49, 68, 60, 78, 63, 88, 72, 82).forEach { height ->
+            Box(Modifier.weight(1f).height(height.dp).background(ConsoleTeal))
         }
     }
     Spacer(Modifier.height(8.dp))
     Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
         Text("00:00", color = ConsoleQuiet, fontFamily = FontFamily.Monospace, style = MaterialTheme.typography.labelSmall)
-        Text("当前 1,482 req/min", color = ConsoleMint, fontFamily = FontFamily.Monospace, style = MaterialTheme.typography.labelSmall)
+        Text("运行 ${overview?.uptime_seconds ?: 0} 秒", color = ConsoleMint, fontFamily = FontFamily.Monospace, style = MaterialTheme.typography.labelSmall)
         Text("14:00", color = ConsoleQuiet, fontFamily = FontFamily.Monospace, style = MaterialTheme.typography.labelSmall)
     }
 }
@@ -192,10 +206,11 @@ private fun TopologyTrace() {
 }
 
 @Composable
-private fun AlertPanel() = ConsoleCard {
-    SectionLabel("需要处理", "2 条告警")
-    AlertLine("Redis 延迟超过 80 ms", "3 分钟前 · 96 ms", ConsoleCoral, "查看日志")
-    AlertLine("财新新闻源波动", "18 分钟前 · 可用性 92.4%", ConsoleGold, "查看数据源")
+private fun AlertPanel(overview: AdminOverviewDto?) = ConsoleCard {
+    val pending = overview?.pending_draft_count ?: 0
+    SectionLabel("需要处理", if (pending > 0) "$pending 条待处理" else "暂无待处理项")
+    if (pending > 0) AlertLine("有 $pending 条持仓草稿需要核验", "请在持仓页补全证券代码后确认入库", ConsoleGold, "查看持仓")
+    else AlertLine("当前没有待处理草稿", "后端聚合数据已同步", ConsoleMint, "已完成")
 }
 
 @Composable
@@ -212,13 +227,11 @@ private fun AlertLine(title: String, detail: String, color: Color, action: Strin
 }
 
 @Composable
-private fun CapacityPanel() = ConsoleCard {
+private fun CapacityPanel(overview: AdminOverviewDto?) = ConsoleCard {
     SectionLabel("资源容量", "当前 / 配额")
-    CapacityRow("计算资源", "4.6 / 8 vCPU", 0.58f, ConsoleMint)
-    CapacityRow("内存", "10.2 / 16 GB", 0.64f, ConsoleTeal)
-    CapacityRow("PostgreSQL", "72 / 100 GB", 0.72f, ConsoleGold)
-    CapacityRow("Redis", "1.4 / 2 GB", 0.70f, ConsoleGold)
-    CapacityRow("对象存储", "403 / 500 GB", 0.81f, ConsoleCoral)
+    CapacityRow("SQLite 数据库", formatBytes(overview?.database_bytes ?: 0), databaseProgress(overview?.database_bytes ?: 0), ConsoleTeal)
+    CapacityRow("内容缓存", "${overview?.cached_content_count ?: 0} 条", 0f, ConsoleMint)
+    CapacityRow("行情快照", "${overview?.cached_quotes_count ?: 0} 条", 0f, ConsoleMint)
 }
 
 @Composable
@@ -234,11 +247,11 @@ private fun CapacityRow(name: String, value: String, progress: Float, color: Col
 }
 
 @Composable
-private fun JobPanel() = ConsoleCard {
-    SectionLabel("任务队列", "12 个运行中")
-    JobRow("JB-882103", "运行中", "420 ms", "SYS_SYNC", ConsoleMint)
-    JobRow("JB-882104", "等待", "—", "USR_662", ConsoleTeal)
-    JobRow("JB-882099", "重试 3/5", "8.2 s", "LLM_VAL", ConsoleCoral)
+private fun JobPanel(overview: AdminOverviewDto?) = ConsoleCard {
+    SectionLabel("应用数据状态", "聚合统计")
+    JobRow("HOLDINGS", "已入库", "${overview?.holdings_count ?: 0} 条", "本地数据库", ConsoleMint)
+    JobRow("DRAFTS", "草稿", "${overview?.draft_count ?: 0} 条", "待确认数据", ConsoleGold)
+    JobRow("CONTENT", "缓存", "${overview?.cached_content_count ?: 0} 条", "新闻与公告", ConsoleTeal)
 }
 
 @Composable
@@ -277,6 +290,14 @@ private fun QuickConfigPanel(interval: String, onIntervalChange: (String) -> Uni
         Icon(Icons.Filled.Save, null); Spacer(Modifier.width(8.dp)); Text("保存更改", fontWeight = FontWeight.Bold)
     }
 }
+
+private fun formatBytes(bytes: Int): String = when {
+    bytes >= 1_048_576 -> "%.1f MB".format(bytes / 1_048_576.0)
+    bytes >= 1_024 -> "%.1f KB".format(bytes / 1_024.0)
+    else -> "$bytes B"
+}
+
+private fun databaseProgress(bytes: Int): Float = (bytes / (100.0 * 1_048_576.0)).toFloat().coerceIn(0f, 1f)
 
 @Composable
 private fun ConsoleCard(content: @Composable ColumnScope.() -> Unit) = Card(
