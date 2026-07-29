@@ -391,13 +391,63 @@ private fun RiskAssessmentCard(assessment: RiskAssessmentDto) {
 @Composable
 private fun PortfolioAnalysisCard(item: PortfolioAnalysisItemDto) = Card(Modifier.padding(horizontal = 20.dp).fillMaxWidth()) {
     Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
-        Text("${item.name} · ${item.action}", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
+        Text("${item.name} · ${analysisActionLabel(item.action)}", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
         Text("证据置信度 ${item.confidence_percent}%", color = MaterialTheme.colorScheme.primary, style = MaterialTheme.typography.bodySmall)
         Text(item.reason)
+        item.technical_snapshot?.let { TechnicalSnapshotSummary(it) }
         item.evidence.forEach { Text("• $it", style = MaterialTheme.typography.bodySmall) }
         Text(item.disclaimer, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
     }
 }
+
+@Composable
+private fun TechnicalSnapshotSummary(snapshot: TechnicalSnapshotDto, detailed: Boolean = false) {
+    Column(
+        Modifier
+            .fillMaxWidth()
+            .clip(RoundedCornerShape(12.dp))
+            .background(MaterialTheme.colorScheme.surfaceVariant.copy(alpha = .55f))
+            .padding(12.dp),
+        verticalArrangement = Arrangement.spacedBy(8.dp),
+    ) {
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Text("技术指标", modifier = Modifier.weight(1f), style = MaterialTheme.typography.labelLarge, fontWeight = FontWeight.Bold)
+            Text("${snapshot.trend_label} · ${snapshot.as_of}", color = technicalTrendColor(snapshot.trend), style = MaterialTheme.typography.labelSmall, fontWeight = FontWeight.Bold)
+        }
+        Text(snapshot.summary, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            TechnicalMetric("MA20", "${marketNumber(snapshot.sma20)}\n${signedPercent(snapshot.sma20_distance_percent)}", Modifier.weight(1f))
+            TechnicalMetric("MA60", "${marketNumber(snapshot.sma60)}\n${signedPercent(snapshot.sma60_distance_percent)}", Modifier.weight(1f))
+            TechnicalMetric("RSI(14)", "${snapshot.rsi14}\n${snapshot.rsi_state}", Modifier.weight(1f))
+        }
+        if (detailed) {
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                TechnicalMetric("MACD 柱", "${snapshot.macd_histogram}\n${snapshot.macd_state}", Modifier.weight(1f))
+                TechnicalMetric("ATR(14)", "${snapshot.atr14}\n占收盘 ${snapshot.atr_percent}%", Modifier.weight(1f))
+                TechnicalMetric("60日回撤", "${snapshot.drawdown_60d_percent}%\n${snapshot.sample_count} 日样本", Modifier.weight(1f))
+            }
+        }
+        Text(
+            "均线距离为收盘价相对均线的偏离；指标描述历史价格状态，不代表未来涨跌。",
+            style = MaterialTheme.typography.labelSmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+        )
+    }
+}
+
+@Composable
+private fun TechnicalMetric(label: String, value: String, modifier: Modifier = Modifier) {
+    Column(modifier, verticalArrangement = Arrangement.spacedBy(2.dp)) {
+        Text(label, style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+        Text(value, style = MaterialTheme.typography.bodySmall, fontWeight = FontWeight.SemiBold)
+    }
+}
+
+private fun signedPercent(value: Double): String = "${if (value >= 0) "+" else ""}${"%.1f".format(value)}%"
+
+@Composable
+private fun technicalTrendColor(trend: String): Color =
+    if (trend == "up") MaterialTheme.colorScheme.tertiary else MaterialTheme.colorScheme.error
 
 @Composable
 private fun HoldingMetric(label: String, value: String, modifier: Modifier = Modifier) {
@@ -846,6 +896,10 @@ private fun AnalysisDetailItem(item: PortfolioAnalysisItemDto, expanded: Boolean
         }
         Text(item.reason, modifier = Modifier.padding(top = 4.dp), style = MaterialTheme.typography.bodySmall, maxLines = if (expanded) Int.MAX_VALUE else 2, overflow = TextOverflow.Ellipsis)
         if (expanded) {
+            item.technical_snapshot?.let {
+                Text("技术指标快照", modifier = Modifier.padding(top = 10.dp), color = MaterialTheme.colorScheme.primary, style = MaterialTheme.typography.labelSmall, fontWeight = FontWeight.Bold)
+                TechnicalSnapshotSummary(it, detailed = true)
+            }
             Text("触发证据", modifier = Modifier.padding(top = 10.dp), color = MaterialTheme.colorScheme.primary, style = MaterialTheme.typography.labelSmall, fontWeight = FontWeight.Bold)
             if (item.evidence.isEmpty()) Text("本次没有可用的量化证据。", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
             item.evidence.forEach { Text("• $it", style = MaterialTheme.typography.bodySmall) }
