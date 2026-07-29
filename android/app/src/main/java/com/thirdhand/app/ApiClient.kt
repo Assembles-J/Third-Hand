@@ -127,7 +127,26 @@ data class AdminOverviewDto(
     val database_bytes: Int,
 )
 data class AnalysisTraceStepDto(val stage: String, val status: String, val detail: String)
-data class PortfolioAnalysisItemDto(val symbol: String, val name: String, val action: String, val reason: String, val evidence: List<String>, val confidence_percent: Int, val rule_snapshot: Map<String, Any>? = null, val analysis_trace: List<AnalysisTraceStepDto> = emptyList(), val disclaimer: String)
+data class TechnicalSnapshotDto(
+    val as_of: String,
+    val sample_count: Int,
+    val close: Double,
+    val trend: String,
+    val trend_label: String,
+    val summary: String,
+    val sma20: Double,
+    val sma60: Double,
+    val sma20_distance_percent: Double,
+    val sma60_distance_percent: Double,
+    val rsi14: Double,
+    val rsi_state: String,
+    val macd_histogram: Double,
+    val macd_state: String,
+    val atr14: Double,
+    val atr_percent: Double,
+    val drawdown_60d_percent: Double,
+)
+data class PortfolioAnalysisItemDto(val symbol: String, val name: String, val action: String, val reason: String, val evidence: List<String>, val confidence_percent: Int, val rule_snapshot: Map<String, Any>? = null, val technical_snapshot: TechnicalSnapshotDto? = null, val analysis_trace: List<AnalysisTraceStepDto> = emptyList(), val disclaimer: String)
 data class PortfolioAnalysisDto(val id: String, val generated_at: String, val items: List<PortfolioAnalysisItemDto>)
 data class GlossaryCardDto(val term: String, val plain_explanation: String, val watch_for: String)
 data class LearningCaseDto(
