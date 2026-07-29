@@ -407,6 +407,12 @@ def delete_holding(holding_id: str) -> Response:
         raise HTTPException(status_code=404, detail="未找到持仓")
     return Response(status_code=status.HTTP_204_NO_CONTENT)
 
+@app.put("/v1/holdings/{holding_id}", response_model=Holding)
+def update_holding(holding_id: str, payload: HoldingInput) -> Holding:
+    item = store.update(holding_id, **payload.model_dump())
+    if not item: raise HTTPException(status_code=404, detail="未找到持仓")
+    return Holding.model_validate(item)
+
 
 @app.get("/v1/holding-drafts", response_model=list[HoldingDraft])
 def list_holding_drafts() -> list[HoldingDraft]:

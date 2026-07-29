@@ -7,6 +7,7 @@ import retrofit2.http.Body
 import retrofit2.http.DELETE
 import retrofit2.http.GET
 import retrofit2.http.POST
+import retrofit2.http.PUT
 import retrofit2.http.Path
 import retrofit2.http.Query
 
@@ -157,6 +158,8 @@ interface ThirdHandApi {
 
     @POST("v1/holdings")
     suspend fun addHolding(@Body holding: HoldingInputDto): HoldingDto
+    @PUT("v1/holdings/{id}")
+    suspend fun updateHolding(@Path("id") id: String, @Body holding: HoldingInputDto): HoldingDto
 
     @DELETE("v1/holdings/{id}")
     suspend fun deleteHolding(@Path("id") id: String)

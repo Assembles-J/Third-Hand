@@ -70,6 +70,7 @@ import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import kotlinx.coroutines.delay
@@ -462,9 +463,12 @@ private fun HoldingsScreen() {
     val api = ApiClient.service(context)
     var holdings by remember { mutableStateOf<List<HoldingDto>>(emptyList()) }
     var drafts by remember { mutableStateOf<List<HoldingDraftDto>>(emptyList()) }
+    var quotesBySymbol by remember { mutableStateOf<Map<String, MarketQuoteDto>>(emptyMap()) }
     var error by remember { mutableStateOf<String?>(null) }
+    var quoteError by remember { mutableStateOf<String?>(null) }
     var showAdd by remember { mutableStateOf(false) }
     var editingDraft by remember { mutableStateOf<HoldingDraftDto?>(null) }
+    var editingHolding by remember { mutableStateOf<HoldingDto?>(null) }
     var scanError by remember { mutableStateOf<String?>(null) }
     val scope = rememberCoroutineScope()
     val imagePicker = rememberLauncherForActivityResult(ActivityResultContracts.OpenMultipleDocuments()) { imageUris ->
@@ -494,31 +498,38 @@ private fun HoldingsScreen() {
             holdings = api.holdings()
             drafts = api.holdingDrafts()
             error = null
+            quoteError = null
+            quotesBySymbol = if (holdings.isEmpty()) emptyMap() else try {
+                api.quotes(holdings.map { it.symbol }).associateBy { it.symbol }
+            } catch (exception: Exception) {
+                quoteError = "现价暂不可用；成本与持仓信息仍可查看。"
+                emptyMap()
+            }
         }
         catch (exception: Exception) { error = "读取持仓失败：${exception.message ?: "请确认后端正在运行"}" }
     }
     LaunchedEffect(Unit) { refresh() }
-    LazyColumn(contentPadding = androidx.compose.foundation.layout.PaddingValues(bottom = 24.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+    LazyColumn(contentPadding = androidx.compose.foundation.layout.PaddingValues(bottom = 24.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
         item { AppHero("我的持仓", "资产根系 · 记录每一次成长") }
-        item { Text("识别结果可先保存，稍后补充证券代码再确认入库。", modifier = Modifier.padding(horizontal = 20.dp), color = MaterialTheme.colorScheme.onSurfaceVariant) }
         item {
-            Card(
-                modifier = Modifier.padding(horizontal = 20.dp).fillMaxWidth(),
-                colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.primaryContainer),
-            ) {
-                Row(Modifier.padding(16.dp), horizontalArrangement = Arrangement.SpaceBetween) {
-                    Column { Text("已入库", style = MaterialTheme.typography.labelLarge); Text("${holdings.size} 条", style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.ExtraBold) }
-                    Column { Text("待补全", style = MaterialTheme.typography.labelLarge); Text("${drafts.size} 条", style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.ExtraBold) }
+            Row(Modifier.padding(horizontal = 14.dp).fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+                val pricedHoldings = holdings.mapNotNull { holding -> quotesBySymbol[holding.symbol]?.price?.let { price -> holding to price } }
+                val totalMarketValue = pricedHoldings.sumOf { (holding, price) -> holding.quantity * price }
+                val totalPnl = pricedHoldings.sumOf { (holding, price) -> holding.quantity * (price - holding.average_cost) }
+                Column(Modifier.weight(1f)) {
+                    Text("${holdings.size} 只持仓 · ${drafts.size} 条待补全", style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    Text(
+                        if (pricedHoldings.isEmpty()) "等待行情更新" else "市值 ${formatPositionValue(totalMarketValue)} · 浮盈 ${signedPositionValue(totalPnl)}",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = if (totalPnl >= 0) Color(0xFFD32F2F) else Color(0xFF178A4B),
+                    )
                 }
-            }
-        }
-        item {
-            Column(Modifier.padding(horizontal = 20.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                PrimaryAction("手动添加持仓", Icons.Filled.Add, { showAdd = true }, Modifier.fillMaxWidth())
-                SecondaryAction("导入持仓+自选截图", Icons.Filled.CameraAlt, { imagePicker.launch(arrayOf("image/*")) }, Modifier.fillMaxWidth())
+                TextButton(onClick = { showAdd = true }) { Icon(Icons.Filled.Add, null); Text("添加") }
+                TextButton(onClick = { imagePicker.launch(arrayOf("image/*")) }) { Icon(Icons.Filled.CameraAlt, null); Text("导入") }
             }
         }
         error?.let { message -> item { StatusCard(message, error = true) } }
+        quoteError?.let { message -> item { Text(message, Modifier.padding(horizontal = 14.dp), color = MaterialTheme.colorScheme.onSurfaceVariant, style = MaterialTheme.typography.bodySmall) } }
         scanError?.let { message -> item { StatusCard(message, error = true) } }
         if (drafts.isNotEmpty()) item { Text("待补全代码", modifier = Modifier.padding(start = 20.dp, top = 6.dp, end = 20.dp), style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold) }
         items(drafts, key = { it.id }) { draft ->
@@ -528,9 +539,14 @@ private fun HoldingsScreen() {
                 onDelete = { scope.launch { api.deleteHoldingDraft(draft.id); refresh() } },
             )
         }
-        if (holdings.isNotEmpty()) item { Text("已入库持仓", modifier = Modifier.padding(start = 20.dp, top = 6.dp, end = 20.dp), style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold) }
+        if (holdings.isNotEmpty()) item { HoldingTableHeader() }
         items(holdings, key = { it.id }) { holding ->
-            HoldingCard(holding = holding, onDelete = { scope.launch { api.deleteHolding(holding.id); refresh() } })
+            HoldingTableRow(
+                holding = holding,
+                quote = quotesBySymbol[holding.symbol],
+                onEdit = { editingHolding = holding },
+                onDelete = { scope.launch { api.deleteHolding(holding.id); refresh() } },
+            )
         }
     }
     if (showAdd) AddHoldingDialog(
@@ -547,6 +563,87 @@ private fun HoldingsScreen() {
             api.confirmHoldingDraft(draft.id, input); editingDraft = null; refresh()
         } catch (exception: Exception) { error = "补全代码失败：${exception.message ?: "请稍后重试"}" } } },
     ) }
+    editingHolding?.let { holding -> AddHoldingDialog(
+        title = "编辑持仓",
+        initial = HoldingInputDto(holding.symbol, holding.name, holding.quantity, holding.average_cost),
+        onDismiss = { editingHolding = null },
+        onSave = { input -> scope.launch { try { api.updateHolding(holding.id, input); editingHolding = null; refresh() } catch (_: Exception) { error = "更新持仓失败，请稍后重试。" } } },
+    ) }
+}
+
+private fun formatPositionValue(value: Double): String = "%.2f".format(value)
+private fun signedPositionValue(value: Double): String = if (value >= 0) "+${formatPositionValue(value)}" else formatPositionValue(value)
+
+@Composable
+private fun HoldingTableHeader() {
+    Row(
+        Modifier.fillMaxWidth().padding(horizontal = 10.dp, vertical = 7.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        PositionHeader("名称 / 市值", Modifier.weight(1.15f), TextAlign.Start)
+        PositionHeader("盈亏 / 比例", Modifier.weight(1f), TextAlign.End)
+        PositionHeader("持仓 / 可用", Modifier.weight(.78f), TextAlign.End)
+        PositionHeader("成本 / 现价", Modifier.weight(1f), TextAlign.End)
+    }
+    HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
+}
+
+@Composable
+private fun PositionHeader(label: String, modifier: Modifier, alignment: TextAlign) = Text(
+    label, modifier = modifier, color = MaterialTheme.colorScheme.onSurfaceVariant,
+    style = MaterialTheme.typography.labelSmall, textAlign = alignment,
+)
+
+@Composable
+private fun HoldingTableRow(holding: HoldingDto, quote: MarketQuoteDto?, onEdit: () -> Unit, onDelete: () -> Unit) {
+    val currentPrice = quote?.price
+    val marketValue = currentPrice?.let { it * holding.quantity }
+    val pnl = currentPrice?.let { (it - holding.average_cost) * holding.quantity }
+    val pnlPercent = currentPrice?.let { if (holding.average_cost == 0.0) null else (it - holding.average_cost) / holding.average_cost * 100 }
+    val pnlColor = when {
+        pnl == null -> MaterialTheme.colorScheme.onSurfaceVariant
+        pnl >= 0 -> Color(0xFFD32F2F)
+        else -> Color(0xFF178A4B)
+    }
+    Column(Modifier.fillMaxWidth()) {
+        Row(
+            Modifier.fillMaxWidth().padding(horizontal = 10.dp, vertical = 9.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Column(Modifier.weight(1.15f)) {
+                Text(holding.name, maxLines = 1, overflow = TextOverflow.Ellipsis, fontWeight = FontWeight.SemiBold, style = MaterialTheme.typography.bodyMedium)
+                Text(marketValue?.let(::formatPositionValue) ?: "市值待更新", color = MaterialTheme.colorScheme.onSurfaceVariant, style = MaterialTheme.typography.labelSmall)
+            }
+            PositionValueCell(
+                main = pnl?.let(::signedPositionValue) ?: "—",
+                sub = pnlPercent?.let { "${if (it >= 0) "+" else ""}${"%.2f".format(it)}%" } ?: "待更新",
+                color = pnlColor, modifier = Modifier.weight(1f),
+            )
+            PositionValueCell(
+                main = "${holding.quantity.toInt()}", sub = "${holding.quantity.toInt()}",
+                color = MaterialTheme.colorScheme.onSurface, modifier = Modifier.weight(.78f),
+            )
+            PositionValueCell(
+                main = formatPositionValue(holding.average_cost), sub = currentPrice?.let(::formatPositionValue) ?: "—",
+                color = MaterialTheme.colorScheme.onSurface, modifier = Modifier.weight(1f),
+            )
+        }
+        Row(Modifier.fillMaxWidth().padding(horizontal = 10.dp), horizontalArrangement = Arrangement.End) {
+            TextButton(onClick = onEdit, contentPadding = androidx.compose.foundation.layout.PaddingValues(horizontal = 4.dp, vertical = 0.dp)) {
+                Text("编辑", style = MaterialTheme.typography.labelSmall)
+            }
+            TextButton(onClick = onDelete, contentPadding = androidx.compose.foundation.layout.PaddingValues(horizontal = 4.dp, vertical = 0.dp)) {
+                Text("删除", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.error)
+            }
+        }
+        HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = .65f))
+    }
+}
+
+@Composable
+private fun PositionValueCell(main: String, sub: String, color: Color, modifier: Modifier) = Column(modifier, horizontalAlignment = Alignment.End) {
+    Text(main, color = color, fontWeight = FontWeight.SemiBold, style = MaterialTheme.typography.bodyMedium, textAlign = TextAlign.End, maxLines = 1)
+    Text(sub, color = color.copy(alpha = .82f), style = MaterialTheme.typography.labelSmall, textAlign = TextAlign.End, maxLines = 1)
 }
 
 @Composable

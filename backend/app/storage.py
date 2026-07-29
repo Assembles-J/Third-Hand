@@ -222,6 +222,18 @@ class PortfolioStore:
             result = connection.execute("DELETE FROM holdings WHERE id = ?", (holding_id,))
         return result.rowcount > 0
 
+    def update(self, holding_id: str, symbol: str, name: str, quantity: float, average_cost: float) -> dict[str, object] | None:
+        with self._connect() as connection:
+            current = connection.execute("SELECT id FROM holdings WHERE id = ?", (holding_id,)).fetchone()
+            if not current: return None
+            duplicate = connection.execute("SELECT id FROM holdings WHERE symbol = ? AND id != ?", (symbol, holding_id)).fetchone()
+            if duplicate:
+                connection.execute("DELETE FROM holdings WHERE id = ?", (holding_id,))
+                holding_id = str(duplicate["id"])
+            item = {"id": holding_id, "symbol": symbol, "name": name, "quantity": quantity, "average_cost": average_cost, "created_at": beijing_now().isoformat()}
+            connection.execute("UPDATE holdings SET symbol=:symbol,name=:name,quantity=:quantity,average_cost=:average_cost,created_at=:created_at WHERE id=:id", item)
+        return item
+
     def delete_draft(self, draft_id: str) -> bool:
         with self._connect() as connection:
             result = connection.execute("DELETE FROM holding_drafts WHERE id = ?", (draft_id,))
