@@ -73,6 +73,33 @@ class PortfolioStore:
                     )
                 """)
                 connection.execute("CREATE TABLE IF NOT EXISTS ai_analysis_cache (content_id TEXT PRIMARY KEY, payload TEXT NOT NULL)")
+                connection.execute("""
+                    CREATE TABLE IF NOT EXISTS ai_analysis_cache_v2 (
+                        cache_key TEXT PRIMARY KEY,
+                        content_id TEXT NOT NULL,
+                        content_hash TEXT NOT NULL,
+                        input_hash TEXT NOT NULL,
+                        rules_hash TEXT NOT NULL,
+                        user_context_hash TEXT NOT NULL,
+                        model TEXT NOT NULL,
+                        prompt_version TEXT NOT NULL,
+                        schema_version TEXT NOT NULL,
+                        payload TEXT NOT NULL,
+                        metadata TEXT NOT NULL,
+                        created_at TEXT NOT NULL
+                    )
+                """)
+                connection.execute(
+                    "CREATE INDEX IF NOT EXISTS idx_ai_analysis_cache_v2_content_id "
+                    "ON ai_analysis_cache_v2(content_id)"
+                )
+                self._ensure_column(connection, "ai_analysis_cache_v2", "rules_hash", "TEXT NOT NULL DEFAULT ''")
+                self._ensure_column(
+                    connection,
+                    "ai_analysis_cache_v2",
+                    "user_context_hash",
+                    "TEXT NOT NULL DEFAULT ''",
+                )
                 connection.execute("CREATE TABLE IF NOT EXISTS content_cache (content_id TEXT PRIMARY KEY, payload TEXT NOT NULL, updated_at TEXT NOT NULL)")
                 connection.execute("CREATE TABLE IF NOT EXISTS risk_cache (symbol TEXT PRIMARY KEY, payload TEXT NOT NULL, updated_at TEXT NOT NULL)")
                 connection.execute("CREATE TABLE IF NOT EXISTS portfolio_analysis_cache (analysis_key TEXT PRIMARY KEY, payload TEXT NOT NULL, updated_at TEXT NOT NULL)")
@@ -325,6 +352,7 @@ class PortfolioStore:
             connection.execute("DELETE FROM portfolio_analysis_cache")
             connection.execute("DELETE FROM analysis_runs")
             connection.execute("DELETE FROM ai_analysis_cache")
+            connection.execute("DELETE FROM ai_analysis_cache_v2")
             connection.execute("DELETE FROM content_cache")
 
     def admin_summary(self) -> dict[str, int]:
@@ -362,14 +390,54 @@ class PortfolioStore:
                 rows,
             )
 
-    def cached_analysis(self, content_id: str) -> dict[str, object] | None:
+    def cached_analysis(self, cache_key: str) -> dict[str, object] | None:
         with self._connect() as connection:
-            row = connection.execute("SELECT payload FROM ai_analysis_cache WHERE content_id = ?", (content_id,)).fetchone()
+            row = connection.execute(
+                "SELECT payload FROM ai_analysis_cache_v2 WHERE cache_key = ?",
+                (cache_key,),
+            ).fetchone()
         return json.loads(str(row["payload"])) if row else None
 
-    def save_analysis(self, content_id: str, payload: dict[str, object]) -> None:
+    def save_analysis(
+        self,
+        *,
+        cache_key: str,
+        content_id: str,
+        content_hash: str,
+        input_hash: str,
+        rules_hash: str,
+        user_context_hash: str,
+        model: str,
+        prompt_version: str,
+        schema_version: str,
+        payload: dict[str, object],
+        metadata: dict[str, object],
+    ) -> None:
         with self._connect() as connection:
-            connection.execute("INSERT INTO ai_analysis_cache (content_id, payload) VALUES (?, ?) ON CONFLICT(content_id) DO UPDATE SET payload=excluded.payload", (content_id, json.dumps(payload, ensure_ascii=False)))
+            connection.execute(
+                """INSERT INTO ai_analysis_cache_v2
+                (cache_key, content_id, content_hash, input_hash, rules_hash, user_context_hash,
+                 model, prompt_version, schema_version, payload, metadata, created_at)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ON CONFLICT(cache_key) DO UPDATE SET
+                    payload=excluded.payload,
+                    metadata=excluded.metadata,
+                    created_at=excluded.created_at""",
+                (
+                    cache_key,
+                    content_id,
+                    content_hash,
+                    input_hash,
+                    rules_hash,
+                    user_context_hash,
+                    model,
+                    prompt_version,
+                    schema_version,
+                    json.dumps(payload, ensure_ascii=False, default=str),
+                    json.dumps(metadata, ensure_ascii=False, default=str),
+                    beijing_now().isoformat(),
+                ),
+            )
 
     def save_content(self, items: list[dict[str, object]]) -> None:
         timestamp = beijing_now().isoformat()

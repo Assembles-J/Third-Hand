@@ -393,7 +393,7 @@ def feed(background_tasks: BackgroundTasks, symbols: Annotated[list[str], Query(
     try:
         items = news_service.fetch(requested, names_by_symbol)
         for item in items:
-            cached = store.cached_analysis(str(item["id"]))
+            cached = ai_analysis_service.cached(item)
             if cached: item["ai_analysis"] = cached
             else: background_tasks.add_task(ai_analysis_service.enrich, item)
         store.save_content(items)
@@ -416,7 +416,7 @@ def announcements(
     try:
         items = announcement_service.fetch(requested, names_by_symbol, days)
         for item in items:
-            cached = store.cached_analysis(str(item["id"]))
+            cached = ai_analysis_service.cached(item)
             if cached: item["ai_analysis"] = cached
             else: background_tasks.add_task(ai_analysis_service.enrich, item)
         store.save_content(items)
