@@ -36,6 +36,7 @@ jobs:
       ANDROID_KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
       ANDROID_KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
       APP_PUBLIC_BASE_URL: ${{ secrets.APP_PUBLIC_BASE_URL }}
+      APP_UPDATE_PUBLIC_BASE_URL: ${{ secrets.APP_UPDATE_PUBLIC_BASE_URL }}
     steps:
       - uses: actions/checkout@v4
         with:
@@ -72,6 +73,12 @@ jobs:
             https://*) ;;
             *) echo "APP_PUBLIC_BASE_URL must be an HTTPS URL"; exit 1 ;;
           esac
+          if [ -n "$APP_UPDATE_PUBLIC_BASE_URL" ]; then
+            case "$APP_UPDATE_PUBLIC_BASE_URL" in
+              https://*) ;;
+              *) echo "APP_UPDATE_PUBLIC_BASE_URL must be empty or an HTTPS URL"; exit 1 ;;
+            esac
+          fi
 
       - uses: actions/setup-java@v4
         if: steps.release_scope.outputs.release_android == 'true'
@@ -174,6 +181,7 @@ jobs:
           TUSHARE_TOKEN: ${{ secrets.TUSHARE_TOKEN }}
           DEEPSEEK_API_KEY: ${{ secrets.DEEPSEEK_API_KEY }}
           APP_PUBLIC_BASE_URL: ${{ env.APP_PUBLIC_BASE_URL }}
+          APP_UPDATE_PUBLIC_BASE_URL: ${{ env.APP_UPDATE_PUBLIC_BASE_URL }}
           VERSION_CODE: ${{ env.VERSION_CODE }}
           VERSION_NAME: ${{ env.VERSION_NAME }}
           APK_FILE: ${{ env.APK_FILE }}
@@ -183,7 +191,7 @@ jobs:
           host: ${{ secrets.SERVER_IP }}
           username: ${{ secrets.SERVER_USER }}
           key: ${{ secrets.SERVER_SSH_KEY }}
-          envs: TUSHARE_TOKEN,DEEPSEEK_API_KEY,APP_PUBLIC_BASE_URL,VERSION_CODE,VERSION_NAME,APK_FILE,RELEASE_ANDROID,CHANGELOG
+          envs: TUSHARE_TOKEN,DEEPSEEK_API_KEY,APP_PUBLIC_BASE_URL,APP_UPDATE_PUBLIC_BASE_URL,VERSION_CODE,VERSION_NAME,APK_FILE,RELEASE_ANDROID,CHANGELOG
           script: |
             set -eu
             cd /opt/third-hand
@@ -203,6 +211,7 @@ jobs:
             update_env TUSHARE_TOKEN "$TUSHARE_TOKEN"
             update_env DEEPSEEK_API_KEY "$DEEPSEEK_API_KEY"
             update_env APP_PUBLIC_BASE_URL "$APP_PUBLIC_BASE_URL"
+            update_env APP_UPDATE_PUBLIC_BASE_URL "$APP_UPDATE_PUBLIC_BASE_URL"
             update_env MARKET_REFRESH_ENABLED true
             update_env MARKET_REFRESH_INTERVAL_SECONDS 60
 

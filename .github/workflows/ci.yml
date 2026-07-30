@@ -41,9 +41,24 @@ jobs:
       - uses: android-actions/setup-android@v3
       - run: printf 'sdk.dir=%s\n' "$ANDROID_HOME" > local.properties
       - run: chmod +x gradlew
-      - run: ./gradlew --no-daemon :app:assembleDebug
+      - run: ./gradlew --no-daemon :app:assembleDebug :app:assembleRelease
+      - name: Verify optimized release APK
+        shell: bash
+        run: |
+          set -eu
+          APK=app/build/outputs/apk/release/app-release-unsigned.apk
+          test -s "$APK"
+          test -s app/build/outputs/mapping/release/mapping.txt
+          foreign_abis="$(unzip -Z1 "$APK" | awk -F/ '$1 == "lib" && $2 != "arm64-v8a" { print $2 }' | sort -u)"
+          test -z "$foreign_abis" || { echo "Unexpected release ABIs: $foreign_abis"; exit 1; }
+          ls -lh "$APK"
       - uses: actions/upload-artifact@v4
         with:
           name: third-hand-debug-apk
           path: android/app/build/outputs/apk/debug/app-debug.apk
+          if-no-files-found: error
+      - uses: actions/upload-artifact@v4
+        with:
+          name: third-hand-optimized-release-unsigned
+          path: android/app/build/outputs/apk/release/app-release-unsigned.apk
           if-no-files-found: error

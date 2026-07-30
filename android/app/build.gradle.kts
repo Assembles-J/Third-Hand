@@ -31,8 +31,20 @@ android { namespace = "com.thirdhand.app"; compileSdk = 35
     }
     buildTypes {
         getByName("release") {
-            signingConfig = signingConfigs.getByName("release")
-            isMinifyEnabled = false
+            if (!releaseStorePath.isNullOrBlank()) {
+                signingConfig = signingConfigs.getByName("release")
+            }
+            isMinifyEnabled = true
+            isShrinkResources = true
+            proguardFiles(
+                getDefaultProguardFile("proguard-android-optimize.txt"),
+                "proguard-rules.pro",
+            )
+            // The bundled Chinese OCR model carries native libraries for every ABI.
+            // Production phones are 64-bit ARM, so do not ship unused x86/32-bit copies.
+            ndk {
+                abiFilters += setOf("arm64-v8a")
+            }
         }
     }
     buildFeatures { compose = true; buildConfig = true }
