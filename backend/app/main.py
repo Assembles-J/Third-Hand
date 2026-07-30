@@ -6,6 +6,7 @@ The application intentionally keeps portfolio data in process for the MVP.  Swap
 from __future__ import annotations
 
 import csv
+import hashlib
 import io
 import os
 import time
@@ -65,6 +66,8 @@ class AppUpdate(BaseModel):
     version_name: str = Field(min_length=1)
     apk_url: str
     changelog: str = ""
+    sha256: str = Field(pattern="^[a-f0-9]{64}$")
+    size_bytes: int = Field(gt=0)
 
 
 class NewsItem(BaseModel):
@@ -244,6 +247,14 @@ def configured_release_apk() -> Path | None:
     return candidate if candidate.is_file() else None
 
 
+def apk_sha256(apk: Path) -> str:
+    digest = hashlib.sha256()
+    with apk.open("rb") as stream:
+        for chunk in iter(lambda: stream.read(1024 * 1024), b""):
+            digest.update(chunk)
+    return digest.hexdigest()
+
+
 @app.get("/v1/app-update/apk", response_class=FileResponse, responses={404: {"description": "Release APK not found"}})
 def download_app_update() -> FileResponse:
     apk = configured_release_apk()
@@ -261,13 +272,16 @@ def download_app_update() -> FileResponse:
 def app_update() -> Response | AppUpdate:
     """Return metadata for the APK served by this API deployment."""
     public_base_url = os.getenv("APP_PUBLIC_BASE_URL", "").strip().rstrip("/")
-    if configured_release_apk() is None or not public_base_url.startswith("https://"):
+    apk = configured_release_apk()
+    if apk is None or not public_base_url.startswith("https://"):
         return Response(status_code=status.HTTP_204_NO_CONTENT)
     return AppUpdate(
         version_code=int(os.getenv("APP_UPDATE_VERSION_CODE", "1")),
         version_name=os.getenv("APP_UPDATE_VERSION_NAME", "0.1.0"),
         apk_url=f"{public_base_url}/v1/app-update/apk",
         changelog=os.getenv("APP_UPDATE_CHANGELOG", ""),
+        sha256=apk_sha256(apk),
+        size_bytes=apk.stat().st_size,
     )
 
 
