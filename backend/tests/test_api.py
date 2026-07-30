@@ -1,3 +1,5 @@
+import hashlib
+
 from fastapi.testclient import TestClient
 
 from app.main import announcement_service, app, market_data, news_service, risk_service, store
@@ -12,6 +14,23 @@ def setup_function():
 
 def test_health():
     assert client.get("/health").json() == {"status": "ok"}
+
+
+def test_app_update_exposes_download_integrity_metadata(monkeypatch, tmp_path):
+    apk = tmp_path / "third-hand-0.3.0.apk"
+    content = b"fake-signed-apk-for-metadata-test"
+    apk.write_bytes(content)
+    monkeypatch.setenv("APP_UPDATE_DIRECTORY", str(tmp_path))
+    monkeypatch.setenv("APP_UPDATE_APK_FILE", apk.name)
+    monkeypatch.setenv("APP_PUBLIC_BASE_URL", "https://api.example.com")
+    monkeypatch.setenv("APP_UPDATE_VERSION_CODE", "3")
+    monkeypatch.setenv("APP_UPDATE_VERSION_NAME", "0.3.0")
+
+    response = client.get("/v1/app-update")
+
+    assert response.status_code == 200
+    assert response.json()["size_bytes"] == len(content)
+    assert response.json()["sha256"] == hashlib.sha256(content).hexdigest()
 
 
 def test_admin_overview_exposes_aggregate_operational_data_only():
