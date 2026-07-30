@@ -126,9 +126,11 @@ class Holding(HoldingInput):
 
 
 class HoldingDraftInput(BaseModel):
+    client_row_id: str | None = Field(default=None, min_length=1, max_length=100)
     name: str = Field(min_length=1, max_length=100)
     quantity: float = Field(gt=0)
     average_cost: float = Field(ge=0)
+    ocr_confidence: float | None = Field(default=None, ge=0, le=1)
 
 
 class HoldingDraft(HoldingDraftInput):
@@ -137,6 +139,7 @@ class HoldingDraft(HoldingDraftInput):
     lookup_status: str = "pending"
     lookup_message: str = "等待后台查询证券代码"
     lookup_updated_at: datetime | None = None
+    candidates: list["SecurityCandidate"] = Field(default_factory=list)
 
 
 class HoldingDraftBatchInput(BaseModel):
@@ -166,6 +169,21 @@ class SymbolLookupResult(BaseModel):
 
 class SymbolResolveRequest(BaseModel):
     names: list[str] = Field(min_length=1, max_length=100)
+
+
+class HoldingDraftSelection(BaseModel):
+    draft_id: str = Field(min_length=1)
+    symbol: str = Field(min_length=1, max_length=16)
+    name: str = Field(min_length=1, max_length=100)
+
+    @field_validator("symbol")
+    @classmethod
+    def normalize_symbol(cls, value: str) -> str:
+        return value.strip().upper()
+
+
+class HoldingDraftCommitInput(BaseModel):
+    items: list[HoldingDraftSelection] = Field(min_length=1, max_length=100)
 
 
 class MarketQuote(BaseModel):
@@ -529,15 +547,15 @@ def resolve_holding_drafts(draft_ids: list[str]) -> None:
         candidates = matches_by_name.get(str(draft["name"]), [])
         exact = [candidate for candidate in candidates if str(candidate.get("match_type", "")) == "exact"]
         if len(exact) == 1:
-            candidate = exact[0]
-            store.confirm_draft(
-                str(draft["id"]), str(uuid4()), str(candidate["symbol"]), str(candidate["name"]),
-                float(draft["quantity"]), float(draft["average_cost"]),
+            store.set_draft_resolution(
+                str(draft["id"]), "matched", "已找到唯一代码，请核对后确认导入", candidates,
             )
         elif candidates:
-            store.set_draft_lookup_status(str(draft["id"]), "needs_review", f"找到 {len(candidates)} 个候选代码，请手动补全")
+            store.set_draft_resolution(
+                str(draft["id"]), "needs_review", f"找到 {len(candidates)} 个候选代码，请选择后确认", candidates,
+            )
         else:
-            store.set_draft_lookup_status(str(draft["id"]), "not_found", "未找到可用证券代码，请手动补全")
+            store.set_draft_resolution(str(draft["id"]), "not_found", "未找到可用证券代码，请手动补全", [])
 
 
 @app.on_event("startup")
@@ -745,7 +763,11 @@ def list_holding_drafts() -> list[HoldingDraft]:
 
 @app.post("/v1/holding-drafts", response_model=HoldingDraft, status_code=status.HTTP_201_CREATED)
 def create_holding_draft(payload: HoldingDraftInput, background_tasks: BackgroundTasks) -> HoldingDraft:
-    created = store.add_draft(str(uuid4()), **payload.model_dump())
+    draft_id = str(uuid4())
+    created = store.add_draft(draft_id, **{
+        **payload.model_dump(),
+        "client_row_id": payload.client_row_id or draft_id,
+    })
     background_tasks.add_task(resolve_holding_drafts, [str(created["id"])])
     return HoldingDraft.model_validate(created)
 
@@ -754,7 +776,12 @@ def create_holding_draft(payload: HoldingDraftInput, background_tasks: Backgroun
 def create_holding_drafts(payload: HoldingDraftBatchInput, background_tasks: BackgroundTasks) -> list[HoldingDraft]:
     created_at = beijing_now().isoformat()
     drafts = [
-        {"id": str(uuid4()), **item.model_dump(), "created_at": created_at}
+        {
+            "id": (draft_id := str(uuid4())),
+            **item.model_dump(),
+            "client_row_id": item.client_row_id or draft_id,
+            "created_at": created_at,
+        }
         for item in payload.items
     ]
     created = store.add_drafts(drafts)
@@ -764,10 +791,20 @@ def create_holding_drafts(payload: HoldingDraftBatchInput, background_tasks: Bac
 
 @app.post("/v1/holding-drafts/{draft_id}/confirm", response_model=Holding, status_code=status.HTTP_201_CREATED)
 def confirm_holding_draft(draft_id: str, payload: HoldingInput) -> Holding:
-    confirmed = store.confirm_draft(draft_id, str(uuid4()), **payload.model_dump())
+    confirmed = store.confirm_draft(draft_id, str(uuid4()), payload.symbol, payload.name)
     if not confirmed:
         raise HTTPException(status_code=404, detail="未找到待补全持仓")
     return Holding.model_validate(confirmed)
+
+
+@app.post("/v1/holding-drafts/commit", response_model=list[Holding], status_code=status.HTTP_201_CREATED)
+def commit_holding_drafts(payload: HoldingDraftCommitInput) -> list[Holding]:
+    """Atomically commit reviewed rows; quantity and cost always come from their original OCR draft."""
+    try:
+        committed = store.commit_drafts([item.model_dump() for item in payload.items])
+    except ValueError as error:
+        raise HTTPException(status_code=409, detail=str(error)) from error
+    return [Holding.model_validate(item) for item in committed]
 
 
 @app.delete("/v1/holding-drafts/{draft_id}", status_code=status.HTTP_204_NO_CONTENT)

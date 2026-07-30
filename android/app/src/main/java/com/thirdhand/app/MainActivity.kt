@@ -588,6 +588,7 @@ private fun DraftHoldingCard(draft: HoldingDraftDto, onComplete: () -> Unit, onD
 ) {
     val statusText = when (draft.lookup_status.orEmpty()) {
         "pending", "querying" -> "查询中"
+        "matched" -> "待确认"
         "failed" -> "查询失败"
         "not_found" -> "未找到"
         else -> "待补全"
@@ -608,7 +609,11 @@ private fun DraftHoldingCard(draft: HoldingDraftDto, onComplete: () -> Unit, onD
             HoldingMetric("成本", draft.average_cost.toString(), Modifier.weight(1f))
         }
         Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            TextButton(onClick = onComplete, colors = ButtonDefaults.textButtonColors(contentColor = MaterialTheme.colorScheme.secondary)) { Icon(Icons.Filled.Search, null); Spacer(Modifier.width(4.dp)); Text("补全代码") }
+            TextButton(onClick = onComplete, colors = ButtonDefaults.textButtonColors(contentColor = MaterialTheme.colorScheme.secondary)) {
+                Icon(Icons.Filled.Search, null)
+                Spacer(Modifier.width(4.dp))
+                Text(if (draft.lookup_status == "matched") "核对并确认" else "补全代码")
+            }
             Spacer(Modifier.weight(1f))
             TextButton(onClick = onDelete, colors = ButtonDefaults.textButtonColors(contentColor = MaterialTheme.colorScheme.error)) { Text("删除") }
         }
@@ -635,18 +640,18 @@ private fun HoldingsScreen() {
     var showAnalysisDetails by remember { mutableStateOf(false) }
     var scanError by remember { mutableStateOf<String?>(null) }
     val scope = rememberCoroutineScope()
-    val imagePicker = rememberLauncherForActivityResult(ActivityResultContracts.OpenMultipleDocuments()) { imageUris ->
-        if (imageUris.isNotEmpty()) scope.launch {
+    val imagePicker = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { imageUri ->
+        if (imageUri != null) scope.launch {
             try {
                 scanError = null
-                val recognized = imageUris.flatMap { ScreenshotOcr.scan(context, it) }.distinctBy { it.name }
+                val recognized = ScreenshotOcr.scan(context, imageUri)
                 if (recognized.isEmpty()) scanError = "未能识别出完整持仓行，请使用清晰、完整的持仓列表截图。"
                 else {
                     try {
                         api.addHoldingDrafts(HoldingDraftBatchInputDto(recognized.map {
-                            HoldingDraftInputDto(it.name, it.quantity, it.averageCost)
+                            HoldingDraftInputDto(it.clientRowId, it.name, it.quantity, it.averageCost)
                         }))
-                        scanError = "已录入 ${recognized.size} 条，后台正在查询证券代码。"
+                        scanError = "已识别 ${recognized.size} 行，请逐行核对代码、数量和成本后确认。"
                         drafts = api.holdingDrafts()
                     } catch (exception: Exception) {
                         scanError = "提交识别结果失败：${exception.message ?: "请稍后重试"}"
@@ -735,7 +740,9 @@ private fun HoldingsScreen() {
     )
     editingDraft?.let { draft -> AddHoldingDialog(
         title = "补全证券代码",
-        initial = HoldingInputDto("", draft.name, draft.quantity, draft.average_cost),
+        initial = draft.candidates.firstOrNull()?.let {
+            HoldingInputDto(it.symbol, it.name, draft.quantity, draft.average_cost)
+        } ?: HoldingInputDto("", draft.name, draft.quantity, draft.average_cost),
         onDismiss = { editingDraft = null },
         onSave = { input -> scope.launch { try {
             api.confirmHoldingDraft(draft.id, input); editingDraft = null; refresh()
