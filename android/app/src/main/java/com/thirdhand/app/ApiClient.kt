@@ -115,6 +115,8 @@ data class AppUpdateDto(
     val version_name: String,
     val apk_url: String,
     val changelog: String = "",
+    val sha256: String,
+    val size_bytes: Long,
 )
 data class AdminOverviewDto(
     val status: String,
