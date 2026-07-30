@@ -3,6 +3,12 @@ name: Deploy
 on:
   push:
     branches: [main]
+    paths:
+      - 'backend/**'
+      - 'android/**'
+      - 'docker-compose.yml'
+      - '.env.example'
+      - '.github/workflows/deploy.yml'
   workflow_dispatch:
     inputs:
       ref:
@@ -43,7 +49,7 @@ jobs:
           ref: ${{ inputs.ref || github.ref }}
           fetch-depth: 0
 
-      - name: Detect Android release scope
+      - name: Detect deployment scope
         id: release_scope
         shell: bash
         env:
@@ -52,18 +58,37 @@ jobs:
           FORCE_ANDROID_RELEASE: ${{ inputs.release_android || false }}
         run: |
           set -eu
+
+          backend_changed=false
           release_android=false
+
           if [ "$EVENT_NAME" = "workflow_dispatch" ]; then
+            backend_changed=true
             release_android="$FORCE_ANDROID_RELEASE"
           elif [ -z "$BEFORE_SHA" ] || [ "$BEFORE_SHA" = "0000000000000000000000000000000000000000" ]; then
-            if git show --format= --name-only "$GITHUB_SHA" | grep -q '^android/'; then
+            changed_files="$(git show --format= --name-only "$GITHUB_SHA")"
+            if printf '%s\n' "$changed_files" | grep -Eq '^(backend/|docker-compose\.yml$|\.env\.example$|\.github/workflows/deploy\.yml$)'; then
+              backend_changed=true
+            fi
+            if printf '%s\n' "$changed_files" | grep -q '^android/'; then
               release_android=true
             fi
-          elif ! git diff --quiet "$BEFORE_SHA" "$GITHUB_SHA" -- android/; then
-            release_android=true
+          else
+            if ! git diff --quiet "$BEFORE_SHA" "$GITHUB_SHA" -- backend/ docker-compose.yml .env.example .github/workflows/deploy.yml; then
+              backend_changed=true
+            fi
+            if ! git diff --quiet "$BEFORE_SHA" "$GITHUB_SHA" -- android/; then
+              release_android=true
+            fi
           fi
+
+          deploy_sha="$(git rev-parse HEAD)"
+          echo "backend_changed=$backend_changed" >> "$GITHUB_OUTPUT"
           echo "release_android=$release_android" >> "$GITHUB_OUTPUT"
+          echo "deploy_sha=$deploy_sha" >> "$GITHUB_OUTPUT"
+          echo "Backend deployment required: $backend_changed"
           echo "Android release required: $release_android"
+          echo "Deploy commit: $deploy_sha"
 
       - name: Validate public deployment URL
         shell: bash
@@ -155,6 +180,7 @@ jobs:
             test -w /opt/third-hand/releases
 
       - name: Upload API deployment
+        if: steps.release_scope.outputs.backend_changed == 'true'
         uses: appleboy/scp-action@v1.0.0
         with:
           host: ${{ secrets.SERVER_IP }}
@@ -185,13 +211,15 @@ jobs:
           VERSION_CODE: ${{ env.VERSION_CODE }}
           VERSION_NAME: ${{ env.VERSION_NAME }}
           APK_FILE: ${{ env.APK_FILE }}
+          BACKEND_CHANGED: ${{ steps.release_scope.outputs.backend_changed }}
           RELEASE_ANDROID: ${{ steps.release_scope.outputs.release_android }}
-          CHANGELOG: 自动发布 ${{ github.sha }}，包含最新行情、信息流和稳定性改进。
+          DEPLOY_SHA: ${{ steps.release_scope.outputs.deploy_sha }}
+          CHANGELOG: 自动发布 ${{ steps.release_scope.outputs.deploy_sha }}，包含最新行情、信息流和稳定性改进。
         with:
           host: ${{ secrets.SERVER_IP }}
           username: ${{ secrets.SERVER_USER }}
           key: ${{ secrets.SERVER_SSH_KEY }}
-          envs: TUSHARE_TOKEN,DEEPSEEK_API_KEY,APP_PUBLIC_BASE_URL,APP_UPDATE_PUBLIC_BASE_URL,VERSION_CODE,VERSION_NAME,APK_FILE,RELEASE_ANDROID,CHANGELOG
+          envs: TUSHARE_TOKEN,DEEPSEEK_API_KEY,APP_PUBLIC_BASE_URL,APP_UPDATE_PUBLIC_BASE_URL,VERSION_CODE,VERSION_NAME,APK_FILE,BACKEND_CHANGED,RELEASE_ANDROID,DEPLOY_SHA,CHANGELOG
           script: |
             set -eu
             cd /opt/third-hand
@@ -227,10 +255,18 @@ jobs:
             fi
 
             if docker compose version >/dev/null 2>&1; then
-              docker compose up -d --build --remove-orphans
+              if [ "$BACKEND_CHANGED" = "true" ]; then
+                docker compose up -d --build --remove-orphans
+              else
+                docker compose up -d --no-deps --force-recreate api
+              fi
               docker compose ps
             elif command -v docker-compose >/dev/null 2>&1; then
-              docker-compose up -d --build --remove-orphans
+              if [ "$BACKEND_CHANGED" = "true" ]; then
+                docker-compose up -d --build --remove-orphans
+              else
+                docker-compose up -d --no-deps --force-recreate api
+              fi
               docker-compose ps
             else
               echo "Docker Compose is not installed on the server."
@@ -240,3 +276,16 @@ jobs:
             sleep 5
             curl -fsS "http://127.0.0.1:${API_PORT:-8000}/health"
             curl -fsS "http://127.0.0.1:${API_PORT:-8000}/v1/app-update"
+
+      - name: Write deployment summary
+        if: always()
+        shell: bash
+        run: |
+          {
+            echo "## Production deployment"
+            echo ""
+            echo "- Commit: \`${{ steps.release_scope.outputs.deploy_sha }}\`"
+            echo "- Backend rebuilt: \`${{ steps.release_scope.outputs.backend_changed }}\`"
+            echo "- Android APK published: \`${{ steps.release_scope.outputs.release_android }}\`"
+            echo "- Version: \`${{ env.VERSION_NAME }}\`"
+          } >> "$GITHUB_STEP_SUMMARY"
