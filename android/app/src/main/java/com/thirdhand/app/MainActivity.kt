@@ -91,15 +91,22 @@ import java.time.format.DateTimeFormatter
 import kotlinx.coroutines.delay
 
 class MainActivity : ComponentActivity() {
+    private var resumeSignal by mutableIntStateOf(0)
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
-        setContent { ThirdHandApp() }
+        setContent { ThirdHandApp(resumeSignal) }
+    }
+
+    override fun onResume() {
+        super.onResume()
+        resumeSignal += 1
     }
 }
 
 @Composable
 @OptIn(ExperimentalMaterial3Api::class)
-private fun ThirdHandApp() {
+private fun ThirdHandApp(resumeSignal: Int) {
     val context = LocalContext.current
     var themeMode by remember { mutableStateOf(ThemeStore.load(context)) }
     var tab by remember { mutableIntStateOf(0) }
@@ -107,9 +114,10 @@ private fun ThirdHandApp() {
     var updateMessage by remember { mutableStateOf<String?>(null) }
     val labels = listOf("今日", "持仓", "消息", "我的", "管理")
     val icons = listOf(Icons.Filled.AutoGraph, Icons.Filled.Wallet, Icons.AutoMirrored.Filled.Article, Icons.Filled.AccountCircle, Icons.Filled.AdminPanelSettings)
-    LaunchedEffect(Unit) {
+    LaunchedEffect(resumeSignal) {
         try {
             startupUpdate = AppUpdateManager.check(context)
+            updateMessage = AppUpdateManager.completedUpdateMessage(context)
         } catch (_: Exception) {
             // A failed update check must never block the main application.
         }
@@ -155,12 +163,29 @@ private fun ThirdHandApp() {
                 dismissButton = { TextButton(onClick = { startupUpdate = null }) { Text("稍后") } },
                 confirmButton = {
                     TextButton(onClick = {
-                        if (AppUpdateManager.downloadAndInstall(context, update)) {
-                            startupUpdate = null
-                        } else {
-                            updateMessage = "请允许此应用安装未知来源应用，返回后再次点击更新"
+                        when (AppUpdateManager.downloadAndInstall(context, update)) {
+                            UpdateLaunchResult.DOWNLOAD_STARTED -> {
+                                updateMessage = "正在下载，完成后会自动打开系统安装器"
+                            }
+                            UpdateLaunchResult.INSTALLER_OPENED -> {
+                                updateMessage = "已重新打开系统安装器"
+                            }
+                            UpdateLaunchResult.NEED_INSTALL_PERMISSION -> {
+                                updateMessage = "请允许此应用安装未知来源应用，返回后再次点击"
+                            }
+                            UpdateLaunchResult.NEED_STORAGE_PERMISSION -> {
+                                updateMessage = "请允许保存安装包，返回后再次点击"
+                            }
+                            UpdateLaunchResult.SIGNATURE_MISMATCH -> {
+                                updateMessage = AppUpdateManager.completedUpdateMessage(context)
+                            }
+                            UpdateLaunchResult.DOWNLOAD_UNAVAILABLE -> {
+                                updateMessage = "安装包不可用，请重新检查更新"
+                            }
                         }
-                    }) { Text("下载并安装") }
+                    }) {
+                        Text(if (AppUpdateManager.hasCompletedDownload(context)) "继续安装" else "下载并安装")
+                    }
                 },
             )
         }
@@ -1212,10 +1237,10 @@ private fun ProfileScreen(themeMode: ThemeMode, onThemeModeChange: (ThemeMode) -
     fun checkForUpdate() {
         scope.launch {
             checkingUpdate = true
-            updateStatus = null
+            updateStatus = AppUpdateManager.completedUpdateMessage(context)
             try {
                 availableUpdate = AppUpdateManager.check(context)
-                if (availableUpdate == null) updateStatus = "已是最新版本"
+                if (availableUpdate == null && updateStatus == null) updateStatus = "已是最新版本"
             } catch (_: Exception) {
                 updateStatus = "暂时无法检查更新，请确认服务地址和网络"
             } finally {
@@ -1231,14 +1256,24 @@ private fun ProfileScreen(themeMode: ThemeMode, onThemeModeChange: (ThemeMode) -
         AlertDialog(
             onDismissRequest = { availableUpdate = null },
             title = { Text("发现新版本 ${update.versionName}") },
-            text = { Text(update.changelog.ifBlank { "已准备好新版本，建议更新后继续使用。" }) },
+            text = {
+                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Text(update.changelog.ifBlank { "已准备好新版本，建议更新后继续使用。" })
+                    updateStatus?.let { Text(it, color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.bodySmall) }
+                }
+            },
             dismissButton = { TextButton(onClick = { availableUpdate = null }) { Text("稍后") } },
             confirmButton = {
                 TextButton(onClick = {
-                    if (!AppUpdateManager.downloadAndInstall(context, update)) {
-                        updateStatus = "请允许“安装未知应用”后，再点检查更新并安装"
+                    updateStatus = when (AppUpdateManager.downloadAndInstall(context, update)) {
+                        UpdateLaunchResult.DOWNLOAD_STARTED -> "正在下载，完成后会自动打开系统安装器"
+                        UpdateLaunchResult.INSTALLER_OPENED -> "已重新打开系统安装器"
+                        UpdateLaunchResult.NEED_INSTALL_PERMISSION -> "请允许“安装未知应用”后返回，再次点击"
+                        UpdateLaunchResult.NEED_STORAGE_PERMISSION -> "请允许保存安装包后返回，再次点击"
+                        UpdateLaunchResult.SIGNATURE_MISMATCH -> AppUpdateManager.completedUpdateMessage(context)
+                        UpdateLaunchResult.DOWNLOAD_UNAVAILABLE -> "安装包不可用，请重新检查更新"
                     }
-                }) { Text("下载并安装") }
+                }) { Text(if (AppUpdateManager.hasCompletedDownload(context)) "继续安装" else "下载并安装") }
             },
         )
     }
