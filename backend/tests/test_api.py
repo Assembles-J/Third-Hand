@@ -1,3 +1,5 @@
+import hashlib
+
 from fastapi.testclient import TestClient
 
 from app.main import announcement_service, app, market_data, news_service, risk_service, store
@@ -12,6 +14,23 @@ def setup_function():
 
 def test_health():
     assert client.get("/health").json() == {"status": "ok"}
+
+
+def test_app_update_exposes_download_integrity_metadata(monkeypatch, tmp_path):
+    apk = tmp_path / "third-hand-0.3.0.apk"
+    content = b"fake-signed-apk-for-metadata-test"
+    apk.write_bytes(content)
+    monkeypatch.setenv("APP_UPDATE_DIRECTORY", str(tmp_path))
+    monkeypatch.setenv("APP_UPDATE_APK_FILE", apk.name)
+    monkeypatch.setenv("APP_PUBLIC_BASE_URL", "https://api.example.com")
+    monkeypatch.setenv("APP_UPDATE_VERSION_CODE", "3")
+    monkeypatch.setenv("APP_UPDATE_VERSION_NAME", "0.3.0")
+
+    response = client.get("/v1/app-update")
+
+    assert response.status_code == 200
+    assert response.json()["size_bytes"] == len(content)
+    assert response.json()["sha256"] == hashlib.sha256(content).hexdigest()
 
 
 def test_admin_overview_exposes_aggregate_operational_data_only():
@@ -52,6 +71,24 @@ def test_research_and_personal_rules_are_available():
     })
     assert saved.status_code == 200
     assert client.get("/v1/personal-rules").json()[0]["scope"] == "global"
+
+
+def test_saving_same_personal_rule_updates_instead_of_duplicating():
+    first = client.post("/v1/personal-rules", json={
+        "scope": "global", "max_position_percent": 20, "loss_review_percent": 15,
+        "volatility_review_percent": 50, "enabled": True,
+    })
+    second = client.post("/v1/personal-rules", json={
+        "scope": "global", "max_position_percent": 18, "loss_review_percent": 12,
+        "volatility_review_percent": 40, "enabled": True,
+    })
+
+    rules = client.get("/v1/personal-rules").json()
+    assert first.status_code == 200
+    assert second.status_code == 200
+    assert len(rules) == 1
+    assert rules[0]["max_position_percent"] == 18
+    assert rules[0]["version"] == 2
 
 
 def test_glossary():
@@ -151,6 +188,24 @@ def test_market_quote_uses_adapter_and_exposes_freshness_metadata(monkeypatch):
     assert response.json()[0]["symbol"] == "01810"
     assert response.json()[0]["is_realtime"] is False
     assert response.json()[0]["as_of"] == "2026-07-28"
+
+
+def test_market_quote_force_refresh_replaces_saved_snapshot(monkeypatch):
+    store.save_quotes([{
+        "symbol": "01810", "price": 29.0, "currency": "HKD", "as_of": "2026-07-29",
+        "source": "旧缓存", "retrieved_at": "2026-07-29T15:00:00+08:00",
+    }])
+    monkeypatch.setattr(market_data, "quotes", lambda symbols: [{
+        "symbol": "01810", "price": 30.5, "currency": "HKD", "as_of": "2026-07-30",
+        "source": "刷新行情", "retrieved_at": "2026-07-30T10:30:00+08:00",
+    }])
+
+    response = client.get("/v1/market/quotes", params=[("symbols", "01810"), ("refresh", "true")])
+
+    assert response.status_code == 200
+    assert response.json()[0]["price"] == 30.5
+    assert response.json()[0]["as_of"] == "2026-07-30"
+    assert response.json()[0]["refresh_status"] == "fresh"
 
 
 def test_feed_uses_news_adapter(monkeypatch):

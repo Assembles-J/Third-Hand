@@ -19,13 +19,81 @@ concurrency:
 
 jobs:
   deploy:
-    name: Deploy with Docker Compose
+    name: Build signed APK and deploy
     runs-on: ubuntu-latest
     environment: production
+    env:
+      VERSION_CODE: ${{ github.run_number }}
+      VERSION_NAME: 0.3.${{ github.run_number }}
+      APK_FILE: third-hand-0.3.${{ github.run_number }}.apk
+      ANDROID_KEYSTORE_BASE64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
+      ANDROID_KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+      ANDROID_KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
+      ANDROID_KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
+      APP_PUBLIC_BASE_URL: ${{ secrets.APP_PUBLIC_BASE_URL }}
     steps:
       - uses: actions/checkout@v4
         with:
-          ref: ${{ inputs.ref }}
+          ref: ${{ inputs.ref || github.ref }}
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - uses: android-actions/setup-android@v3
+
+      - uses: gradle/actions/setup-gradle@v4
+
+      - name: Validate release configuration
+        shell: bash
+        run: |
+          set -eu
+          test -n "$ANDROID_KEYSTORE_BASE64"
+          test -n "$ANDROID_KEYSTORE_PASSWORD"
+          test -n "$ANDROID_KEY_ALIAS"
+          test -n "$ANDROID_KEY_PASSWORD"
+          case "$APP_PUBLIC_BASE_URL" in
+            https://*) ;;
+            *) echo "APP_PUBLIC_BASE_URL must be an HTTPS URL"; exit 1 ;;
+          esac
+
+      - name: Restore signing keystore
+        shell: bash
+        run: |
+          set -eu
+          umask 077
+          printf '%s' "$ANDROID_KEYSTORE_BASE64" | base64 --decode > "$GITHUB_WORKSPACE/android/release.keystore"
+
+      - name: Build signed release APK
+        working-directory: android
+        env:
+          APP_VERSION_CODE: ${{ env.VERSION_CODE }}
+          APP_VERSION_NAME: ${{ env.VERSION_NAME }}
+          ANDROID_KEYSTORE_FILE: ${{ github.workspace }}/android/release.keystore
+        run: |
+          set -eu
+          printf 'sdk.dir=%s\n' "$ANDROID_HOME" > local.properties
+          chmod +x gradlew
+          ./gradlew --no-daemon :app:assembleRelease
+          BUILD_TOOLS_VERSION="$(find "$ANDROID_HOME/build-tools" -mindepth 1 -maxdepth 1 -type d -printf '%f\n' | sort -V | tail -1)"
+          "$ANDROID_HOME/build-tools/$BUILD_TOOLS_VERSION/apksigner" verify --print-certs app/build/outputs/apk/release/app-release.apk
+
+      - name: Prepare atomic APK upload
+        shell: bash
+        run: |
+          set -eu
+          mkdir -p release-upload
+          cp android/app/build/outputs/apk/release/app-release.apk "release-upload/$APK_FILE.part"
+          sha256sum "release-upload/$APK_FILE.part"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: third-hand-${{ env.VERSION_NAME }}
+          path: android/app/build/outputs/apk/release/app-release.apk
+          if-no-files-found: error
+          retention-days: 14
+
       - name: Prepare remote directory
         uses: appleboy/ssh-action@v1.2.2
         with:
@@ -34,43 +102,61 @@ jobs:
           key: ${{ secrets.SERVER_SSH_KEY }}
           script: |
             set -eu
-            echo "Remote identity: $(id -un) ($(id -u))"
-            ls -ld /opt
-            mkdir -pv /opt/third-hand
+            mkdir -p /opt/third-hand/releases
             test -w /opt/third-hand
-      - name: Upload deployment files
+            test -w /opt/third-hand/releases
+
+      - name: Upload API and APK
         uses: appleboy/scp-action@v1.0.0
         with:
           host: ${{ secrets.SERVER_IP }}
           username: ${{ secrets.SERVER_USER }}
           key: ${{ secrets.SERVER_SSH_KEY }}
-          source: backend,docker-compose.yml,.env.example
+          source: backend,docker-compose.yml,.env.example,release-upload
           target: /opt/third-hand
           overwrite: true
-      - name: Build and start services
+
+      - name: Activate release and restart API
         uses: appleboy/ssh-action@v1.2.2
         env:
           TUSHARE_TOKEN: ${{ secrets.TUSHARE_TOKEN }}
           DEEPSEEK_API_KEY: ${{ secrets.DEEPSEEK_API_KEY }}
+          APP_PUBLIC_BASE_URL: ${{ env.APP_PUBLIC_BASE_URL }}
+          VERSION_CODE: ${{ env.VERSION_CODE }}
+          VERSION_NAME: ${{ env.VERSION_NAME }}
+          APK_FILE: ${{ env.APK_FILE }}
+          CHANGELOG: 自动发布 ${{ github.sha }}，包含最新行情、信息流和稳定性改进。
         with:
           host: ${{ secrets.SERVER_IP }}
           username: ${{ secrets.SERVER_USER }}
           key: ${{ secrets.SERVER_SSH_KEY }}
-          envs: TUSHARE_TOKEN,DEEPSEEK_API_KEY
+          envs: TUSHARE_TOKEN,DEEPSEEK_API_KEY,APP_PUBLIC_BASE_URL,VERSION_CODE,VERSION_NAME,APK_FILE,CHANGELOG
           script: |
-            set -e
+            set -eu
             cd /opt/third-hand
             if [ ! -f .env ]; then
               cp .env.example .env
-              echo "Created initial .env from .env.example"
             fi
-            # The secret stays out of the repository and the workflow logs.
+            test -s "release-upload/$APK_FILE.part"
+            mv -f "release-upload/$APK_FILE.part" "releases/$APK_FILE"
+
+            update_env() {
+              key="$1"
+              value="$2"
+              sed -i "/^${key}=/d" .env
+              printf '%s=%s\n' "$key" "$value" >> .env
+            }
+
             umask 077
-            sed -i '/^TUSHARE_TOKEN=/d; /^THIRD_HAND_MARKET_PROVIDER=/d' .env
-            printf '%s\n' 'THIRD_HAND_MARKET_PROVIDER=auto' >> .env
-            printf 'TUSHARE_TOKEN=%s\n' "$TUSHARE_TOKEN" >> .env
-            sed -i '/^DEEPSEEK_API_KEY=/d' .env
-            printf 'DEEPSEEK_API_KEY=%s\n' "$DEEPSEEK_API_KEY" >> .env
+            update_env THIRD_HAND_MARKET_PROVIDER auto
+            update_env TUSHARE_TOKEN "$TUSHARE_TOKEN"
+            update_env DEEPSEEK_API_KEY "$DEEPSEEK_API_KEY"
+            update_env APP_PUBLIC_BASE_URL "$APP_PUBLIC_BASE_URL"
+            update_env APP_UPDATE_APK_FILE "$APK_FILE"
+            update_env APP_UPDATE_VERSION_CODE "$VERSION_CODE"
+            update_env APP_UPDATE_VERSION_NAME "$VERSION_NAME"
+            update_env APP_UPDATE_CHANGELOG "$CHANGELOG"
+
             if docker compose version >/dev/null 2>&1; then
               docker compose up -d --build --remove-orphans
               docker compose ps
@@ -81,3 +167,7 @@ jobs:
               echo "Docker Compose is not installed on the server."
               exit 1
             fi
+
+            sleep 5
+            curl -fsS "http://127.0.0.1:${API_PORT:-8000}/health"
+            curl -fsS "http://127.0.0.1:${API_PORT:-8000}/v1/app-update"

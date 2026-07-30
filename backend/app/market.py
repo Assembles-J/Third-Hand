@@ -106,16 +106,25 @@ class MarketDataService:
             raise MarketDataUnavailable("Tushare 盘后行情暂时不可用，请稍后刷新。", "tushare_unavailable") from error
         return records
 
-    @staticmethod
-    def _hk_quotes(symbols: list[str]) -> list[dict[str, object]]:
-        """Fetch only the holdings requested instead of downloading the whole HK market."""
+    def _hk_quotes(self, symbols: list[str]) -> list[dict[str, object]]:
+        """Prefer the trading-session spot snapshot and fall back to daily closes."""
+        spot_note = "交易时段内的公开行情快照，可能存在延迟，不得用于交易执行。"
+        try:
+            spot_quotes = self._from_frame(self._frame("hk"), symbols, "HKD", spot_note)
+        except MarketDataUnavailable:
+            spot_quotes = []
+        returned = {str(quote["symbol"]) for quote in spot_quotes}
+        missing = [symbol for symbol in symbols if symbol not in returned]
+        if not missing:
+            return spot_quotes
+
         try:
             import akshare as ak
         except ImportError as error:
             raise MarketDataUnavailable("未安装 AKShare，请在 backend 虚拟环境运行 pip install -r requirements.txt。", "akshare_not_installed") from error
 
-        quotes: list[dict[str, object]] = []
-        for symbol in symbols:
+        quotes = list(spot_quotes)
+        for symbol in missing:
             try:
                 data = ak.stock_hk_daily(symbol=symbol)
                 latest = data.iloc[-1]
@@ -130,7 +139,7 @@ class MarketDataService:
                     "amount": latest.get("amount"), "currency": "HKD", "source": "新浪财经 / AKShare",
                     "retrieved_at": beijing_now(), "as_of": str(latest.name), "is_realtime": False,
                     "delay_seconds": None, "license_scope": "public-source-review-required",
-                    "freshness_note": "最近交易日收盘快照，不是实时行情，也不得用于交易执行。",
+                    "freshness_note": "实时快照暂不可用，当前为最近交易日收盘数据。",
                 })
             except Exception as error:
                 raise MarketDataUnavailable("港股行情源暂时不可用，请稍后刷新。") from error

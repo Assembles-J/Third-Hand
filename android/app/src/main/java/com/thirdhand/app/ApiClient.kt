@@ -68,6 +68,7 @@ data class MarketQuoteDto(
     val is_realtime: Boolean = false,
     val delay_seconds: Int? = null,
     val license_scope: String = "unknown",
+    val refresh_status: String = "fresh",
 )
 
 data class SecurityCandidateDto(
@@ -114,6 +115,8 @@ data class AppUpdateDto(
     val version_name: String,
     val apk_url: String,
     val changelog: String = "",
+    val sha256: String,
+    val size_bytes: Long,
 )
 data class AdminOverviewDto(
     val status: String,
@@ -210,7 +213,10 @@ interface ThirdHandApi {
     suspend fun deleteHoldingDraft(@Path("id") id: String)
 
     @GET("v1/market/quotes")
-    suspend fun quotes(@Query("symbols") symbols: List<String>): List<MarketQuoteDto>
+    suspend fun quotes(
+        @Query("symbols") symbols: List<String>,
+        @Query("refresh") refresh: Boolean = false,
+    ): List<MarketQuoteDto>
 
     @GET("v1/market/symbols")
     suspend fun symbolLookup(@Query("names") names: List<String>): List<SymbolLookupResultDto>

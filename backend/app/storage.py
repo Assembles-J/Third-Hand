@@ -245,6 +245,13 @@ class PortfolioStore:
             connection.execute("DELETE FROM holding_drafts")
             connection.execute("DELETE FROM market_quote_cache")
             connection.execute("DELETE FROM symbol_lookup_cache")
+            connection.execute("DELETE FROM personal_rules")
+            connection.execute("DELETE FROM learning_cases")
+            connection.execute("DELETE FROM risk_cache")
+            connection.execute("DELETE FROM portfolio_analysis_cache")
+            connection.execute("DELETE FROM analysis_runs")
+            connection.execute("DELETE FROM ai_analysis_cache")
+            connection.execute("DELETE FROM content_cache")
 
     def admin_summary(self) -> dict[str, int]:
         """Return only aggregate, non-sensitive operational counters for the admin console."""
@@ -330,6 +337,13 @@ class PortfolioStore:
 
     def save_personal_rule(self, item: dict[str, object]) -> dict[str, object]:
         with self._connect() as connection:
+            existing = connection.execute(
+                "SELECT id, version FROM personal_rules WHERE scope = ? AND COALESCE(symbol, '') = COALESCE(?, '') ORDER BY updated_at DESC LIMIT 1",
+                (item["scope"], item.get("symbol")),
+            ).fetchone()
+            if existing:
+                item["id"] = str(existing["id"])
+                item["version"] = int(existing["version"]) + 1
             connection.execute("INSERT INTO personal_rules (id,scope,symbol,max_position_percent,loss_review_percent,volatility_review_percent,enabled,version,updated_at) VALUES (:id,:scope,:symbol,:max_position_percent,:loss_review_percent,:volatility_review_percent,:enabled,:version,:updated_at) ON CONFLICT(id) DO UPDATE SET scope=excluded.scope,symbol=excluded.symbol,max_position_percent=excluded.max_position_percent,loss_review_percent=excluded.loss_review_percent,volatility_review_percent=excluded.volatility_review_percent,enabled=excluded.enabled,version=personal_rules.version+1,updated_at=excluded.updated_at", item)
         return item
 

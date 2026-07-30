@@ -6,6 +6,7 @@ The application intentionally keeps portfolio data in process for the MVP.  Swap
 from __future__ import annotations
 
 import csv
+import hashlib
 import io
 import os
 import time
@@ -65,6 +66,8 @@ class AppUpdate(BaseModel):
     version_name: str = Field(min_length=1)
     apk_url: str
     changelog: str = ""
+    sha256: str = Field(pattern="^[a-f0-9]{64}$")
+    size_bytes: int = Field(gt=0)
 
 
 class NewsItem(BaseModel):
@@ -154,6 +157,7 @@ class MarketQuote(BaseModel):
     delay_seconds: int | None = None
     license_scope: str = "unknown"
     freshness_note: str = ""
+    refresh_status: str = "fresh"
 
 
 class RiskAssessment(BaseModel):
@@ -243,6 +247,14 @@ def configured_release_apk() -> Path | None:
     return candidate if candidate.is_file() else None
 
 
+def apk_sha256(apk: Path) -> str:
+    digest = hashlib.sha256()
+    with apk.open("rb") as stream:
+        for chunk in iter(lambda: stream.read(1024 * 1024), b""):
+            digest.update(chunk)
+    return digest.hexdigest()
+
+
 @app.get("/v1/app-update/apk", response_class=FileResponse, responses={404: {"description": "Release APK not found"}})
 def download_app_update() -> FileResponse:
     apk = configured_release_apk()
@@ -260,13 +272,16 @@ def download_app_update() -> FileResponse:
 def app_update() -> Response | AppUpdate:
     """Return metadata for the APK served by this API deployment."""
     public_base_url = os.getenv("APP_PUBLIC_BASE_URL", "").strip().rstrip("/")
-    if configured_release_apk() is None or not public_base_url.startswith("https://"):
+    apk = configured_release_apk()
+    if apk is None or not public_base_url.startswith("https://"):
         return Response(status_code=status.HTTP_204_NO_CONTENT)
     return AppUpdate(
         version_code=int(os.getenv("APP_UPDATE_VERSION_CODE", "1")),
         version_name=os.getenv("APP_UPDATE_VERSION_NAME", "0.1.0"),
         apk_url=f"{public_base_url}/v1/app-update/apk",
         changelog=os.getenv("APP_UPDATE_CHANGELOG", ""),
+        sha256=apk_sha256(apk),
+        size_bytes=apk.stat().st_size,
     )
 
 
@@ -371,19 +386,34 @@ def resume_draft_lookups() -> None:
 
 
 @app.get("/v1/market/quotes", response_model=list[MarketQuote])
-def market_quotes(symbols: Annotated[list[str], Query()], background_tasks: BackgroundTasks) -> list[MarketQuote]:
-    """Return the last saved snapshot immediately, then refresh it in the background."""
+def market_quotes(
+    symbols: Annotated[list[str], Query()],
+    background_tasks: BackgroundTasks,
+    refresh: Annotated[bool, Query()] = False,
+) -> list[MarketQuote]:
+    """Return cached data quickly, or synchronously refresh when the client asks."""
     requested = list(dict.fromkeys(symbol.strip().upper() for symbol in symbols if symbol.strip()))
     cached = store.cached_quotes(requested)
+    cached_symbols = {str(item["symbol"]) for item in cached}
+    has_complete_cache = cached_symbols.issuperset(requested)
+    if refresh or not has_complete_cache:
+        try:
+            quotes = market_data.quotes(requested)
+            store.save_quotes(quotes)
+            return [MarketQuote.model_validate({**item, "refresh_status": "fresh"}) for item in quotes]
+        except MarketDataUnavailable as error:
+            if not cached:
+                raise HTTPException(status_code=503, detail={"message": str(error), "code": error.code}) from error
+            stale = [{
+                **item,
+                "refresh_status": "stale_fallback",
+                "freshness_note": f"{item.get('freshness_note', '')} 本次刷新失败：{error}".strip(),
+            } for item in cached]
+            return [MarketQuote.model_validate(item) for item in stale]
     if cached:
         background_tasks.add_task(refresh_quote_cache, requested)
-        return [MarketQuote.model_validate(item) for item in cached]
-    try:
-        quotes = market_data.quotes(requested)
-        store.save_quotes(quotes)
-        return [MarketQuote.model_validate(item) for item in quotes]
-    except MarketDataUnavailable as error:
-        raise HTTPException(status_code=503, detail={"message": str(error), "code": error.code}) from error
+        return [MarketQuote.model_validate({**item, "refresh_status": "cached_refreshing"}) for item in cached]
+    return []
 
 
 @app.get("/v1/market/symbols", response_model=list[SymbolLookupResult])
