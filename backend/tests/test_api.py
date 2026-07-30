@@ -54,6 +54,24 @@ def test_research_and_personal_rules_are_available():
     assert client.get("/v1/personal-rules").json()[0]["scope"] == "global"
 
 
+def test_saving_same_personal_rule_updates_instead_of_duplicating():
+    first = client.post("/v1/personal-rules", json={
+        "scope": "global", "max_position_percent": 20, "loss_review_percent": 15,
+        "volatility_review_percent": 50, "enabled": True,
+    })
+    second = client.post("/v1/personal-rules", json={
+        "scope": "global", "max_position_percent": 18, "loss_review_percent": 12,
+        "volatility_review_percent": 40, "enabled": True,
+    })
+
+    rules = client.get("/v1/personal-rules").json()
+    assert first.status_code == 200
+    assert second.status_code == 200
+    assert len(rules) == 1
+    assert rules[0]["max_position_percent"] == 18
+    assert rules[0]["version"] == 2
+
+
 def test_glossary():
     response = client.get("/v1/glossary/%E5%9B%9E%E8%B4%AD")
     assert response.status_code == 200
@@ -151,6 +169,24 @@ def test_market_quote_uses_adapter_and_exposes_freshness_metadata(monkeypatch):
     assert response.json()[0]["symbol"] == "01810"
     assert response.json()[0]["is_realtime"] is False
     assert response.json()[0]["as_of"] == "2026-07-28"
+
+
+def test_market_quote_force_refresh_replaces_saved_snapshot(monkeypatch):
+    store.save_quotes([{
+        "symbol": "01810", "price": 29.0, "currency": "HKD", "as_of": "2026-07-29",
+        "source": "旧缓存", "retrieved_at": "2026-07-29T15:00:00+08:00",
+    }])
+    monkeypatch.setattr(market_data, "quotes", lambda symbols: [{
+        "symbol": "01810", "price": 30.5, "currency": "HKD", "as_of": "2026-07-30",
+        "source": "刷新行情", "retrieved_at": "2026-07-30T10:30:00+08:00",
+    }])
+
+    response = client.get("/v1/market/quotes", params=[("symbols", "01810"), ("refresh", "true")])
+
+    assert response.status_code == 200
+    assert response.json()[0]["price"] == 30.5
+    assert response.json()[0]["as_of"] == "2026-07-30"
+    assert response.json()[0]["refresh_status"] == "fresh"
 
 
 def test_feed_uses_news_adapter(monkeypatch):
