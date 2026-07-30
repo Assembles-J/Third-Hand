@@ -238,7 +238,7 @@ private fun TodayScreen() {
     fun refreshPortfolioAnalysis() = scope.launch {
         try { portfolioAnalysis = api.portfolioAnalysis().items } catch (_: Exception) { portfolioAnalysis = emptyList() }
     }
-    fun refresh() = scope.launch {
+    fun refresh(forceQuotes: Boolean = false) = scope.launch {
         try {
             refreshing = true
             error = null
@@ -259,14 +259,11 @@ private fun TodayScreen() {
             }
             try {
                 val symbols = holdings.map { it.symbol }
-                quotes = api.quotes(symbols)
-                refreshMessage = "已展示最近一次行情，正在后台更新"
-                launch {
-                    delay(1200)
-                    try {
-                        quotes = api.quotes(symbols)
-                        refreshMessage = "行情已更新"
-                    } catch (_: Exception) { }
+                quotes = api.quotes(symbols, refresh = forceQuotes)
+                refreshMessage = when {
+                    quotes.any { it.refresh_status == "stale_fallback" } -> "刷新失败，当前显示上次成功获取的行情"
+                    forceQuotes -> "行情已主动刷新"
+                    else -> "已展示最近一次行情，服务器正在后台更新"
                 }
             } catch (exception: Exception) {
                 error = "持仓已加载；行情暂时不可用，请稍后刷新。"
@@ -277,15 +274,31 @@ private fun TodayScreen() {
             refreshing = false
         }
     }
-    LaunchedEffect(Unit) { refresh() }
+    LaunchedEffect(Unit) { refresh(forceQuotes = true) }
     LaunchedEffect(Unit) {
         while (true) {
             delay(2_000)
             if (drafts.any { it.lookup_status == "pending" || it.lookup_status == "querying" }) refresh()
         }
     }
+    LaunchedEffect(holdings.map { it.symbol }) {
+        if (holdings.isEmpty()) return@LaunchedEffect
+        while (true) {
+            delay(60_000)
+            try {
+                quotes = api.quotes(holdings.map { it.symbol }, refresh = true)
+                refreshMessage = if (quotes.any { it.refresh_status == "stale_fallback" }) {
+                    "自动刷新失败，继续显示上次行情"
+                } else {
+                    "行情已自动更新"
+                }
+            } catch (_: Exception) {
+                refreshMessage = "自动刷新失败，继续显示上次行情"
+            }
+        }
+    }
     LazyColumn(contentPadding = androidx.compose.foundation.layout.PaddingValues(bottom = 24.dp), verticalArrangement = Arrangement.spacedBy(14.dp)) {
-        item { AppHero("今日行情", "THIRD-HAND · 让资产向阳生长", action = { HeroRefreshAction({ refresh() }, !refreshing) }) }
+        item { AppHero("今日行情", "THIRD-HAND · 让资产向阳生长", action = { HeroRefreshAction({ refresh(forceQuotes = true) }, !refreshing) }) }
         item { Column(Modifier.padding(horizontal = 20.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
             Text("把握正在发生的机会", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold)
             Text("行情来自公开源快照，仅供参考，不构成投资建议。", color = MaterialTheme.colorScheme.onSurfaceVariant, style = MaterialTheme.typography.bodySmall)
@@ -366,7 +379,17 @@ private fun QuoteCard(quote: MarketQuoteDto, holding: HoldingDto?) = Card(
             HoldingMetric("成交量", marketNumber(quote.volume), Modifier.weight(1f))
             HoldingMetric("成交额", marketNumber(quote.amount), Modifier.weight(1f))
         }
-        Text("${quote.source}｜更新：${beijingTimestamp(quote.retrieved_at)}", style = MaterialTheme.typography.bodySmall)
+        Text(
+            "${quote.source}｜行情日期：${quote.as_of ?: "未知"}｜获取：${beijingTimestamp(quote.retrieved_at)}",
+            style = MaterialTheme.typography.bodySmall,
+        )
+        if (quote.freshness_note.isNotBlank()) {
+            Text(
+                quote.freshness_note,
+                style = MaterialTheme.typography.labelSmall,
+                color = if (quote.refresh_status == "stale_fallback") MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+        }
     }
 }
 
@@ -573,7 +596,7 @@ private fun HoldingsScreen() {
             error = null
             quoteError = null
             quotesBySymbol = if (holdings.isEmpty()) emptyMap() else try {
-                api.quotes(holdings.map { it.symbol }).associateBy { it.symbol }
+                api.quotes(holdings.map { it.symbol }, refresh = true).associateBy { it.symbol }
             } catch (exception: Exception) {
                 quoteError = "现价暂不可用；成本与持仓信息仍可查看。"
                 emptyMap()
@@ -1041,24 +1064,40 @@ private fun FeedScreen() {
     val api = ApiClient.service(context)
     var feed by remember { mutableStateOf<List<NewsItemDto>>(emptyList()) }
     var announcements by remember { mutableStateOf<List<NewsItemDto>>(emptyList()) }
+    var researchRules by remember { mutableStateOf<List<ResearchRuleDto>>(emptyList()) }
+    var glossaryCards by remember { mutableStateOf<List<GlossaryCardDto>>(emptyList()) }
     var error by remember { mutableStateOf<String?>(null) }
+    var refreshing by remember { mutableStateOf(false) }
     val scope = rememberCoroutineScope()
     fun refresh() = scope.launch {
+        refreshing = true
         val symbols = try { api.holdings().map { it.symbol } } catch (exception: Exception) {
             error = "无法读取持仓，请稍后重试。"
+            refreshing = false
             return@launch
         }
         var announcementError: String? = null
         var feedError: String? = null
         try { announcements = api.announcements(symbols) } catch (exception: Exception) { announcementError = "公告暂时不可用" }
         try { feed = api.feed(symbols) } catch (exception: Exception) { feedError = "新闻暂时不可用" }
+        try { researchRules = api.researchRules() } catch (_: Exception) { }
+        val loadedGlossary = mutableListOf<GlossaryCardDto>()
+        for (term in listOf("回购", "减持", "pe")) {
+            try { loadedGlossary += api.glossary(term) } catch (_: Exception) { }
+        }
+        glossaryCards = loadedGlossary
         error = listOfNotNull(announcementError, feedError).takeIf { it.isNotEmpty() }?.joinToString("；")
+        refreshing = false
     }
     LaunchedEffect(Unit) { refresh() }
     LazyColumn(contentPadding = androidx.compose.foundation.layout.PaddingValues(bottom = 24.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
-        item { AppHero("关联消息", "消息枝叶 · 捕捉与你有关的变化", action = { HeroRefreshAction(onClick = { refresh() }) }) }
+        item { AppHero("关联消息", "消息枝叶 · 捕捉与你有关的变化", action = { HeroRefreshAction(onClick = { refresh() }, enabled = !refreshing) }) }
         item { Text("正式公告优先展示；新闻用于补充背景，均请以原文为准。", modifier = Modifier.padding(horizontal = 20.dp), color = MaterialTheme.colorScheme.onSurfaceVariant) }
         error?.let { item { StatusCard(it ?: "消息暂时不可用", error = true) } }
+        if (researchRules.isNotEmpty()) item { Text("研究核验框架", modifier = Modifier.padding(horizontal = 20.dp), style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold) }
+        items(researchRules, key = { it.id }) { rule -> ResearchRuleCard(rule, uriHandler) }
+        if (glossaryCards.isNotEmpty()) item { Text("新手词条", modifier = Modifier.padding(horizontal = 20.dp), style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold) }
+        items(glossaryCards, key = { it.term }) { card -> GlossaryInfoCard(card) }
         if (announcements.isNotEmpty()) item { Text("正式公告", modifier = Modifier.padding(horizontal = 20.dp), style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold) }
         items(announcements) { item -> FeedCard(item, uriHandler, "公告") }
         if (feed.isNotEmpty()) item { Text("相关新闻", modifier = Modifier.padding(horizontal = 20.dp), style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold) }
@@ -1075,6 +1114,11 @@ private fun FeedCard(item: NewsItemDto, uriHandler: androidx.compose.ui.platform
         item.ai_analysis?.let { analysis ->
             Text("AI 解读：${analysis["summary"] ?: "已生成，建议结合原文核验。"}", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.primary)
             Text("影响：${analysis["impact"] ?: "uncertain"}｜置信度：${analysis["confidence"] ?: "low"}", style = MaterialTheme.typography.bodySmall)
+            val verifyItems = analysis["verify_items"] as? List<*>
+            if (!verifyItems.isNullOrEmpty()) {
+                Text("建议核验", style = MaterialTheme.typography.labelMedium, fontWeight = FontWeight.Bold)
+                verifyItems.take(4).forEach { Text("• $it", style = MaterialTheme.typography.bodySmall) }
+            }
         }
         Text("${item.source_name}｜${beijingTimestamp(item.published_at)}", style = MaterialTheme.typography.bodySmall)
         TextButton(onClick = { uriHandler.openUri(item.source_url) }, colors = ButtonDefaults.textButtonColors(contentColor = MaterialTheme.colorScheme.primary)) { Text("查看原文  →", fontWeight = FontWeight.Bold) }
@@ -1082,14 +1126,58 @@ private fun FeedCard(item: NewsItemDto, uriHandler: androidx.compose.ui.platform
 }
 
 @Composable
+private fun ResearchRuleCard(rule: ResearchRuleDto, uriHandler: androidx.compose.ui.platform.UriHandler) =
+    Card(Modifier.padding(horizontal = 20.dp).fillMaxWidth()) {
+        Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(5.dp)) {
+            Text("${rule.category} · ${rule.title}", style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.Bold)
+            Text("何时触发：${rule.trigger_text}", style = MaterialTheme.typography.bodySmall)
+            Text(rule.guidance, color = MaterialTheme.colorScheme.onSurfaceVariant, style = MaterialTheme.typography.bodySmall)
+            Text("证据完整度上限 ${(rule.confidence_ceiling * 100).toInt()}% · ${rule.version}", style = MaterialTheme.typography.labelSmall)
+            if (rule.source_url.startsWith("https://")) {
+                TextButton(onClick = { uriHandler.openUri(rule.source_url) }) { Text("查看规则来源") }
+            }
+        }
+    }
+
+@Composable
+private fun GlossaryInfoCard(card: GlossaryCardDto) =
+    Card(
+        Modifier.padding(horizontal = 20.dp).fillMaxWidth(),
+        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.secondaryContainer),
+    ) {
+        Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(5.dp)) {
+            Text(card.term, style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.Bold)
+            Text(card.plain_explanation, style = MaterialTheme.typography.bodySmall)
+            Text("需要留意：${card.watch_for}", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSecondaryContainer)
+        }
+    }
+
+@Composable
 private fun ProfileScreen(themeMode: ThemeMode, onThemeModeChange: (ThemeMode) -> Unit) {
     val context = LocalContext.current
+    val api = ApiClient.service(context)
     val scope = rememberCoroutineScope()
     var baseUrl by remember { mutableStateOf(EndpointStore.baseUrl(context)) }
     var connectionStatus by remember { mutableStateOf<String?>(null) }
     var availableUpdate by remember { mutableStateOf<AppUpdate?>(null) }
     var updateStatus by remember { mutableStateOf<String?>(null) }
     var checkingUpdate by remember { mutableStateOf(false) }
+    var personalRules by remember { mutableStateOf<List<PersonalRuleDto>>(emptyList()) }
+    var learningCases by remember { mutableStateOf<List<LearningCaseDto>>(emptyList()) }
+    var researchStatus by remember { mutableStateOf<String?>(null) }
+    var showRuleDialog by remember { mutableStateOf(false) }
+    var showLearningDialog by remember { mutableStateOf(false) }
+    fun refreshResearchData() {
+        scope.launch {
+            try {
+                personalRules = api.personalRules()
+                learningCases = api.learningCases()
+                researchStatus = null
+            } catch (_: Exception) {
+                researchStatus = "个人研究数据暂时不可用"
+            }
+        }
+    }
     fun checkForUpdate() {
         scope.launch {
             checkingUpdate = true
@@ -1104,7 +1192,10 @@ private fun ProfileScreen(themeMode: ThemeMode, onThemeModeChange: (ThemeMode) -
             }
         }
     }
-    LaunchedEffect(Unit) { checkForUpdate() }
+    LaunchedEffect(Unit) {
+        checkForUpdate()
+        refreshResearchData()
+    }
     availableUpdate?.let { update ->
         AlertDialog(
             onDismissRequest = { availableUpdate = null },
@@ -1141,6 +1232,28 @@ private fun ProfileScreen(themeMode: ThemeMode, onThemeModeChange: (ThemeMode) -
             SecondaryAction(if (checkingUpdate) "正在检查…" else "检查更新", Icons.Filled.Refresh, { checkForUpdate() }, Modifier.fillMaxWidth())
             updateStatus?.let { StatusCard(it, positive = it == "已是最新版本", error = it != "已是最新版本") }
         } }
+        item { Text("个人复核规则", modifier = Modifier.padding(horizontal = 20.dp), style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold) }
+        item {
+            Column(Modifier.padding(horizontal = 20.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                Text("规则会参与持仓复核，只控制提醒阈值，不会自动产生交易指令。", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                SecondaryAction(
+                    if (personalRules.any { it.scope == "global" }) "调整全局规则" else "设置全局规则",
+                    Icons.Filled.AutoGraph,
+                    { showRuleDialog = true },
+                    Modifier.fillMaxWidth(),
+                )
+            }
+        }
+        researchStatus?.let { item { StatusCard(it, error = true) } }
+        items(personalRules, key = { it.id }) { rule -> PersonalRuleCard(rule) }
+        item { Text("复盘记录", modifier = Modifier.padding(horizontal = 20.dp), style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold) }
+        item {
+            Column(Modifier.padding(horizontal = 20.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                SecondaryAction("记录一次复盘", Icons.AutoMirrored.Filled.Article, { showLearningDialog = true }, Modifier.fillMaxWidth())
+                if (learningCases.isEmpty()) Text("还没有复盘记录。可把一次判断、核验结果和教训保存下来，供后续 AI 解读参考。", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            }
+        }
+        items(learningCases, key = { it.id }) { item -> LearningCaseCard(item) }
         item { Text("外观", modifier = Modifier.padding(horizontal = 20.dp), style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold) }
         items(ThemeMode.entries) { mode ->
             Row(
@@ -1153,4 +1266,148 @@ private fun ProfileScreen(themeMode: ThemeMode, onThemeModeChange: (ThemeMode) -
         }
         item { Text("当前为本地 MVP。持仓数据存储在后端 SQLite；请在生产部署前补充账号认证与备份。", modifier = Modifier.padding(horizontal = 20.dp), style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant) }
     }
+    if (showRuleDialog) {
+        PersonalRuleDialog(
+            initial = personalRules.firstOrNull { it.scope == "global" },
+            onDismiss = { showRuleDialog = false },
+            onSave = { input ->
+                scope.launch {
+                    try {
+                        api.savePersonalRule(input)
+                        showRuleDialog = false
+                        refreshResearchData()
+                    } catch (_: Exception) {
+                        researchStatus = "保存个人规则失败，请检查输入和服务连接"
+                    }
+                }
+            },
+        )
+    }
+    if (showLearningDialog) {
+        LearningCaseDialog(
+            onDismiss = { showLearningDialog = false },
+            onSave = { input ->
+                scope.launch {
+                    try {
+                        api.createLearningCase(input)
+                        showLearningDialog = false
+                        refreshResearchData()
+                    } catch (_: Exception) {
+                        researchStatus = "保存复盘记录失败，请检查输入"
+                    }
+                }
+            },
+        )
+    }
+}
+
+@Composable
+private fun PersonalRuleCard(rule: PersonalRuleDto) =
+    Card(Modifier.padding(horizontal = 20.dp).fillMaxWidth()) {
+        Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(5.dp)) {
+            Text(
+                if (rule.scope == "global") "全局规则 · v${rule.version}" else "${rule.symbol ?: "个股"} · v${rule.version}",
+                style = MaterialTheme.typography.titleSmall,
+                fontWeight = FontWeight.Bold,
+            )
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                TechnicalMetric("单标的上限", "${rule.max_position_percent}%", Modifier.weight(1f))
+                TechnicalMetric("亏损复核", "${rule.loss_review_percent}%", Modifier.weight(1f))
+                TechnicalMetric("波动复核", "${rule.volatility_review_percent}%", Modifier.weight(1f))
+            }
+            Text(
+                "${if (rule.enabled) "已启用" else "已停用"} · 更新 ${beijingTimestamp(rule.updated_at)}",
+                style = MaterialTheme.typography.labelSmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+        }
+    }
+
+@Composable
+private fun LearningCaseCard(item: LearningCaseDto) =
+    Card(Modifier.padding(horizontal = 20.dp).fillMaxWidth()) {
+        Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(5.dp)) {
+            Text(item.title, style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.Bold)
+            Text("${item.symbol ?: "组合"} · ${item.position_band} · 置信度 ${(item.confidence * 100).toInt()}%", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.primary)
+            Text("当时判断：${item.context}", style = MaterialTheme.typography.bodySmall)
+            Text("复盘结论：${item.lesson}", style = MaterialTheme.typography.bodySmall, fontWeight = FontWeight.SemiBold)
+            Text("结果：${item.outcome}", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            Text(beijingTimestamp(item.created_at), style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+        }
+    }
+
+@Composable
+private fun PersonalRuleDialog(
+    initial: PersonalRuleDto?,
+    onDismiss: () -> Unit,
+    onSave: (PersonalRuleInputDto) -> Unit,
+) {
+    var maxPosition by remember(initial?.id) { mutableStateOf(initial?.max_position_percent?.toString() ?: "20") }
+    var lossReview by remember(initial?.id) { mutableStateOf(initial?.loss_review_percent?.toString() ?: "15") }
+    var volatilityReview by remember(initial?.id) { mutableStateOf(initial?.volatility_review_percent?.toString() ?: "50") }
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text("全局复核规则") },
+        text = {
+            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                OutlinedTextField(maxPosition, { maxPosition = it }, label = { Text("单一标的仓位上限（%）") }, modifier = Modifier.fillMaxWidth())
+                OutlinedTextField(lossReview, { lossReview = it }, label = { Text("成本下跌复核阈值（%）") }, modifier = Modifier.fillMaxWidth())
+                OutlinedTextField(volatilityReview, { volatilityReview = it }, label = { Text("年化波动复核阈值（%）") }, modifier = Modifier.fillMaxWidth())
+            }
+        },
+        confirmButton = {
+            Button(onClick = {
+                onSave(PersonalRuleInputDto(
+                    scope = "global",
+                    max_position_percent = maxPosition.toDoubleOrNull() ?: 20.0,
+                    loss_review_percent = lossReview.toDoubleOrNull() ?: 15.0,
+                    volatility_review_percent = volatilityReview.toDoubleOrNull() ?: 50.0,
+                ))
+            }) { Text("保存") }
+        },
+        dismissButton = { TextButton(onClick = onDismiss) { Text("取消") } },
+    )
+}
+
+@Composable
+private fun LearningCaseDialog(
+    onDismiss: () -> Unit,
+    onSave: (LearningCaseInputDto) -> Unit,
+) {
+    var symbol by remember { mutableStateOf("") }
+    var title by remember { mutableStateOf("") }
+    var context by remember { mutableStateOf("") }
+    var lesson by remember { mutableStateOf("") }
+    var outcome by remember { mutableStateOf("") }
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text("记录一次复盘") },
+        text = {
+            Column(Modifier.verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                OutlinedTextField(symbol, { symbol = it }, label = { Text("证券代码（可不填）") }, modifier = Modifier.fillMaxWidth())
+                OutlinedTextField(title, { title = it }, label = { Text("标题") }, modifier = Modifier.fillMaxWidth())
+                OutlinedTextField(context, { context = it }, label = { Text("当时依据和背景") }, modifier = Modifier.fillMaxWidth(), minLines = 2)
+                OutlinedTextField(lesson, { lesson = it }, label = { Text("复盘后得到的教训") }, modifier = Modifier.fillMaxWidth(), minLines = 2)
+                OutlinedTextField(outcome, { outcome = it }, label = { Text("后来发生了什么") }, modifier = Modifier.fillMaxWidth(), minLines = 2)
+            }
+        },
+        confirmButton = {
+            Button(
+                enabled = title.length >= 3 && context.length >= 10 && lesson.length >= 5 && outcome.length >= 2,
+                onClick = {
+                    onSave(LearningCaseInputDto(
+                        symbol = symbol.trim().ifBlank { null },
+                        title = title.trim(),
+                        context = context.trim(),
+                        lesson = lesson.trim(),
+                        outcome = outcome.trim(),
+                        position_band = "待评估",
+                        planned_action = "继续观察并核验原始信息",
+                        confidence = 0.5,
+                    ))
+                },
+            ) { Text("保存") }
+        },
+        dismissButton = { TextButton(onClick = onDismiss) { Text("取消") } },
+    )
 }
