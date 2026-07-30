@@ -30,6 +30,7 @@ data class HoldingInputDto(
 
 data class HoldingDraftDto(
     val id: String,
+    val client_row_id: String,
     val name: String,
     val quantity: Double,
     val average_cost: Double,
@@ -38,9 +39,11 @@ data class HoldingDraftDto(
     val lookup_status: String? = "pending",
     val lookup_message: String = "等待后台查询证券代码",
     val lookup_updated_at: String? = null,
+    val candidates: List<SecurityCandidateDto> = emptyList(),
 )
 
 data class HoldingDraftInputDto(
+    val client_row_id: String? = null,
     val name: String,
     val quantity: Double,
     val average_cost: Double,

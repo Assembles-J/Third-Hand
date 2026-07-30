@@ -64,6 +64,7 @@ chmod 600 /root/third-hand-signing/third-hand-release.p12
 | `ANDROID_KEY_ALIAS` | 默认是 `third-hand` |
 | `ANDROID_KEY_PASSWORD` | 私钥密码 |
 | `APP_PUBLIC_BASE_URL` | `https://groupim.cn/third-hand`，不带结尾 `/` |
+| `APP_UPDATE_PUBLIC_BASE_URL` | 可选；推荐 `https://download.groupim.cn/third-hand/releases`，不带结尾 `/` |
 | `SERVER_IP` | 部署服务器地址 |
 | `SERVER_USER` | SSH 用户 |
 | `SERVER_SSH_KEY` | SSH 私钥 |
@@ -82,6 +83,7 @@ gh secret set ANDROID_KEYSTORE_PASSWORD --env production --repo pengpengno/Third
 gh secret set ANDROID_KEY_PASSWORD --env production --repo pengpengno/Third-Hand
 gh secret set ANDROID_KEY_ALIAS --env production --repo pengpengno/Third-Hand --body "third-hand"
 gh secret set APP_PUBLIC_BASE_URL --env production --repo pengpengno/Third-Hand --body "https://groupim.cn/third-hand"
+gh secret set APP_UPDATE_PUBLIC_BASE_URL --env production --repo pengpengno/Third-Hand --body "https://download.groupim.cn/third-hand/releases"
 
 gh secret list --env production --repo pengpengno/Third-Hand
 ```
@@ -165,7 +167,44 @@ docker exec nginx nginx -t
 docker exec nginx nginx -s reload
 ```
 
-Cloudflare SSL/TLS 模式使用 `Full (strict)`，并为 URI Path 以 `/third-hand/` 开头的请求设置绕过缓存，避免行情、更新元数据和 APK 下载受到旧缓存影响。
+Cloudflare SSL/TLS 模式使用 `Full (strict)`，并为 URI Path 以 `/third-hand/` 开头的 API 请求设置绕过缓存。更新元数据必须保持最新；版本化 APK 则使用下面的独立静态下载域名。
+
+## 独立 APK 下载域名（推荐）
+
+不要把服务器裸 IP 写入客户端。为 `download.groupim.cn` 添加指向源站 IP 的 DNS 记录，并设置为 **DNS only（灰色云）**，这样下载仍使用稳定 HTTPS 域名，但不经过 Cloudflare 代理。直连源站时必须使用浏览器和 Android 都信任的公网证书（例如 Let's Encrypt）；只供 Cloudflare 回源使用的 Origin Certificate 不适合灰色云直连。
+
+让 GroupIM 的 Nginx 容器只读挂载发布目录：
+
+```yaml
+services:
+  nginx:
+    volumes:
+      - /opt/third-hand/releases:/srv/third-hand-releases:ro
+```
+
+在 `server_name download.groupim.cn;` 的 HTTPS `server {}` 中加入：
+
+```nginx
+location ^~ /third-hand/releases/ {
+    alias /srv/third-hand-releases/;
+    try_files $uri =404;
+
+    default_type application/vnd.android.package-archive;
+    add_header Cache-Control "public, max-age=31536000, immutable" always;
+    add_header Accept-Ranges "bytes" always;
+
+    sendfile on;
+}
+```
+
+文件名带版本号，因此长期缓存不会把新版本误认为旧版本；Nginx 静态文件也原生支持 `Content-Length` 和 Range 断点续传。随后把 production 环境 Secret 设置为：
+
+```text
+APP_UPDATE_PUBLIC_BASE_URL=https://download.groupim.cn/third-hand/releases
+```
+
+如果该变量留空，后端会自动回退到原来的
+`https://groupim.cn/third-hand/v1/app-update/apk`，旧客户端和现有部署不会中断。回退接口同样为版本化内容返回长期缓存头，但由于主域名的 API 路径通常绕过 Cloudflare 缓存，性能仍不如 Nginx 静态直连。
 
 ## 部署前检查
 
@@ -174,6 +213,7 @@ docker network inspect app_gateway
 docker exec nginx getent hosts third-hand-api
 curl -fsS http://127.0.0.1:8000/health
 curl -fsS https://groupim.cn/third-hand/health
+curl -I https://download.groupim.cn/third-hand/releases/third-hand-<version>.apk
 ```
 
 健康接口预期返回：
@@ -202,12 +242,11 @@ curl -i https://groupim.cn/third-hand/v1/app-update
 
 正式 APK 尚未发布时，该接口返回 `204 No Content` 是正常的。发布完成后应返回 `200`，元数据包含递增的 `version_code`、版本名、`sha256`、`size_bytes` 和 HTTPS `apk_url`。
 
-下载校验：
+下载校验（先从更新元数据读取实际 `apk_url`）：
 
 ```bash
-curl -fL \
-  https://groupim.cn/third-hand/v1/app-update/apk \
-  -o /tmp/third-hand-release.apk
+APK_URL="$(curl -fsS https://groupim.cn/third-hand/v1/app-update | python3 -c 'import json,sys; print(json.load(sys.stdin)["apk_url"])')"
+curl -fL "$APK_URL" -o /tmp/third-hand-release.apk
 
 sha256sum /tmp/third-hand-release.apk
 ```

@@ -23,14 +23,43 @@ def test_app_update_exposes_download_integrity_metadata(monkeypatch, tmp_path):
     monkeypatch.setenv("APP_UPDATE_DIRECTORY", str(tmp_path))
     monkeypatch.setenv("APP_UPDATE_APK_FILE", apk.name)
     monkeypatch.setenv("APP_PUBLIC_BASE_URL", "https://api.example.com")
+    monkeypatch.setenv("APP_UPDATE_PUBLIC_BASE_URL", "https://download.example.com/third-hand/releases")
     monkeypatch.setenv("APP_UPDATE_VERSION_CODE", "3")
     monkeypatch.setenv("APP_UPDATE_VERSION_NAME", "0.3.0")
 
     response = client.get("/v1/app-update")
 
     assert response.status_code == 200
+    assert response.headers["cache-control"] == "no-store"
+    assert response.json()["apk_url"] == "https://download.example.com/third-hand/releases/third-hand-0.3.0.apk"
     assert response.json()["size_bytes"] == len(content)
     assert response.json()["sha256"] == hashlib.sha256(content).hexdigest()
+
+
+def test_app_update_falls_back_to_api_download(monkeypatch, tmp_path):
+    apk = tmp_path / "third-hand-0.3.1.apk"
+    apk.write_bytes(b"apk")
+    monkeypatch.setenv("APP_UPDATE_DIRECTORY", str(tmp_path))
+    monkeypatch.setenv("APP_UPDATE_APK_FILE", apk.name)
+    monkeypatch.setenv("APP_PUBLIC_BASE_URL", "https://api.example.com")
+    monkeypatch.delenv("APP_UPDATE_PUBLIC_BASE_URL", raising=False)
+
+    response = client.get("/v1/app-update")
+
+    assert response.status_code == 200
+    assert response.json()["apk_url"] == "https://api.example.com/v1/app-update/apk"
+
+
+def test_versioned_api_apk_download_is_immutable(monkeypatch, tmp_path):
+    apk = tmp_path / "third-hand-0.3.2.apk"
+    apk.write_bytes(b"apk")
+    monkeypatch.setenv("APP_UPDATE_DIRECTORY", str(tmp_path))
+    monkeypatch.setenv("APP_UPDATE_APK_FILE", apk.name)
+
+    response = client.get("/v1/app-update/apk")
+
+    assert response.status_code == 200
+    assert response.headers["cache-control"] == "public, max-age=31536000, immutable"
 
 
 def test_admin_overview_exposes_aggregate_operational_data_only():
@@ -129,17 +158,58 @@ def test_holding_drafts_can_be_saved_in_one_request(monkeypatch):
     ]})
     assert response.status_code == 201
     assert len(response.json()) == 2
+    assert response.json()[0]["client_row_id"] == response.json()[0]["id"]
 
 
-def test_exact_draft_lookup_is_saved_and_confirmed_in_background(monkeypatch):
+def test_exact_draft_lookup_stays_in_preview_until_user_confirms(monkeypatch):
     monkeypatch.setattr(market_data, "lookup_symbols", lambda names: [{
         "query": names[0],
         "matches": [{"symbol": "600519", "name": "贵州茅台", "market": "CN", "currency": "CNY", "match_type": "exact"}],
     }])
-    response = client.post("/v1/holding-drafts", json={"name": "贵州茅台", "quantity": 10, "average_cost": 1400})
+    response = client.post("/v1/holding-drafts", json={
+        "client_row_id": "ocr-row-7", "name": "贵州茅台", "quantity": 10, "average_cost": 1400,
+    })
     assert response.status_code == 201
+    drafts = client.get("/v1/holding-drafts").json()
+    assert drafts[0]["client_row_id"] == "ocr-row-7"
+    assert drafts[0]["lookup_status"] == "matched"
+    assert drafts[0]["candidates"][0]["symbol"] == "600519"
+    assert client.get("/v1/holdings").json() == []
+
+
+def test_batch_commit_uses_quantity_and_cost_from_bound_draft_rows(monkeypatch):
+    monkeypatch.setattr(market_data, "lookup_symbols", lambda names: [{"query": name, "matches": []} for name in names])
+    created = client.post("/v1/holding-drafts/batch", json={"items": [
+        {"client_row_id": "row-a", "name": "小米集团", "quantity": 200, "average_cost": 26.96},
+        {"client_row_id": "row-b", "name": "贵州茅台", "quantity": 10, "average_cost": 1400},
+    ]}).json()
+
+    response = client.post("/v1/holding-drafts/commit", json={"items": [
+        {"draft_id": created[0]["id"], "symbol": "01810", "name": "小米集团-W"},
+        {"draft_id": created[1]["id"], "symbol": "600519", "name": "贵州茅台"},
+    ]})
+
+    assert response.status_code == 201
+    holdings = {item["symbol"]: item for item in response.json()}
+    assert holdings["01810"]["quantity"] == 200
+    assert holdings["01810"]["average_cost"] == 26.96
     assert client.get("/v1/holding-drafts").json() == []
-    assert client.get("/v1/holdings").json()[0]["symbol"] == "600519"
+
+
+def test_batch_commit_is_atomic_when_any_draft_is_missing(monkeypatch):
+    monkeypatch.setattr(market_data, "lookup_symbols", lambda names: [{"query": name, "matches": []} for name in names])
+    draft = client.post("/v1/holding-drafts", json={
+        "client_row_id": "row-a", "name": "小米集团", "quantity": 200, "average_cost": 26.96,
+    }).json()
+
+    response = client.post("/v1/holding-drafts/commit", json={"items": [
+        {"draft_id": draft["id"], "symbol": "01810", "name": "小米集团-W"},
+        {"draft_id": "missing", "symbol": "600519", "name": "贵州茅台"},
+    ]})
+
+    assert response.status_code == 409
+    assert client.get("/v1/holdings").json() == []
+    assert client.get("/v1/holding-drafts").json()[0]["id"] == draft["id"]
 
 
 def test_import_accepts_valid_rows_and_rejects_invalid_rows():
