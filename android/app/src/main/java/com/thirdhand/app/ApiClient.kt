@@ -69,7 +69,10 @@ data class MarketQuoteDto(
     val delay_seconds: Int? = null,
     val license_scope: String = "unknown",
     val refresh_status: String = "fresh",
+    val error_code: String? = null,
+    val error_message: String? = null,
 )
+data class MarketQuoteBatchRequestDto(val symbols: List<String>, val refresh: Boolean = false)
 
 data class SecurityCandidateDto(
     val symbol: String,
@@ -82,7 +85,10 @@ data class SecurityCandidateDto(
 data class SymbolLookupResultDto(
     val query: String,
     val matches: List<SecurityCandidateDto>,
+    val lookup_status: String = "not_found",
+    val lookup_message: String = "",
 )
+data class SymbolResolveRequestDto(val names: List<String>)
 
 data class RiskAssessmentDto(
     val symbol: String,
@@ -212,14 +218,11 @@ interface ThirdHandApi {
     @DELETE("v1/holding-drafts/{id}")
     suspend fun deleteHoldingDraft(@Path("id") id: String)
 
-    @GET("v1/market/quotes")
-    suspend fun quotes(
-        @Query("symbols") symbols: List<String>,
-        @Query("refresh") refresh: Boolean = false,
-    ): List<MarketQuoteDto>
+    @POST("v1/market/quotes/batch")
+    suspend fun quotes(@Body request: MarketQuoteBatchRequestDto): List<MarketQuoteDto>
 
-    @GET("v1/market/symbols")
-    suspend fun symbolLookup(@Query("names") names: List<String>): List<SymbolLookupResultDto>
+    @POST("v1/market/symbols/resolve")
+    suspend fun symbolLookup(@Body request: SymbolResolveRequestDto): List<SymbolLookupResultDto>
 
     @GET("v1/risk/assessments")
     suspend fun riskAssessments(): List<RiskAssessmentDto>

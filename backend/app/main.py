@@ -160,6 +160,12 @@ class SecurityCandidate(BaseModel):
 class SymbolLookupResult(BaseModel):
     query: str
     matches: list[SecurityCandidate]
+    lookup_status: str = "not_found"
+    lookup_message: str = ""
+
+
+class SymbolResolveRequest(BaseModel):
+    names: list[str] = Field(min_length=1, max_length=100)
 
 
 class MarketQuote(BaseModel):
@@ -183,6 +189,13 @@ class MarketQuote(BaseModel):
     license_scope: str = "unknown"
     freshness_note: str = ""
     refresh_status: str = "fresh"
+    error_code: str | None = None
+    error_message: str | None = None
+
+
+class MarketQuoteBatchRequest(BaseModel):
+    symbols: list[str] = Field(min_length=1, max_length=200)
+    refresh: bool = False
 
 
 class MarketRefreshStatus(BaseModel):
@@ -394,7 +407,8 @@ def fetch_and_store_quotes(
         })
     try:
         quotes = market_data.quotes(symbols, force_refresh=force_refresh)
-        store.save_quotes(quotes)
+        successful = [quote for quote in quotes if quote.get("price") is not None and not quote.get("error_code")]
+        store.save_quotes(successful)
     except Exception as error:
         with market_refresh_state_lock:
             market_refresh_state["last_error"] = f"{type(error).__name__}: {error}"
@@ -410,13 +424,18 @@ def fetch_and_store_quotes(
         else:
             logger.exception("行情刷新异常 trigger=%s symbols=%s", trigger, ",".join(symbols))
         raise
+    state_update: dict[str, object] = {
+        "last_error": None if len(successful) == len(quotes) else f"{len(quotes) - len(successful)} 个代码刷新失败",
+        "result_count": len(successful),
+    }
+    if successful:
+        state_update["last_success_at"] = beijing_now()
     with market_refresh_state_lock:
-        market_refresh_state.update({
-            "last_success_at": beijing_now(),
-            "last_error": None,
-            "result_count": len(quotes),
-        })
-    logger.info("行情刷新成功 trigger=%s symbols=%s count=%s", trigger, ",".join(symbols), len(quotes))
+        market_refresh_state.update(state_update)
+    logger.info(
+        "行情刷新完成 trigger=%s symbols=%s success=%s failed=%s",
+        trigger, ",".join(symbols), len(successful), len(quotes) - len(successful),
+    )
     return quotes
 
 
@@ -545,10 +564,26 @@ def market_quotes(
     background_tasks: BackgroundTasks,
     refresh: Annotated[bool, Query()] = False,
 ) -> list[MarketQuote]:
-    """Return cached data quickly, or synchronously refresh when the client asks."""
+    """Backward-compatible GET wrapper; new clients should use the POST batch endpoint."""
+    return resolve_market_quotes(symbols, refresh, background_tasks)
+
+
+@app.post("/v1/market/quotes/batch", response_model=list[MarketQuote])
+def market_quotes_batch(payload: MarketQuoteBatchRequest, background_tasks: BackgroundTasks) -> list[MarketQuote]:
+    """Fetch a batch without placing every symbol in the URL."""
+    return resolve_market_quotes(payload.symbols, payload.refresh, background_tasks)
+
+
+def resolve_market_quotes(
+    symbols: list[str],
+    refresh: bool,
+    background_tasks: BackgroundTasks,
+) -> list[MarketQuote]:
+    """Return one result per symbol; one bad symbol never invalidates the batch."""
     requested = list(dict.fromkeys(symbol.strip().upper() for symbol in symbols if symbol.strip()))
     cached = store.cached_quotes(requested)
-    cached_symbols = {str(item["symbol"]) for item in cached}
+    cached_by_symbol = {str(item["symbol"]): item for item in cached}
+    cached_symbols = set(cached_by_symbol)
     has_complete_cache = cached_symbols.issuperset(requested)
     if refresh or not has_complete_cache:
         try:
@@ -557,19 +592,45 @@ def market_quotes(
                 force_refresh=refresh,
                 trigger="request-forced" if refresh else "request-cache-miss",
             )
-            return [MarketQuote.model_validate({**item, "refresh_status": "fresh"}) for item in quotes]
-        except MarketDataUnavailable as error:
-            if not cached:
-                raise HTTPException(status_code=503, detail={"message": str(error), "code": error.code}) from error
-            stale = [{
-                **item,
-                "refresh_status": "stale_fallback",
-                "freshness_note": f"{item.get('freshness_note', '')} 本次刷新失败：{error}".strip(),
-            } for item in cached]
-            return [MarketQuote.model_validate(item) for item in stale]
+        except Exception as error:
+            logger.exception("批量行情刷新发生未隔离异常 symbols=%s", ",".join(requested))
+            quotes = [{
+                **MarketDataService._failure_quote(
+                    symbol,
+                    "batch_refresh_failed",
+                    "批量行情刷新暂时不可用，请稍后重试。",
+                ),
+            } for symbol in requested]
+        fetched_by_symbol = {str(item["symbol"]): item for item in quotes}
+        resolved: list[MarketQuote] = []
+        for symbol in requested:
+            fetched = fetched_by_symbol.get(symbol)
+            if fetched and fetched.get("price") is not None and not fetched.get("error_code"):
+                resolved.append(MarketQuote.model_validate({**fetched, "refresh_status": "fresh"}))
+                continue
+            error_code = str((fetched or {}).get("error_code") or "symbol_not_found")
+            error_message = str((fetched or {}).get("error_message") or "未找到该代码的行情。")
+            cached_item = cached_by_symbol.get(symbol)
+            if cached_item:
+                resolved.append(MarketQuote.model_validate({
+                    **cached_item,
+                    "refresh_status": "stale_fallback",
+                    "error_code": error_code,
+                    "error_message": error_message,
+                    "freshness_note": f"{cached_item.get('freshness_note', '')} 本次刷新失败：{error_message}".strip(),
+                }))
+            else:
+                resolved.append(MarketQuote.model_validate({
+                    **(fetched or MarketDataService._failure_quote(symbol, error_code, error_message)),
+                    "refresh_status": "failed",
+                }))
+        return resolved
     if cached:
         background_tasks.add_task(refresh_quote_cache, requested, False, "request-background")
-        return [MarketQuote.model_validate({**item, "refresh_status": "cached_refreshing"}) for item in cached]
+        return [
+            MarketQuote.model_validate({**cached_by_symbol[symbol], "refresh_status": "cached_refreshing"})
+            for symbol in requested if symbol in cached_by_symbol
+        ]
     return []
 
 
@@ -587,7 +648,17 @@ def market_refresh_status() -> MarketRefreshStatus:
 
 @app.get("/v1/market/symbols", response_model=list[SymbolLookupResult])
 def market_symbol_lookup(names: Annotated[list[str], Query()]) -> list[SymbolLookupResult]:
-    """Return name-matched listings for OCR review; this endpoint never creates holdings."""
+    """Backward-compatible GET wrapper; new clients should use the POST resolve endpoint."""
+    return resolve_market_symbols(names)
+
+
+@app.post("/v1/market/symbols/resolve", response_model=list[SymbolLookupResult])
+def market_symbol_resolve(payload: SymbolResolveRequest) -> list[SymbolLookupResult]:
+    """Resolve names from OCR or manual input without putting them in the URL."""
+    return resolve_market_symbols(payload.names)
+
+
+def resolve_market_symbols(names: list[str]) -> list[SymbolLookupResult]:
     try:
         return [SymbolLookupResult.model_validate(item) for item in market_data.lookup_symbols(names)]
     except MarketDataUnavailable as error:

@@ -165,6 +165,21 @@ def test_symbol_lookup_returns_candidates(monkeypatch):
     assert response.json()[0]["matches"][0]["symbol"] == "01810"
 
 
+def test_symbol_lookup_post_resolves_names_without_query_params(monkeypatch):
+    monkeypatch.setattr(market_data, "lookup_symbols", lambda names: [{
+        "query": names[0],
+        "matches": [{"symbol": "600519", "name": "贵州茅台", "market": "CN", "currency": "CNY", "match_type": "exact"}],
+        "lookup_status": "matched",
+        "lookup_message": "找到 1 个候选代码。",
+    }])
+
+    response = client.post("/v1/market/symbols/resolve", json={"names": ["贵州茅台"]})
+
+    assert response.status_code == 200
+    assert response.json()[0]["matches"][0]["symbol"] == "600519"
+    assert response.json()[0]["lookup_status"] == "matched"
+
+
 def test_risk_assessments_are_returned_for_confirmed_holdings(monkeypatch):
     client.post("/v1/holdings", json={"symbol": "01810", "name": "小米集团-W", "quantity": 100, "average_cost": 45.5})
     monkeypatch.setattr(risk_service, "assess", lambda symbol, name: {
@@ -210,6 +225,55 @@ def test_market_quote_force_refresh_replaces_saved_snapshot(monkeypatch):
     assert refresh_status["last_trigger"] == "request-forced"
     assert refresh_status["last_error"] is None
     assert refresh_status["symbols"] == ["01810"]
+
+
+def test_market_quote_post_keeps_valid_result_when_another_symbol_fails(monkeypatch):
+    monkeypatch.setattr(market_data, "quotes", lambda symbols, force_refresh=False: [
+        {
+            "symbol": "600519", "name": "贵州茅台", "price": 1500.0, "currency": "CNY",
+            "source": "刷新行情", "retrieved_at": "2026-07-30T10:30:00+08:00",
+        },
+        {
+            "symbol": "BAD", "name": "BAD", "price": None, "currency": "CNY",
+            "source": "行情错误", "retrieved_at": "2026-07-30T10:30:00+08:00",
+            "error_code": "invalid_symbol", "error_message": "代码格式错误",
+        },
+    ])
+
+    response = client.post("/v1/market/quotes/batch", json={"symbols": ["600519", "BAD"], "refresh": True})
+
+    assert response.status_code == 200
+    assert [item["symbol"] for item in response.json()] == ["600519", "BAD"]
+    assert response.json()[0]["price"] == 1500.0
+    assert response.json()[0]["refresh_status"] == "fresh"
+    assert response.json()[1]["refresh_status"] == "failed"
+    assert response.json()[1]["error_code"] == "invalid_symbol"
+
+
+def test_market_quote_failure_falls_back_to_cache_for_only_that_symbol(monkeypatch):
+    store.save_quotes([{
+        "symbol": "01810", "name": "小米集团-W", "price": 29.0, "currency": "HKD",
+        "source": "旧缓存", "retrieved_at": "2026-07-29T15:00:00+08:00",
+    }])
+    monkeypatch.setattr(market_data, "quotes", lambda symbols, force_refresh=False: [
+        {
+            "symbol": "01810", "name": "01810", "price": None, "currency": "HKD",
+            "source": "行情错误", "retrieved_at": "2026-07-30T10:30:00+08:00",
+            "error_code": "upstream_unavailable", "error_message": "港股行情暂不可用",
+        },
+        {
+            "symbol": "600519", "name": "贵州茅台", "price": 1500.0, "currency": "CNY",
+            "source": "刷新行情", "retrieved_at": "2026-07-30T10:30:00+08:00",
+        },
+    ])
+
+    response = client.post("/v1/market/quotes/batch", json={"symbols": ["01810", "600519"], "refresh": True})
+
+    assert response.status_code == 200
+    assert response.json()[0]["price"] == 29.0
+    assert response.json()[0]["refresh_status"] == "stale_fallback"
+    assert response.json()[0]["error_code"] == "upstream_unavailable"
+    assert response.json()[1]["price"] == 1500.0
 
 
 def test_feed_uses_news_adapter(monkeypatch):
