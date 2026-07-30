@@ -245,6 +245,13 @@ class PortfolioStore:
             connection.execute("DELETE FROM holding_drafts")
             connection.execute("DELETE FROM market_quote_cache")
             connection.execute("DELETE FROM symbol_lookup_cache")
+            connection.execute("DELETE FROM personal_rules")
+            connection.execute("DELETE FROM learning_cases")
+            connection.execute("DELETE FROM risk_cache")
+            connection.execute("DELETE FROM portfolio_analysis_cache")
+            connection.execute("DELETE FROM analysis_runs")
+            connection.execute("DELETE FROM ai_analysis_cache")
+            connection.execute("DELETE FROM content_cache")
 
     def admin_summary(self) -> dict[str, int]:
         """Return only aggregate, non-sensitive operational counters for the admin console."""
