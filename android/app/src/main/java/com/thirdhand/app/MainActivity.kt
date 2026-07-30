@@ -411,6 +411,14 @@ private fun QuoteCard(quote: MarketQuoteDto, holding: HoldingDto?) = Card(
     colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
 ) {
     Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+
+
+        val marketTimeText = quote.as_of
+            ?.takeIf { it.isNotBlank() }
+            ?.let { beijingTimestamp(it) }
+            ?: "数据源未提供"
+
+
         Text("${quote.name} · ${quote.symbol}", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
         Row(verticalAlignment = Alignment.Bottom) {
             Text(marketNumber(quote.price), modifier = Modifier.weight(1f), style = MaterialTheme.typography.headlineSmall, color = MaterialTheme.colorScheme.primary, fontWeight = FontWeight.ExtraBold)
@@ -435,10 +443,16 @@ private fun QuoteCard(quote: MarketQuoteDto, holding: HoldingDto?) = Card(
             HoldingMetric("成交量", marketNumber(quote.volume), Modifier.weight(1f))
             HoldingMetric("成交额", marketNumber(quote.amount), Modifier.weight(1f))
         }
+
+
         Text(
-            "${quote.source}｜行情日期：${quote.as_of ?: "未知"}｜获取：${beijingTimestamp(quote.retrieved_at)}",
+            "${quote.source}｜行情时间：$marketTimeText",
             style = MaterialTheme.typography.bodySmall,
         )
+//         Text(
+//             "${quote.source}｜行情日期：${quote.as_of ?: "未知"}｜获取：${beijingTimestamp(quote.retrieved_at)}",
+//             style = MaterialTheme.typography.bodySmall,
+//         )
         if (quote.freshness_note.isNotBlank()) {
             Text(
                 quote.freshness_note,

@@ -16,7 +16,6 @@ from pathlib import Path
 from threading import Event, Lock, Thread
 from typing import Annotated
 from uuid import uuid4
-
 from fastapi import BackgroundTasks, FastAPI, HTTPException, Query, Response, status
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse
@@ -31,6 +30,7 @@ from app.risk import RiskDataUnavailable, RiskService
 from app.ai_analysis import AiAnalysisService
 from app.portfolio_analysis import assess_holdings
 from app.technical_analysis import TechnicalAnalysisService
+from app.trading_calendar import TradingCalendarService
 
 app = FastAPI(title="Third-Hand API", version="0.2.0")
 APP_STARTED_AT = time.monotonic()
@@ -242,6 +242,8 @@ class PersonalRule(PersonalRuleInput):
 
 store = PortfolioStore()
 market_data = MarketDataService()
+trading_calendar = TradingCalendarService()
+
 news_service = NewsService()
 announcement_service = AnnouncementService()
 risk_service = RiskService()
@@ -431,13 +433,61 @@ def refresh_quote_cache(
 
 
 def scheduled_market_refresh_loop() -> None:
-    logger.info("行情定时刷新已启动 interval_seconds=%s", MARKET_REFRESH_INTERVAL_SECONDS)
+    logger.info(
+        "行情定时刷新已启动 interval_seconds=%s",
+        MARKET_REFRESH_INTERVAL_SECONDS,
+    )
+
+    previous_open_symbols: tuple[str, ...] | None = None
+
     while not market_refresh_stop.is_set():
-        symbols = list(dict.fromkeys(str(holding["symbol"]) for holding in store.list()))
-        if symbols:
-            refresh_quote_cache(symbols, force_refresh=True, trigger="scheduler")
+        try:
+            all_symbols = list(
+                dict.fromkeys(
+                    str(holding["symbol"]).strip().upper()
+                    for holding in store.list()
+                    if str(holding.get("symbol", "")).strip()
+                )
+            )
+
+            now = beijing_now()
+
+            # 只保留当前交易所正在开盘的证券。
+            #
+            # 示例：
+            # 600519 -> XSHG 日历
+            # 01810  -> XHKG 日历
+            refreshable_symbols = trading_calendar.open_symbols(
+                all_symbols,
+                moment=now,
+            )
+
+            open_symbols_key = tuple(refreshable_symbols)
+
+            if refreshable_symbols:
+                refresh_quote_cache(
+                    refreshable_symbols,
+                    force_refresh=True,
+                    trigger="scheduler-trading-session",
+                )
+            elif all_symbols and previous_open_symbols != open_symbols_key:
+                # 只在状态发生变化时记录，避免休市期间每分钟刷日志。
+                logger.info(
+                    "当前交易所休市或处于午间休市，跳过行情刷新 now=%s symbols=%s",
+                    now.isoformat(),
+                    ",".join(all_symbols),
+                )
+
+            previous_open_symbols = open_symbols_key
+
+        except Exception:
+            # 日历判断自身发生错误时不应杀死后台线程。
+            # 本轮跳过，下一轮继续尝试。
+            logger.exception("行情定时任务执行异常")
+
         if market_refresh_stop.wait(MARKET_REFRESH_INTERVAL_SECONDS):
             break
+
     logger.info("行情定时刷新已停止")
 
 

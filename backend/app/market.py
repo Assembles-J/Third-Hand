@@ -9,6 +9,7 @@ from datetime import datetime, timedelta
 from threading import Lock
 
 from app.time_utils import beijing_now
+from app.trading_calendar import TradingCalendarService
 
 logger = logging.getLogger(__name__)
 
@@ -27,14 +28,55 @@ class MarketDataService:
     HK_CACHE_SECONDS = 300
     DIRECTORY_CACHE_SECONDS = 6 * 60 * 60
 
-    def __init__(self) -> None:
-        self._cache: dict[str, tuple[float, object, datetime, str]] = {}
-        self._directory_cache: dict[str, tuple[float, object, datetime, str]] = {}
+    def __init__(
+            self,
+            trading_calendar: TradingCalendarService | None = None,
+    ) -> None:
+        self._cache: dict[
+            str,
+            tuple[float, object, datetime, str]
+        ] = {}
+
+        self._directory_cache: dict[
+            str,
+            tuple[float, object, datetime, str]
+        ] = {}
+
         self._lock = Lock()
-        self._provider = os.getenv("THIRD_HAND_MARKET_PROVIDER", "akshare").lower()
-        self._tushare_token = os.getenv("TUSHARE_TOKEN", "").strip()
-        if self._provider not in {"akshare", "tushare", "auto"}:
-            raise ValueError("THIRD_HAND_MARKET_PROVIDER must be akshare, tushare, or auto")
+
+        # 不传参数时自动创建。
+        self._trading_calendar = (
+                trading_calendar
+                or TradingCalendarService()
+        )
+
+        self._provider = os.getenv(
+            "THIRD_HAND_MARKET_PROVIDER",
+            "akshare",
+        ).lower()
+
+        self._tushare_token = os.getenv(
+            "TUSHARE_TOKEN",
+            "",
+        ).strip()
+
+        if self._provider not in {
+            "akshare",
+            "tushare",
+            "auto",
+        }:
+            raise ValueError(
+                "THIRD_HAND_MARKET_PROVIDER must be "
+                "akshare, tushare, or auto"
+            )
+    # def __init__(self) -> None:
+    #     self._cache: dict[str, tuple[float, object, datetime, str]] = {}
+    #     self._directory_cache: dict[str, tuple[float, object, datetime, str]] = {}
+    #     self._lock = Lock()
+    #     self._provider = os.getenv("THIRD_HAND_MARKET_PROVIDER", "akshare").lower()
+    #     self._tushare_token = os.getenv("TUSHARE_TOKEN", "").strip()
+    #     if self._provider not in {"akshare", "tushare", "auto"}:
+    #         raise ValueError("THIRD_HAND_MARKET_PROVIDER must be akshare, tushare, or auto")
 
     def quotes(self, symbols: list[str], force_refresh: bool = False) -> list[dict[str, object]]:
         normalized = list(dict.fromkeys(symbol.strip().upper() for symbol in symbols if symbol.strip()))
@@ -104,6 +146,7 @@ class MarketDataService:
 
     def _tushare_a_quotes(self, symbols: list[str]) -> list[dict[str, object]]:
         """Personal-research A-share end-of-day snapshots; never label as real-time."""
+        retrieved_at = beijing_now()
         try:
             import tushare as ts
         except ImportError as error:
@@ -126,8 +169,13 @@ class MarketDataService:
                     "change": round(close - pre_close, 4), "change_percent": round(float(latest["pct_chg"]), 2),
                     "open": latest.get("open"), "high": latest.get("high"), "low": latest.get("low"),
                     "previous_close": pre_close, "volume": latest.get("vol"), "amount": latest.get("amount"),
-                    "currency": "CNY", "source": "Tushare Pro", "retrieved_at": beijing_now(),
-                    "as_of": str(latest["trade_date"]), "is_realtime": False, "delay_seconds": None,
+                    "currency": "CNY", "source": "Tushare Pro",
+                    "retrieved_at": retrieved_at,
+                    "as_of": self._normalize_as_of_value(
+                        latest["trade_date"],
+                        None,
+                    ),
+                    "is_realtime": False, "delay_seconds": None,
                     "license_scope": "personal-research-only",
                     "freshness_note": "个人研究用盘后日线快照，不是实时行情，也不得用于交易执行。",
                 })
@@ -243,23 +291,182 @@ class MarketDataService:
         return frame, retrieved_at, source
 
     @staticmethod
-    def _from_frame(frame_and_time, symbols: list[str], currency: str, freshness_note: str) -> list[dict[str, object]]:
+    def _normalize_as_of_value(
+            value: object,
+            session_date: str | None,
+    ) -> str | None:
+        if value is None:
+            return None
+
+        text = str(value).strip()
+
+        if not text or text.lower() in {
+            "none",
+            "nan",
+            "nat",
+        }:
+            return None
+
+        # Tushare 的 20260730
+        if re.fullmatch(r"\d{8}", text):
+            return (
+                f"{text[0:4]}-"
+                f"{text[4:6]}-"
+                f"{text[6:8]}"
+            )
+
+        # 上游只提供 10:35 或 10:35:20
+        if re.fullmatch(
+                r"\d{1,2}:\d{2}(?::\d{2})?",
+                text,
+        ):
+            if session_date is None:
+                return None
+
+            normalized_time = (
+                text
+                if text.count(":") == 2
+                else f"{text}:00"
+            )
+
+            return (
+                f"{session_date}"
+                f"T{normalized_time}"
+                f"+08:00"
+            )
+
+        # 2026-07-30 10:35:20
+        if re.fullmatch(
+                r"\d{4}-\d{2}-\d{2} "
+                r"\d{2}:\d{2}:\d{2}",
+                text,
+        ):
+            return text.replace(" ", "T") + "+08:00"
+
+        # 日期或已经带时区的 ISO 时间，原样保留。
+        return text
+
+    def _market_as_of(
+            self,
+            record: dict[str, object],
+            symbol: str,
+            retrieved_at: datetime,
+    ) -> str | None:
+        """
+        优先使用行情源提供的时间。
+
+        行情源没有具体时间时，退回最近交易日，
+        但绝不把数据库写入时间伪装成行情时间。
+        """
+        session_date = (
+            self._trading_calendar
+            .latest_symbol_session_date(
+                symbol,
+                retrieved_at,
+            )
+        )
+
+        candidate_columns = (
+            "更新时间",
+            "最新时间",
+            "交易时间",
+            "行情时间",
+            "成交时间",
+            "时间",
+            "日期",
+        )
+
+        for column in candidate_columns:
+            if column not in record:
+                continue
+
+            normalized = self._normalize_as_of_value(
+                record.get(column),
+                session_date,
+            )
+
+            if normalized is not None:
+                return normalized
+
+        # 批量实时行情接口经常不返回精确时间。
+        # 此时只返回真实的最近交易日。
+        return session_date
+
+    def _from_frame(
+            self,
+            frame_and_time,
+            symbols: list[str],
+            currency: str,
+            freshness_note: str,
+    ) -> list[dict[str, object]]:
         frame, retrieved_at, source = frame_and_time
+
         try:
             data = frame.copy()
-            data["代码"] = data["代码"].astype(str).str.zfill(5 if currency == "HKD" else 6)
-            records = data[data["代码"].isin(symbols)].to_dict("records")
+
+            code_width = (
+                5
+                if currency == "HKD"
+                else 6
+            )
+
+            data["代码"] = (
+                data["代码"]
+                .astype(str)
+                .str.zfill(code_width)
+            )
+
+            records = data[
+                data["代码"].isin(symbols)
+            ].to_dict("records")
+
         except (AttributeError, KeyError) as error:
-            raise MarketDataUnavailable("行情源字段已变更，等待适配更新。") from error
-        return [{
-            "symbol": record["代码"], "name": record.get("名称", record.get("中文名称", "")), "price": record.get("最新价"),
-            "change": record.get("涨跌额"), "change_percent": record.get("涨跌幅"), "open": record.get("今开"),
-            "high": record.get("最高"), "low": record.get("最低"), "previous_close": record.get("昨收"),
-            "volume": record.get("成交量"), "amount": record.get("成交额"), "currency": currency,
-            "source": source, "retrieved_at": retrieved_at, "freshness_note": freshness_note,
-            "as_of": retrieved_at.date().isoformat(), "is_realtime": False, "delay_seconds": None,
-            "license_scope": "public-source-review-required",
-        } for record in records]
+            raise MarketDataUnavailable(
+                "行情源字段已变更，等待适配更新。"
+            ) from error
+
+        results: list[dict[str, object]] = []
+
+        for record in records:
+            symbol = str(record["代码"])
+
+            results.append({
+                "symbol": symbol,
+                "name": record.get(
+                    "名称",
+                    record.get("中文名称", ""),
+                ),
+                "price": record.get("最新价"),
+                "change": record.get("涨跌额"),
+                "change_percent": record.get("涨跌幅"),
+                "open": record.get("今开"),
+                "high": record.get("最高"),
+                "low": record.get("最低"),
+                "previous_close": record.get("昨收"),
+                "volume": record.get("成交量"),
+                "amount": record.get("成交额"),
+                "currency": currency,
+                "source": source,
+
+                # 服务器实际获取时间，保留用于诊断，
+                # 但移动端不再展示。
+                "retrieved_at": retrieved_at,
+
+                # 行情自身的时间或所属交易日。
+                "as_of": self._market_as_of(
+                    record,
+                    symbol,
+                    retrieved_at,
+                ),
+
+                "freshness_note": freshness_note,
+                "is_realtime": False,
+                "delay_seconds": None,
+                "license_scope":
+                    "public-source-review-required",
+            })
+
+        return results
 
     @staticmethod
     def _lookup_from_frame(frame_and_time, names: list[str], market: str, currency: str) -> list[dict[str, str]]:
