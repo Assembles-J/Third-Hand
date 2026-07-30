@@ -103,8 +103,17 @@ private fun ThirdHandApp() {
     val context = LocalContext.current
     var themeMode by remember { mutableStateOf(ThemeStore.load(context)) }
     var tab by remember { mutableIntStateOf(0) }
+    var startupUpdate by remember { mutableStateOf<AppUpdate?>(null) }
+    var updateMessage by remember { mutableStateOf<String?>(null) }
     val labels = listOf("今日", "持仓", "消息", "我的", "管理")
     val icons = listOf(Icons.Filled.AutoGraph, Icons.Filled.Wallet, Icons.AutoMirrored.Filled.Article, Icons.Filled.AccountCircle, Icons.Filled.AdminPanelSettings)
+    LaunchedEffect(Unit) {
+        try {
+            startupUpdate = AppUpdateManager.check(context)
+        } catch (_: Exception) {
+            // A failed update check must never block the main application.
+        }
+    }
     ThirdHandTheme(themeMode) {
         Scaffold(
             bottomBar = {
@@ -132,6 +141,28 @@ private fun ThirdHandApp() {
                     else -> AdminDashboardScreen()
                 }
             }
+        }
+        startupUpdate?.let { update ->
+            AlertDialog(
+                onDismissRequest = { startupUpdate = null },
+                title = { Text("发现新版本 ${update.versionName}") },
+                text = {
+                    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                        Text(update.changelog.ifBlank { "已准备好新版本，建议更新后继续使用。" })
+                        updateMessage?.let { Text(it, color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.bodySmall) }
+                    }
+                },
+                dismissButton = { TextButton(onClick = { startupUpdate = null }) { Text("稍后") } },
+                confirmButton = {
+                    TextButton(onClick = {
+                        if (AppUpdateManager.downloadAndInstall(context, update)) {
+                            startupUpdate = null
+                        } else {
+                            updateMessage = "请允许此应用安装未知来源应用，返回后再次点击更新"
+                        }
+                    }) { Text("下载并安装") }
+                },
+            )
         }
     }
 }
