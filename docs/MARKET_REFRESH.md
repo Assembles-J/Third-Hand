@@ -36,19 +36,30 @@ TUSHARE_TOKEN=
 
 ## 接口
 
-读取缓存并触发后台更新：
+Android 和新客户端使用 POST JSON 批量请求，证券代码不再全部拼进 URL：
 
 ```bash
-curl -sS \
-  'https://groupim.cn/third-hand/v1/market/quotes?symbols=01810'
+curl -sS -X POST \
+  'https://groupim.cn/third-hand/v1/market/quotes/batch' \
+  -H 'Content-Type: application/json' \
+  -d '{"symbols":["01810","600519","BAD"],"refresh":true}'
 ```
 
-绕过内存缓存并同步刷新：
+响应始终按请求顺序返回，一只代码无效或上游失败不会让整批请求返回 503。旧的
+`GET /v1/market/quotes?symbols=...` 暂时保留用于兼容。
+
+通过名称反查证券代码：
 
 ```bash
-curl -sS \
-  'https://groupim.cn/third-hand/v1/market/quotes?symbols=01810&refresh=true'
+curl -sS -X POST \
+  'https://groupim.cn/third-hand/v1/market/symbols/resolve' \
+  -H 'Content-Type: application/json' \
+  -d '{"names":["贵州茅台","小米集团-W"]}'
 ```
+
+名称反查使用 AKShare 的 `stock_info_a_code_name()` A 股代码表；ETF 和港股代码表
+按市场独立查询。某一个市场的数据源异常时，其他市场仍会继续匹配，并通过
+`lookup_status`、`lookup_message` 返回本条查询状态。
 
 查看后端定时任务状态：
 
@@ -78,6 +89,7 @@ curl -sS \
 | `fresh` | 本次请求成功访问行情服务并写入缓存 |
 | `cached_refreshing` | 先返回 SQLite 缓存，后台正在更新 |
 | `stale_fallback` | 上游刷新失败，当前展示上次成功缓存 |
+| `failed` | 该代码没有可用缓存且本次获取失败；其他代码不受影响 |
 
 `fresh` 只表示本次上游请求成功，不代表交易所正在开市。还必须检查：
 
@@ -85,6 +97,7 @@ curl -sS \
 - `as_of`：行情所属日期；
 - `retrieved_at`：后端抓取时间；
 - `freshness_note`：是否为实时快照或盘后回退。
+- `error_code`、`error_message`：该代码本次刷新失败的机器码与说明。
 
 ## 日志排查
 

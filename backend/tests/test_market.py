@@ -5,7 +5,7 @@ from types import SimpleNamespace
 import pandas as pd
 import pytest
 
-from app.market import MarketDataService
+from app.market import MarketDataService, MarketDataUnavailable
 from app.time_utils import BEIJING_TIMEZONE
 
 
@@ -80,3 +80,59 @@ def test_force_refresh_bypasses_in_memory_market_frame(monkeypatch):
     assert float(frame.iloc[0]["最新价"]) == 1500.0
     assert retrieved_at > datetime(2026, 7, 29, 15, 0, tzinfo=BEIJING_TIMEZONE)
     assert source == "东方财富 / AKShare"
+
+
+def test_invalid_symbol_does_not_discard_valid_quote():
+    service = MarketDataService()
+    service._provider = "akshare"
+    service._public_a_quotes = lambda stocks, etfs, note, force_refresh=False: [{
+        "symbol": "600519",
+        "name": "贵州茅台",
+        "price": 1500.0,
+        "currency": "CNY",
+        "source": "测试行情",
+        "retrieved_at": datetime(2026, 7, 30, 10, 30, tzinfo=BEIJING_TIMEZONE),
+    }]
+
+    quotes = service.quotes(["600519", "BAD"])
+
+    assert [quote["symbol"] for quote in quotes] == ["600519", "BAD"]
+    assert quotes[0]["price"] == 1500.0
+    assert quotes[1]["error_code"] == "invalid_symbol"
+
+
+def test_a_share_name_lookup_uses_dedicated_code_directory(monkeypatch):
+    service = MarketDataService()
+    monkeypatch.setitem(
+        __import__("sys").modules,
+        "akshare",
+        SimpleNamespace(stock_info_a_code_name=lambda: pd.DataFrame([{"code": "600519", "name": "贵州茅台"}])),
+    )
+
+    frame, _, source = service._directory_frame("a")
+
+    assert frame.iloc[0]["代码"] == "600519"
+    assert frame.iloc[0]["名称"] == "贵州茅台"
+    assert source == "AKShare A 股代码表"
+
+
+def test_name_lookup_continues_when_one_market_directory_fails():
+    service = MarketDataService()
+    a_directory = (
+        pd.DataFrame([{"代码": "600519", "名称": "贵州茅台"}]),
+        datetime(2026, 7, 30, 10, 30, tzinfo=BEIJING_TIMEZONE),
+        "A 股代码表",
+    )
+
+    def directory(market):
+        if market == "a":
+            return a_directory
+        raise MarketDataUnavailable(f"{market} 代码表失败", "symbol_directory_unavailable")
+
+    service._directory_frame = directory
+
+    results = service.lookup_symbols(["贵州茅台", "不存在"])
+
+    assert results[0]["matches"][0]["symbol"] == "600519"
+    assert results[0]["lookup_status"] == "matched"
+    assert results[1]["lookup_status"] == "partial_failure"

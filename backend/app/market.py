@@ -87,40 +87,92 @@ class MarketDataService:
         invalid_symbols = [symbol for symbol in normalized if symbol not in hk_symbols and symbol not in a_symbols]
         quotes: list[dict[str, object]] = []
         if hk_symbols:
-            quotes.extend(self._hk_quotes(hk_symbols, force_refresh=force_refresh))
+            quotes.extend(self._safe_quotes(
+                hk_symbols,
+                lambda: self._hk_quotes(hk_symbols, force_refresh=force_refresh),
+            ))
         if a_symbols:
             etf_symbols = [symbol for symbol in a_symbols if symbol.startswith(("15", "16", "51", "56", "58"))]
             stock_symbols = [symbol for symbol in a_symbols if symbol not in etf_symbols]
             if self._provider == "tushare":
-                quotes.extend(self._tushare_a_quotes(a_symbols))
+                quotes.extend(self._safe_quotes(a_symbols, lambda: self._tushare_a_quotes(a_symbols)))
             elif self._provider == "auto":
-                try:
-                    quotes.extend(self._public_a_quotes(
-                        stock_symbols,
-                        etf_symbols,
-                        "公开实时快照，不应用于交易执行。",
-                        force_refresh=force_refresh,
-                    ))
-                except MarketDataUnavailable as public_error:
-                    if not self._tushare_token:
-                        raise
-                    logger.warning("公开 A 股行情不可用，回退 Tushare 盘后日线：%s", public_error)
-                    quotes.extend(self._tushare_a_quotes(a_symbols))
+                for group, market in ((stock_symbols, "a"), (etf_symbols, "etf")):
+                    if group:
+                        quotes.extend(self._auto_a_quotes(group, market, force_refresh))
             else:
-                quotes.extend(self._public_a_quotes(
-                    stock_symbols,
-                    etf_symbols,
-                    "公开实时快照，不应用于交易执行。",
-                    force_refresh=force_refresh,
-                ))
+                if stock_symbols:
+                    quotes.extend(self._safe_quotes(
+                        stock_symbols,
+                        lambda: self._public_a_quotes(
+                            stock_symbols, [], "公开实时快照，不应用于交易执行。", force_refresh
+                        ),
+                    ))
+                if etf_symbols:
+                    quotes.extend(self._safe_quotes(
+                        etf_symbols,
+                        lambda: self._public_a_quotes(
+                            [], etf_symbols, "公开实时快照，不应用于交易执行。", force_refresh
+                        ),
+                    ))
         returned = {str(quote["symbol"]) for quote in quotes}
         for symbol in normalized:
             if symbol not in returned:
                 reason = "证券代码应为 6 位 A 股/ETF 或 5 位港股代码。" if symbol in invalid_symbols else "未找到该代码的行情；请核对证券代码或稍后重试。"
-                quotes.append({"symbol": symbol, "name": symbol, "price": None, "change": None, "change_percent": None,
-                    "currency": "CNY", "source": "代码校验", "retrieved_at": beijing_now(), "as_of": None,
-                    "is_realtime": False, "delay_seconds": None, "license_scope": "n/a", "freshness_note": reason})
-        return quotes
+                quotes.append(self._failure_quote(
+                    symbol,
+                    "invalid_symbol" if symbol in invalid_symbols else "symbol_not_found",
+                    reason,
+                ))
+        by_symbol = {str(quote["symbol"]): quote for quote in quotes}
+        return [by_symbol[symbol] for symbol in normalized]
+
+    def _auto_a_quotes(self, symbols: list[str], market: str, force_refresh: bool) -> list[dict[str, object]]:
+        try:
+            return self._public_a_quotes(
+                symbols if market == "a" else [],
+                symbols if market == "etf" else [],
+                "公开实时快照，不应用于交易执行。",
+                force_refresh,
+            )
+        except MarketDataUnavailable as public_error:
+            if not self._tushare_token:
+                return [self._failure_quote(symbol, public_error.code, str(public_error)) for symbol in symbols]
+            logger.warning("公开 %s 行情不可用，回退 Tushare 盘后日线：%s", market, public_error)
+            return self._safe_quotes(symbols, lambda: self._tushare_a_quotes(symbols))
+
+    def _safe_quotes(self, symbols: list[str], fetcher) -> list[dict[str, object]]:
+        try:
+            return fetcher()
+        except MarketDataUnavailable as error:
+            logger.warning("行情分组获取失败 symbols=%s code=%s error=%s", ",".join(symbols), error.code, error)
+            return [self._failure_quote(symbol, error.code, str(error)) for symbol in symbols]
+        except Exception as error:
+            logger.exception("行情分组获取异常 symbols=%s", ",".join(symbols))
+            return [
+                self._failure_quote(symbol, "unexpected_upstream_error", "行情源暂时不可用，请稍后刷新。")
+                for symbol in symbols
+            ]
+
+    @staticmethod
+    def _failure_quote(symbol: str, code: str, message: str) -> dict[str, object]:
+        return {
+            "symbol": symbol,
+            "name": symbol,
+            "price": None,
+            "change": None,
+            "change_percent": None,
+            "currency": "HKD" if MarketDataService._is_hk(symbol) else "CNY",
+            "source": "行情错误",
+            "retrieved_at": beijing_now(),
+            "as_of": None,
+            "is_realtime": False,
+            "delay_seconds": None,
+            "license_scope": "n/a",
+            "freshness_note": message,
+            "error_code": code,
+            "error_message": message,
+        }
 
     def _public_a_quotes(
         self,
@@ -210,6 +262,13 @@ class MarketDataService:
         for symbol in missing:
             try:
                 data = ak.stock_hk_daily(symbol=symbol)
+                if data is None or data.empty:
+                    quotes.append(self._failure_quote(
+                        symbol,
+                        "symbol_not_found",
+                        "未找到该港股代码的行情，请核对代码。",
+                    ))
+                    continue
                 latest = data.iloc[-1]
                 previous = data.iloc[-2] if len(data.index) > 1 else None
                 price = float(latest["close"])
@@ -225,7 +284,12 @@ class MarketDataService:
                     "freshness_note": "实时快照暂不可用，当前为最近交易日收盘数据。",
                 })
             except Exception as error:
-                raise MarketDataUnavailable("港股行情源暂时不可用，请稍后刷新。") from error
+                logger.warning("单只港股行情获取失败 symbol=%s error=%s", symbol, error)
+                quotes.append(self._failure_quote(
+                    symbol,
+                    "upstream_unavailable",
+                    "该港股行情暂时不可用，请稍后刷新。",
+                ))
         return quotes
 
     def lookup_symbols(self, names: list[str]) -> list[dict[str, object]]:
@@ -234,10 +298,26 @@ class MarketDataService:
         if not requested:
             return []
         matches = {name: [] for name in requested}
+        errors: list[str] = []
         for market, currency in (("a", "CNY"), ("etf", "CNY"), ("hk", "HKD")):
-            for record in self._lookup_from_frame(self._directory_frame(market), requested, market, currency):
+            try:
+                records = self._lookup_from_frame(self._directory_frame(market), requested, market, currency)
+            except MarketDataUnavailable as error:
+                logger.warning("证券代码表获取失败 market=%s code=%s error=%s", market, error.code, error)
+                errors.append(f"{market}: {error}")
+                continue
+            for record in records:
                 matches[record.pop("query")].append(record)
-        return [{"query": name, "matches": matches[name]} for name in requested]
+        return [{
+            "query": name,
+            "matches": matches[name],
+            "lookup_status": "matched" if matches[name] else ("partial_failure" if errors else "not_found"),
+            "lookup_message": (
+                f"找到 {len(matches[name])} 个候选代码。"
+                if matches[name]
+                else ("部分代码表暂不可用，未找到匹配项。" if errors else "未找到匹配的证券代码。")
+            ),
+        } for name in requested]
 
     @staticmethod
     def _is_hk(symbol: str) -> bool:
@@ -285,7 +365,21 @@ class MarketDataService:
             cached = self._directory_cache.get(market)
             if cached and time.monotonic() - cached[0] < self.DIRECTORY_CACHE_SECONDS:
                 return cached[1], cached[2], cached[3]
-        frame, retrieved_at, source = self._frame(market)
+        if market == "a":
+            try:
+                import akshare as ak
+                frame = ak.stock_info_a_code_name().rename(columns={"code": "代码", "name": "名称"})
+            except ImportError as error:
+                raise MarketDataUnavailable(
+                    "未安装 AKShare，请在 backend 虚拟环境运行 pip install -r requirements.txt。",
+                    "akshare_not_installed",
+                ) from error
+            except Exception as error:
+                raise MarketDataUnavailable("A 股代码表暂时不可用，请稍后重试。", "symbol_directory_unavailable") from error
+            retrieved_at = beijing_now()
+            source = "AKShare A 股代码表"
+        else:
+            frame, retrieved_at, source = self._frame(market)
         with self._lock:
             self._directory_cache[market] = (time.monotonic(), frame, retrieved_at, source)
         return frame, retrieved_at, source

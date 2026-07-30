@@ -315,7 +315,7 @@ private fun TodayScreen() {
             }
             try {
                 val symbols = holdings.map { it.symbol }
-                quotes = api.quotes(symbols, refresh = forceQuotes)
+                quotes = api.quotes(MarketQuoteBatchRequestDto(symbols, refresh = forceQuotes))
                 refreshMessage = when {
                     quotes.any { it.refresh_status == "stale_fallback" } -> "刷新失败，当前显示上次成功获取的行情"
                     forceQuotes -> "行情已主动刷新"
@@ -342,7 +342,7 @@ private fun TodayScreen() {
         while (true) {
             delay(60_000)
             try {
-                quotes = api.quotes(holdings.map { it.symbol }, refresh = false)
+                quotes = api.quotes(MarketQuoteBatchRequestDto(holdings.map { it.symbol }))
                 refreshMessage = if (quotes.any { it.refresh_status == "stale_fallback" }) {
                     "自动刷新失败，继续显示上次行情"
                 } else {
@@ -666,7 +666,7 @@ private fun HoldingsScreen() {
             error = null
             quoteError = null
             quotesBySymbol = if (holdings.isEmpty()) emptyMap() else try {
-                api.quotes(holdings.map { it.symbol }, refresh = true).associateBy { it.symbol }
+                api.quotes(MarketQuoteBatchRequestDto(holdings.map { it.symbol }, refresh = true)).associateBy { it.symbol }
             } catch (exception: Exception) {
                 quoteError = "现价暂不可用；成本与持仓信息仍可查看。"
                 emptyMap()
@@ -1104,7 +1104,7 @@ private fun AddHoldingDialog(
                     lookupMessage = null
                     candidates = emptyList()
                     try {
-                        candidates = api.symbolLookup(listOf(name)).firstOrNull()?.matches.orEmpty()
+                        candidates = api.symbolLookup(SymbolResolveRequestDto(listOf(name))).firstOrNull()?.matches.orEmpty()
                         if (candidates.isEmpty()) lookupMessage = "没有找到候选证券，请检查名称。"
                     } catch (exception: Exception) {
                         lookupMessage = "代码查询失败，请稍后重试。"
