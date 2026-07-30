@@ -316,21 +316,36 @@ def download_app_update() -> FileResponse:
         apk,
         media_type="application/vnd.android.package-archive",
         filename=apk.name,
-        headers={"Cache-Control": "no-store"},
+        headers={"Cache-Control": "public, max-age=31536000, immutable"},
     )
 
 
-@app.get("/v1/app-update", response_model=AppUpdate, responses={204: {"description": "No update configured"}})
-def app_update() -> Response | AppUpdate:
-    """Return metadata for the APK served by this API deployment."""
+def configured_update_url(apk: Path) -> str | None:
+    """Prefer a dedicated static-download origin, while preserving the API fallback."""
+    download_base_url = os.getenv("APP_UPDATE_PUBLIC_BASE_URL", "").strip().rstrip("/")
+    if download_base_url:
+        if not download_base_url.startswith("https://"):
+            return None
+        return f"{download_base_url}/{apk.name}"
+
     public_base_url = os.getenv("APP_PUBLIC_BASE_URL", "").strip().rstrip("/")
+    if not public_base_url.startswith("https://"):
+        return None
+    return f"{public_base_url}/v1/app-update/apk"
+
+
+@app.get("/v1/app-update", response_model=AppUpdate, responses={204: {"description": "No update configured"}})
+def app_update(response: Response) -> Response | AppUpdate:
+    """Return fresh metadata; the versioned APK itself may be cached indefinitely."""
+    response.headers["Cache-Control"] = "no-store"
     apk = configured_release_apk()
-    if apk is None or not public_base_url.startswith("https://"):
-        return Response(status_code=status.HTTP_204_NO_CONTENT)
+    apk_url = configured_update_url(apk) if apk is not None else None
+    if apk is None or apk_url is None:
+        return Response(status_code=status.HTTP_204_NO_CONTENT, headers={"Cache-Control": "no-store"})
     return AppUpdate(
         version_code=int(os.getenv("APP_UPDATE_VERSION_CODE", "1")),
         version_name=os.getenv("APP_UPDATE_VERSION_NAME", "0.1.0"),
-        apk_url=f"{public_base_url}/v1/app-update/apk",
+        apk_url=apk_url,
         changelog=os.getenv("APP_UPDATE_CHANGELOG", ""),
         sha256=apk_sha256(apk),
         size_bytes=apk.stat().st_size,
