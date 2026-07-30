@@ -8,11 +8,12 @@ from __future__ import annotations
 import csv
 import hashlib
 import io
+import logging
 import os
 import time
 from datetime import datetime
 from pathlib import Path
-from threading import Thread
+from threading import Event, Lock, Thread
 from typing import Annotated
 from uuid import uuid4
 
@@ -33,6 +34,30 @@ from app.technical_analysis import TechnicalAnalysisService
 
 app = FastAPI(title="Third-Hand API", version="0.2.0")
 APP_STARTED_AT = time.monotonic()
+logger = logging.getLogger(__name__)
+
+
+def positive_environment_integer(name: str, default: int, minimum: int) -> int:
+    try:
+        return max(minimum, int(os.getenv(name, str(default))))
+    except ValueError:
+        logger.warning("%s 不是有效整数，使用默认值 %s", name, default)
+        return default
+
+
+MARKET_REFRESH_ENABLED = os.getenv("MARKET_REFRESH_ENABLED", "true").lower() not in {"0", "false", "no"}
+MARKET_REFRESH_INTERVAL_SECONDS = positive_environment_integer("MARKET_REFRESH_INTERVAL_SECONDS", 60, 30)
+market_refresh_stop = Event()
+market_refresh_thread: Thread | None = None
+market_refresh_state_lock = Lock()
+market_refresh_state: dict[str, object] = {
+    "last_attempt_at": None,
+    "last_success_at": None,
+    "last_error": None,
+    "last_trigger": None,
+    "symbols": [],
+    "result_count": 0,
+}
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["http://localhost", "http://127.0.0.1"],
@@ -158,6 +183,18 @@ class MarketQuote(BaseModel):
     license_scope: str = "unknown"
     freshness_note: str = ""
     refresh_status: str = "fresh"
+
+
+class MarketRefreshStatus(BaseModel):
+    enabled: bool
+    interval_seconds: int
+    worker_running: bool
+    last_attempt_at: datetime | None = None
+    last_success_at: datetime | None = None
+    last_error: str | None = None
+    last_trigger: str | None = None
+    symbols: list[str] = Field(default_factory=list)
+    result_count: int = 0
 
 
 class RiskAssessment(BaseModel):
@@ -340,11 +377,68 @@ def announcements(
         raise HTTPException(status_code=503, detail=str(error)) from error
 
 
-def refresh_quote_cache(symbols: list[str]) -> None:
+def fetch_and_store_quotes(
+    symbols: list[str],
+    *,
+    force_refresh: bool,
+    trigger: str,
+) -> list[dict[str, object]]:
+    attempted_at = beijing_now()
+    with market_refresh_state_lock:
+        market_refresh_state.update({
+            "last_attempt_at": attempted_at,
+            "last_trigger": trigger,
+            "symbols": list(symbols),
+        })
     try:
-        store.save_quotes(market_data.quotes(symbols))
-    except MarketDataUnavailable:
-        pass
+        quotes = market_data.quotes(symbols, force_refresh=force_refresh)
+        store.save_quotes(quotes)
+    except Exception as error:
+        with market_refresh_state_lock:
+            market_refresh_state["last_error"] = f"{type(error).__name__}: {error}"
+            market_refresh_state["result_count"] = 0
+        if isinstance(error, MarketDataUnavailable):
+            logger.warning(
+                "行情刷新失败 trigger=%s symbols=%s code=%s error=%s",
+                trigger,
+                ",".join(symbols),
+                error.code,
+                error,
+            )
+        else:
+            logger.exception("行情刷新异常 trigger=%s symbols=%s", trigger, ",".join(symbols))
+        raise
+    with market_refresh_state_lock:
+        market_refresh_state.update({
+            "last_success_at": beijing_now(),
+            "last_error": None,
+            "result_count": len(quotes),
+        })
+    logger.info("行情刷新成功 trigger=%s symbols=%s count=%s", trigger, ",".join(symbols), len(quotes))
+    return quotes
+
+
+def refresh_quote_cache(
+    symbols: list[str],
+    force_refresh: bool = False,
+    trigger: str = "request-background",
+) -> None:
+    try:
+        fetch_and_store_quotes(symbols, force_refresh=force_refresh, trigger=trigger)
+    except Exception:
+        # The failure and its upstream code have already been recorded and logged.
+        return
+
+
+def scheduled_market_refresh_loop() -> None:
+    logger.info("行情定时刷新已启动 interval_seconds=%s", MARKET_REFRESH_INTERVAL_SECONDS)
+    while not market_refresh_stop.is_set():
+        symbols = list(dict.fromkeys(str(holding["symbol"]) for holding in store.list()))
+        if symbols:
+            refresh_quote_cache(symbols, force_refresh=True, trigger="scheduler")
+        if market_refresh_stop.wait(MARKET_REFRESH_INTERVAL_SECONDS):
+            break
+    logger.info("行情定时刷新已停止")
 
 
 def resolve_holding_drafts(draft_ids: list[str]) -> None:
@@ -378,11 +472,21 @@ def resolve_holding_drafts(draft_ids: list[str]) -> None:
 
 
 @app.on_event("startup")
-def resume_draft_lookups() -> None:
-    """Resume work persisted before an API container restart."""
+def resume_background_work() -> None:
+    """Resume persisted lookups and start the server-side quote refresh worker."""
+    global market_refresh_thread
     draft_ids = store.draft_ids_needing_lookup()
     if draft_ids:
         Thread(target=resolve_holding_drafts, args=(draft_ids,), daemon=True).start()
+    if MARKET_REFRESH_ENABLED and (market_refresh_thread is None or not market_refresh_thread.is_alive()):
+        market_refresh_stop.clear()
+        market_refresh_thread = Thread(target=scheduled_market_refresh_loop, daemon=True, name="market-refresh")
+        market_refresh_thread.start()
+
+
+@app.on_event("shutdown")
+def stop_background_work() -> None:
+    market_refresh_stop.set()
 
 
 @app.get("/v1/market/quotes", response_model=list[MarketQuote])
@@ -398,8 +502,11 @@ def market_quotes(
     has_complete_cache = cached_symbols.issuperset(requested)
     if refresh or not has_complete_cache:
         try:
-            quotes = market_data.quotes(requested)
-            store.save_quotes(quotes)
+            quotes = fetch_and_store_quotes(
+                requested,
+                force_refresh=refresh,
+                trigger="request-forced" if refresh else "request-cache-miss",
+            )
             return [MarketQuote.model_validate({**item, "refresh_status": "fresh"}) for item in quotes]
         except MarketDataUnavailable as error:
             if not cached:
@@ -411,9 +518,21 @@ def market_quotes(
             } for item in cached]
             return [MarketQuote.model_validate(item) for item in stale]
     if cached:
-        background_tasks.add_task(refresh_quote_cache, requested)
+        background_tasks.add_task(refresh_quote_cache, requested, False, "request-background")
         return [MarketQuote.model_validate({**item, "refresh_status": "cached_refreshing"}) for item in cached]
     return []
+
+
+@app.get("/v1/market/refresh-status", response_model=MarketRefreshStatus)
+def market_refresh_status() -> MarketRefreshStatus:
+    with market_refresh_state_lock:
+        snapshot = dict(market_refresh_state)
+    return MarketRefreshStatus(
+        enabled=MARKET_REFRESH_ENABLED,
+        interval_seconds=MARKET_REFRESH_INTERVAL_SECONDS,
+        worker_running=bool(market_refresh_thread and market_refresh_thread.is_alive()),
+        **snapshot,
+    )
 
 
 @app.get("/v1/market/symbols", response_model=list[SymbolLookupResult])

@@ -179,7 +179,7 @@ def test_risk_assessments_are_returned_for_confirmed_holdings(monkeypatch):
 
 
 def test_market_quote_uses_adapter_and_exposes_freshness_metadata(monkeypatch):
-    monkeypatch.setattr(market_data, "quotes", lambda symbols: [{
+    monkeypatch.setattr(market_data, "quotes", lambda symbols, force_refresh=False: [{
         "symbol": "01810", "price": 45.5, "currency": "HKD", "as_of": "2026-07-28",
         "is_realtime": False, "license_scope": "public-source-review-required",
     }])
@@ -195,7 +195,7 @@ def test_market_quote_force_refresh_replaces_saved_snapshot(monkeypatch):
         "symbol": "01810", "price": 29.0, "currency": "HKD", "as_of": "2026-07-29",
         "source": "旧缓存", "retrieved_at": "2026-07-29T15:00:00+08:00",
     }])
-    monkeypatch.setattr(market_data, "quotes", lambda symbols: [{
+    monkeypatch.setattr(market_data, "quotes", lambda symbols, force_refresh=False: [{
         "symbol": "01810", "price": 30.5, "currency": "HKD", "as_of": "2026-07-30",
         "source": "刷新行情", "retrieved_at": "2026-07-30T10:30:00+08:00",
     }])
@@ -206,6 +206,10 @@ def test_market_quote_force_refresh_replaces_saved_snapshot(monkeypatch):
     assert response.json()[0]["price"] == 30.5
     assert response.json()[0]["as_of"] == "2026-07-30"
     assert response.json()[0]["refresh_status"] == "fresh"
+    refresh_status = client.get("/v1/market/refresh-status").json()
+    assert refresh_status["last_trigger"] == "request-forced"
+    assert refresh_status["last_error"] is None
+    assert refresh_status["symbols"] == ["01810"]
 
 
 def test_feed_uses_news_adapter(monkeypatch):
