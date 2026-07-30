@@ -342,11 +342,11 @@ private fun TodayScreen() {
         while (true) {
             delay(60_000)
             try {
-                quotes = api.quotes(holdings.map { it.symbol }, refresh = true)
+                quotes = api.quotes(holdings.map { it.symbol }, refresh = false)
                 refreshMessage = if (quotes.any { it.refresh_status == "stale_fallback" }) {
                     "自动刷新失败，继续显示上次行情"
                 } else {
-                    "行情已自动更新"
+                    "已同步服务器最新行情"
                 }
             } catch (_: Exception) {
                 refreshMessage = "自动刷新失败，继续显示上次行情"

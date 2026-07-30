@@ -9,6 +9,11 @@ on:
         description: Git ref to deploy
         required: true
         default: main
+      release_android:
+        description: Build and publish a new signed Android APK
+        required: true
+        type: boolean
+        default: false
 
 permissions:
   contents: read
@@ -19,7 +24,7 @@ concurrency:
 
 jobs:
   deploy:
-    name: Build signed APK and deploy
+    name: Deploy backend and optional signed APK
     runs-on: ubuntu-latest
     environment: production
     env:
@@ -35,17 +40,53 @@ jobs:
       - uses: actions/checkout@v4
         with:
           ref: ${{ inputs.ref || github.ref }}
+          fetch-depth: 0
+
+      - name: Detect Android release scope
+        id: release_scope
+        shell: bash
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          BEFORE_SHA: ${{ github.event.before }}
+          FORCE_ANDROID_RELEASE: ${{ inputs.release_android || false }}
+        run: |
+          set -eu
+          release_android=false
+          if [ "$EVENT_NAME" = "workflow_dispatch" ]; then
+            release_android="$FORCE_ANDROID_RELEASE"
+          elif [ -z "$BEFORE_SHA" ] || [ "$BEFORE_SHA" = "0000000000000000000000000000000000000000" ]; then
+            if git show --format= --name-only "$GITHUB_SHA" | grep -q '^android/'; then
+              release_android=true
+            fi
+          elif ! git diff --quiet "$BEFORE_SHA" "$GITHUB_SHA" -- android/; then
+            release_android=true
+          fi
+          echo "release_android=$release_android" >> "$GITHUB_OUTPUT"
+          echo "Android release required: $release_android"
+
+      - name: Validate public deployment URL
+        shell: bash
+        run: |
+          set -eu
+          case "$APP_PUBLIC_BASE_URL" in
+            https://*) ;;
+            *) echo "APP_PUBLIC_BASE_URL must be an HTTPS URL"; exit 1 ;;
+          esac
 
       - uses: actions/setup-java@v4
+        if: steps.release_scope.outputs.release_android == 'true'
         with:
           distribution: temurin
           java-version: '17'
 
       - uses: android-actions/setup-android@v3
+        if: steps.release_scope.outputs.release_android == 'true'
 
       - uses: gradle/actions/setup-gradle@v4
+        if: steps.release_scope.outputs.release_android == 'true'
 
-      - name: Validate release configuration
+      - name: Validate Android release configuration
+        if: steps.release_scope.outputs.release_android == 'true'
         shell: bash
         run: |
           set -eu
@@ -53,12 +94,9 @@ jobs:
           test -n "$ANDROID_KEYSTORE_PASSWORD"
           test -n "$ANDROID_KEY_ALIAS"
           test -n "$ANDROID_KEY_PASSWORD"
-          case "$APP_PUBLIC_BASE_URL" in
-            https://*) ;;
-            *) echo "APP_PUBLIC_BASE_URL must be an HTTPS URL"; exit 1 ;;
-          esac
 
       - name: Restore signing keystore
+        if: steps.release_scope.outputs.release_android == 'true'
         shell: bash
         run: |
           set -eu
@@ -66,6 +104,7 @@ jobs:
           printf '%s' "$ANDROID_KEYSTORE_BASE64" | base64 --decode > "$GITHUB_WORKSPACE/android/release.keystore"
 
       - name: Build signed release APK
+        if: steps.release_scope.outputs.release_android == 'true'
         working-directory: android
         env:
           APP_VERSION_CODE: ${{ env.VERSION_CODE }}
@@ -80,6 +119,7 @@ jobs:
           "$ANDROID_HOME/build-tools/$BUILD_TOOLS_VERSION/apksigner" verify --print-certs app/build/outputs/apk/release/app-release.apk
 
       - name: Prepare atomic APK upload
+        if: steps.release_scope.outputs.release_android == 'true'
         shell: bash
         run: |
           set -eu
@@ -88,6 +128,7 @@ jobs:
           sha256sum "release-upload/$APK_FILE.part"
 
       - uses: actions/upload-artifact@v4
+        if: steps.release_scope.outputs.release_android == 'true'
         with:
           name: third-hand-${{ env.VERSION_NAME }}
           path: android/app/build/outputs/apk/release/app-release.apk
@@ -106,17 +147,28 @@ jobs:
             test -w /opt/third-hand
             test -w /opt/third-hand/releases
 
-      - name: Upload API and APK
+      - name: Upload API deployment
         uses: appleboy/scp-action@v1.0.0
         with:
           host: ${{ secrets.SERVER_IP }}
           username: ${{ secrets.SERVER_USER }}
           key: ${{ secrets.SERVER_SSH_KEY }}
-          source: backend,docker-compose.yml,.env.example,release-upload
+          source: backend,docker-compose.yml,.env.example
           target: /opt/third-hand
           overwrite: true
 
-      - name: Activate release and restart API
+      - name: Upload signed APK
+        if: steps.release_scope.outputs.release_android == 'true'
+        uses: appleboy/scp-action@v1.0.0
+        with:
+          host: ${{ secrets.SERVER_IP }}
+          username: ${{ secrets.SERVER_USER }}
+          key: ${{ secrets.SERVER_SSH_KEY }}
+          source: release-upload
+          target: /opt/third-hand
+          overwrite: true
+
+      - name: Activate deployment and restart API
         uses: appleboy/ssh-action@v1.2.2
         env:
           TUSHARE_TOKEN: ${{ secrets.TUSHARE_TOKEN }}
@@ -125,20 +177,19 @@ jobs:
           VERSION_CODE: ${{ env.VERSION_CODE }}
           VERSION_NAME: ${{ env.VERSION_NAME }}
           APK_FILE: ${{ env.APK_FILE }}
+          RELEASE_ANDROID: ${{ steps.release_scope.outputs.release_android }}
           CHANGELOG: 自动发布 ${{ github.sha }}，包含最新行情、信息流和稳定性改进。
         with:
           host: ${{ secrets.SERVER_IP }}
           username: ${{ secrets.SERVER_USER }}
           key: ${{ secrets.SERVER_SSH_KEY }}
-          envs: TUSHARE_TOKEN,DEEPSEEK_API_KEY,APP_PUBLIC_BASE_URL,VERSION_CODE,VERSION_NAME,APK_FILE,CHANGELOG
+          envs: TUSHARE_TOKEN,DEEPSEEK_API_KEY,APP_PUBLIC_BASE_URL,VERSION_CODE,VERSION_NAME,APK_FILE,RELEASE_ANDROID,CHANGELOG
           script: |
             set -eu
             cd /opt/third-hand
             if [ ! -f .env ]; then
               cp .env.example .env
             fi
-            test -s "release-upload/$APK_FILE.part"
-            mv -f "release-upload/$APK_FILE.part" "releases/$APK_FILE"
 
             update_env() {
               key="$1"
@@ -152,10 +203,19 @@ jobs:
             update_env TUSHARE_TOKEN "$TUSHARE_TOKEN"
             update_env DEEPSEEK_API_KEY "$DEEPSEEK_API_KEY"
             update_env APP_PUBLIC_BASE_URL "$APP_PUBLIC_BASE_URL"
-            update_env APP_UPDATE_APK_FILE "$APK_FILE"
-            update_env APP_UPDATE_VERSION_CODE "$VERSION_CODE"
-            update_env APP_UPDATE_VERSION_NAME "$VERSION_NAME"
-            update_env APP_UPDATE_CHANGELOG "$CHANGELOG"
+            update_env MARKET_REFRESH_ENABLED true
+            update_env MARKET_REFRESH_INTERVAL_SECONDS 60
+
+            if [ "$RELEASE_ANDROID" = "true" ]; then
+              test -s "release-upload/$APK_FILE.part"
+              mv -f "release-upload/$APK_FILE.part" "releases/$APK_FILE"
+              update_env APP_UPDATE_APK_FILE "$APK_FILE"
+              update_env APP_UPDATE_VERSION_CODE "$VERSION_CODE"
+              update_env APP_UPDATE_VERSION_NAME "$VERSION_NAME"
+              update_env APP_UPDATE_CHANGELOG "$CHANGELOG"
+            else
+              echo "No Android changes detected; preserving the currently published APK metadata."
+            fi
 
             if docker compose version >/dev/null 2>&1; then
               docker compose up -d --build --remove-orphans

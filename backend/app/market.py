@@ -4,10 +4,13 @@ from __future__ import annotations
 import time
 import re
 import os
+import logging
 from datetime import datetime, timedelta
 from threading import Lock
 
 from app.time_utils import beijing_now
+
+logger = logging.getLogger(__name__)
 
 
 class MarketDataUnavailable(RuntimeError):
@@ -33,7 +36,7 @@ class MarketDataService:
         if self._provider not in {"akshare", "tushare", "auto"}:
             raise ValueError("THIRD_HAND_MARKET_PROVIDER must be akshare, tushare, or auto")
 
-    def quotes(self, symbols: list[str]) -> list[dict[str, object]]:
+    def quotes(self, symbols: list[str], force_refresh: bool = False) -> list[dict[str, object]]:
         normalized = list(dict.fromkeys(symbol.strip().upper() for symbol in symbols if symbol.strip()))
         if not normalized:
             return []
@@ -42,19 +45,32 @@ class MarketDataService:
         invalid_symbols = [symbol for symbol in normalized if symbol not in hk_symbols and symbol not in a_symbols]
         quotes: list[dict[str, object]] = []
         if hk_symbols:
-            quotes.extend(self._hk_quotes(hk_symbols))
+            quotes.extend(self._hk_quotes(hk_symbols, force_refresh=force_refresh))
         if a_symbols:
             etf_symbols = [symbol for symbol in a_symbols if symbol.startswith(("15", "16", "51", "56", "58"))]
             stock_symbols = [symbol for symbol in a_symbols if symbol not in etf_symbols]
-            if self._use_tushare():
+            if self._provider == "tushare":
+                quotes.extend(self._tushare_a_quotes(a_symbols))
+            elif self._provider == "auto":
                 try:
-                    quotes.extend(self._tushare_a_quotes(a_symbols))
-                except MarketDataUnavailable:
-                    if self._provider != "auto":
+                    quotes.extend(self._public_a_quotes(
+                        stock_symbols,
+                        etf_symbols,
+                        "公开实时快照，不应用于交易执行。",
+                        force_refresh=force_refresh,
+                    ))
+                except MarketDataUnavailable as public_error:
+                    if not self._tushare_token:
                         raise
-                    quotes.extend(self._public_a_quotes(stock_symbols, etf_symbols, "Tushare 不可用时的公开源快照，不应用于交易执行。"))
+                    logger.warning("公开 A 股行情不可用，回退 Tushare 盘后日线：%s", public_error)
+                    quotes.extend(self._tushare_a_quotes(a_symbols))
             else:
-                quotes.extend(self._public_a_quotes(stock_symbols, etf_symbols, "公开源快照，不应用于交易执行。"))
+                quotes.extend(self._public_a_quotes(
+                    stock_symbols,
+                    etf_symbols,
+                    "公开实时快照，不应用于交易执行。",
+                    force_refresh=force_refresh,
+                ))
         returned = {str(quote["symbol"]) for quote in quotes}
         for symbol in normalized:
             if symbol not in returned:
@@ -64,14 +80,27 @@ class MarketDataService:
                     "is_realtime": False, "delay_seconds": None, "license_scope": "n/a", "freshness_note": reason})
         return quotes
 
-    def _public_a_quotes(self, stock_symbols: list[str], etf_symbols: list[str], freshness_note: str) -> list[dict[str, object]]:
-        quotes = self._from_frame(self._frame("a"), stock_symbols, "CNY", freshness_note) if stock_symbols else []
+    def _public_a_quotes(
+        self,
+        stock_symbols: list[str],
+        etf_symbols: list[str],
+        freshness_note: str,
+        force_refresh: bool = False,
+    ) -> list[dict[str, object]]:
+        quotes = self._from_frame(
+            self._frame("a", force_refresh=force_refresh),
+            stock_symbols,
+            "CNY",
+            freshness_note,
+        ) if stock_symbols else []
         if etf_symbols:
-            quotes.extend(self._from_frame(self._frame("etf"), etf_symbols, "CNY", freshness_note))
+            quotes.extend(self._from_frame(
+                self._frame("etf", force_refresh=force_refresh),
+                etf_symbols,
+                "CNY",
+                freshness_note,
+            ))
         return quotes
-
-    def _use_tushare(self) -> bool:
-        return bool(self._tushare_token) and self._provider in {"tushare", "auto"}
 
     def _tushare_a_quotes(self, symbols: list[str]) -> list[dict[str, object]]:
         """Personal-research A-share end-of-day snapshots; never label as real-time."""
@@ -106,12 +135,18 @@ class MarketDataService:
             raise MarketDataUnavailable("Tushare 盘后行情暂时不可用，请稍后刷新。", "tushare_unavailable") from error
         return records
 
-    def _hk_quotes(self, symbols: list[str]) -> list[dict[str, object]]:
+    def _hk_quotes(self, symbols: list[str], force_refresh: bool = False) -> list[dict[str, object]]:
         """Prefer the trading-session spot snapshot and fall back to daily closes."""
         spot_note = "交易时段内的公开行情快照，可能存在延迟，不得用于交易执行。"
         try:
-            spot_quotes = self._from_frame(self._frame("hk"), symbols, "HKD", spot_note)
-        except MarketDataUnavailable:
+            spot_quotes = self._from_frame(
+                self._frame("hk", force_refresh=force_refresh),
+                symbols,
+                "HKD",
+                spot_note,
+            )
+        except MarketDataUnavailable as error:
+            logger.warning("港股实时快照不可用，尝试回退最近收盘日线：%s", error)
             spot_quotes = []
         returned = {str(quote["symbol"]) for quote in spot_quotes}
         missing = [symbol for symbol in symbols if symbol not in returned]
@@ -161,11 +196,11 @@ class MarketDataService:
         # A five-digit code (including leading zero) is treated as a Hong Kong listing.
         return len(symbol) == 5 and symbol.isdigit()
 
-    def _frame(self, market: str):
+    def _frame(self, market: str, force_refresh: bool = False):
         with self._lock:
             cached = self._cache.get(market)
             cache_seconds = self.HK_CACHE_SECONDS if market == "hk" else self.CACHE_SECONDS
-            if cached and time.monotonic() - cached[0] < cache_seconds:
+            if not force_refresh and cached and time.monotonic() - cached[0] < cache_seconds:
                 return cached[1], cached[2], cached[3]
         try:
             import akshare as ak
