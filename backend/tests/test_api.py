@@ -23,14 +23,43 @@ def test_app_update_exposes_download_integrity_metadata(monkeypatch, tmp_path):
     monkeypatch.setenv("APP_UPDATE_DIRECTORY", str(tmp_path))
     monkeypatch.setenv("APP_UPDATE_APK_FILE", apk.name)
     monkeypatch.setenv("APP_PUBLIC_BASE_URL", "https://api.example.com")
+    monkeypatch.setenv("APP_UPDATE_PUBLIC_BASE_URL", "https://download.example.com/third-hand/releases")
     monkeypatch.setenv("APP_UPDATE_VERSION_CODE", "3")
     monkeypatch.setenv("APP_UPDATE_VERSION_NAME", "0.3.0")
 
     response = client.get("/v1/app-update")
 
     assert response.status_code == 200
+    assert response.headers["cache-control"] == "no-store"
+    assert response.json()["apk_url"] == "https://download.example.com/third-hand/releases/third-hand-0.3.0.apk"
     assert response.json()["size_bytes"] == len(content)
     assert response.json()["sha256"] == hashlib.sha256(content).hexdigest()
+
+
+def test_app_update_falls_back_to_api_download(monkeypatch, tmp_path):
+    apk = tmp_path / "third-hand-0.3.1.apk"
+    apk.write_bytes(b"apk")
+    monkeypatch.setenv("APP_UPDATE_DIRECTORY", str(tmp_path))
+    monkeypatch.setenv("APP_UPDATE_APK_FILE", apk.name)
+    monkeypatch.setenv("APP_PUBLIC_BASE_URL", "https://api.example.com")
+    monkeypatch.delenv("APP_UPDATE_PUBLIC_BASE_URL", raising=False)
+
+    response = client.get("/v1/app-update")
+
+    assert response.status_code == 200
+    assert response.json()["apk_url"] == "https://api.example.com/v1/app-update/apk"
+
+
+def test_versioned_api_apk_download_is_immutable(monkeypatch, tmp_path):
+    apk = tmp_path / "third-hand-0.3.2.apk"
+    apk.write_bytes(b"apk")
+    monkeypatch.setenv("APP_UPDATE_DIRECTORY", str(tmp_path))
+    monkeypatch.setenv("APP_UPDATE_APK_FILE", apk.name)
+
+    response = client.get("/v1/app-update/apk")
+
+    assert response.status_code == 200
+    assert response.headers["cache-control"] == "public, max-age=31536000, immutable"
 
 
 def test_admin_overview_exposes_aggregate_operational_data_only():
