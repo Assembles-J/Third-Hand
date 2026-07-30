@@ -40,18 +40,24 @@ class PortfolioStore:
                 connection.execute("""
                     CREATE TABLE IF NOT EXISTS holding_drafts (
                         id TEXT PRIMARY KEY,
+                        client_row_id TEXT NOT NULL,
                         name TEXT NOT NULL,
                         quantity REAL NOT NULL CHECK (quantity > 0),
                         average_cost REAL NOT NULL CHECK (average_cost >= 0),
+                        ocr_confidence REAL,
                         created_at TEXT NOT NULL,
                         lookup_status TEXT NOT NULL DEFAULT 'pending',
                         lookup_message TEXT NOT NULL DEFAULT '',
-                        lookup_updated_at TEXT
+                        lookup_updated_at TEXT,
+                        candidates_json TEXT NOT NULL DEFAULT '[]'
                     )
                 """)
+                self._ensure_column(connection, "holding_drafts", "client_row_id", "TEXT NOT NULL DEFAULT ''")
+                self._ensure_column(connection, "holding_drafts", "ocr_confidence", "REAL")
                 self._ensure_column(connection, "holding_drafts", "lookup_status", "TEXT NOT NULL DEFAULT 'pending'")
                 self._ensure_column(connection, "holding_drafts", "lookup_message", "TEXT NOT NULL DEFAULT ''")
                 self._ensure_column(connection, "holding_drafts", "lookup_updated_at", "TEXT")
+                self._ensure_column(connection, "holding_drafts", "candidates_json", "TEXT NOT NULL DEFAULT '[]'")
                 connection.execute("""
                     CREATE TABLE IF NOT EXISTS symbol_lookup_cache (
                         name TEXT PRIMARY KEY,
@@ -120,19 +126,32 @@ class PortfolioStore:
     def list_drafts(self) -> list[dict[str, object]]:
         with self._connect() as connection:
             rows = connection.execute("SELECT * FROM holding_drafts ORDER BY created_at DESC").fetchall()
-        return [dict(row) for row in rows]
+        return [self._draft_dict(row) for row in rows]
 
-    def add_draft(self, draft_id: str, name: str, quantity: float, average_cost: float) -> dict[str, object]:
+    @staticmethod
+    def _draft_dict(row: sqlite3.Row) -> dict[str, object]:
+        item = dict(row)
+        item["client_row_id"] = str(item.get("client_row_id") or item["id"])
+        item["candidates"] = json.loads(str(item.pop("candidates_json", "[]")))
+        return item
+
+    def add_draft(
+        self, draft_id: str, client_row_id: str, name: str, quantity: float,
+        average_cost: float, ocr_confidence: float | None = None,
+    ) -> dict[str, object]:
         item = {
-            "id": draft_id, "name": name, "quantity": quantity,
+            "id": draft_id, "client_row_id": client_row_id, "name": name, "quantity": quantity,
             "average_cost": average_cost, "created_at": beijing_now().isoformat(),
+            "ocr_confidence": ocr_confidence, "candidates_json": "[]", "candidates": [],
             "lookup_status": "pending", "lookup_message": "等待后台查询证券代码", "lookup_updated_at": None,
         }
         with self._connect() as connection:
             connection.execute(
                 """INSERT INTO holding_drafts
-                (id, name, quantity, average_cost, created_at, lookup_status, lookup_message, lookup_updated_at)
-                VALUES (:id, :name, :quantity, :average_cost, :created_at, :lookup_status, :lookup_message, :lookup_updated_at)""",
+                (id, client_row_id, name, quantity, average_cost, ocr_confidence, created_at,
+                 lookup_status, lookup_message, lookup_updated_at, candidates_json)
+                VALUES (:id, :client_row_id, :name, :quantity, :average_cost, :ocr_confidence, :created_at,
+                        :lookup_status, :lookup_message, :lookup_updated_at, :candidates_json)""",
                 item,
             )
         return item
@@ -142,11 +161,16 @@ class PortfolioStore:
             draft.setdefault("lookup_status", "pending")
             draft.setdefault("lookup_message", "等待后台查询证券代码")
             draft.setdefault("lookup_updated_at", None)
+            draft.setdefault("ocr_confidence", None)
+            draft.setdefault("candidates_json", "[]")
+            draft.setdefault("candidates", [])
         with self._connect() as connection:
             connection.executemany(
                 """INSERT INTO holding_drafts
-                (id, name, quantity, average_cost, created_at, lookup_status, lookup_message, lookup_updated_at)
-                VALUES (:id, :name, :quantity, :average_cost, :created_at, :lookup_status, :lookup_message, :lookup_updated_at)""",
+                (id, client_row_id, name, quantity, average_cost, ocr_confidence, created_at,
+                 lookup_status, lookup_message, lookup_updated_at, candidates_json)
+                VALUES (:id, :client_row_id, :name, :quantity, :average_cost, :ocr_confidence, :created_at,
+                        :lookup_status, :lookup_message, :lookup_updated_at, :candidates_json)""",
                 drafts,
             )
         return drafts
@@ -157,7 +181,7 @@ class PortfolioStore:
         placeholders = ",".join("?" for _ in draft_ids)
         with self._connect() as connection:
             rows = connection.execute(f"SELECT * FROM holding_drafts WHERE id IN ({placeholders})", draft_ids).fetchall()
-        return [dict(row) for row in rows]
+        return [self._draft_dict(row) for row in rows]
 
     def draft_ids_needing_lookup(self) -> list[str]:
         with self._connect() as connection:
@@ -184,6 +208,21 @@ class PortfolioStore:
                 (lookup_status, lookup_message, beijing_now().isoformat(), draft_id),
             )
 
+    def set_draft_resolution(
+        self, draft_id: str, lookup_status: str, lookup_message: str,
+        candidates: list[dict[str, object]],
+    ) -> None:
+        with self._connect() as connection:
+            connection.execute(
+                """UPDATE holding_drafts
+                SET lookup_status=?, lookup_message=?, lookup_updated_at=?, candidates_json=?
+                WHERE id=?""",
+                (
+                    lookup_status, lookup_message, beijing_now().isoformat(),
+                    json.dumps(candidates, ensure_ascii=False), draft_id,
+                ),
+            )
+
     def save_symbol_lookups(self, results: list[dict[str, object]]) -> None:
         if not results:
             return
@@ -199,23 +238,58 @@ class PortfolioStore:
                 rows,
             )
 
-    def confirm_draft(self, draft_id: str, holding_id: str, symbol: str, name: str, quantity: float, average_cost: float) -> dict[str, object] | None:
-        item = {
-            "id": holding_id, "symbol": symbol, "name": name, "quantity": quantity,
-            "average_cost": average_cost, "created_at": beijing_now().isoformat(),
-        }
+    def confirm_draft(self, draft_id: str, holding_id: str, symbol: str, name: str) -> dict[str, object] | None:
+        try:
+            committed = self.commit_drafts([{"draft_id": draft_id, "symbol": symbol, "name": name}], [holding_id])
+        except ValueError:
+            return None
+        return committed[0] if committed else None
+
+    def commit_drafts(
+        self, selections: list[dict[str, str]], holding_ids: list[str] | None = None,
+    ) -> list[dict[str, object]]:
+        draft_ids = [str(item["draft_id"]) for item in selections]
+        symbols = [str(item["symbol"]).strip().upper() for item in selections]
+        if len(draft_ids) != len(set(draft_ids)):
+            raise ValueError("同一草稿不能重复提交")
+        if len(symbols) != len(set(symbols)):
+            raise ValueError("一次导入中不能把多行映射到同一个证券代码")
+        generated_ids = holding_ids or [f"holding-{draft_id}" for draft_id in draft_ids]
+        committed: list[dict[str, object]] = []
+        now = beijing_now().isoformat()
+        placeholders = ",".join("?" for _ in draft_ids)
         with self._connect() as connection:
-            draft = connection.execute("SELECT id FROM holding_drafts WHERE id = ?", (draft_id,)).fetchone()
-            if not draft:
-                return None
-            existing = connection.execute("SELECT id FROM holdings WHERE symbol = ? ORDER BY created_at DESC LIMIT 1", (symbol,)).fetchone()
-            if existing:
-                item["id"] = str(existing["id"])
-                connection.execute("UPDATE holdings SET name=:name, quantity=:quantity, average_cost=:average_cost, created_at=:created_at WHERE id=:id", item)
-            else:
-                connection.execute("INSERT INTO holdings (id, symbol, name, quantity, average_cost, created_at) VALUES (:id, :symbol, :name, :quantity, :average_cost, :created_at)", item)
-            connection.execute("DELETE FROM holding_drafts WHERE id = ?", (draft_id,))
-        return item
+            rows = connection.execute(
+                f"SELECT * FROM holding_drafts WHERE id IN ({placeholders})", draft_ids
+            ).fetchall()
+            drafts_by_id = {str(row["id"]): row for row in rows}
+            missing = [draft_id for draft_id in draft_ids if draft_id not in drafts_by_id]
+            if missing:
+                raise ValueError("部分草稿已不存在，请刷新后重试")
+            for selection, holding_id, symbol in zip(selections, generated_ids, symbols):
+                draft = drafts_by_id[str(selection["draft_id"])]
+                item = {
+                    "id": holding_id, "symbol": symbol, "name": str(selection["name"]),
+                    "quantity": float(draft["quantity"]), "average_cost": float(draft["average_cost"]),
+                    "created_at": now,
+                }
+                existing = connection.execute(
+                    "SELECT id FROM holdings WHERE symbol = ? ORDER BY created_at DESC LIMIT 1", (symbol,)
+                ).fetchone()
+                if existing:
+                    item["id"] = str(existing["id"])
+                    connection.execute(
+                        "UPDATE holdings SET name=:name, quantity=:quantity, average_cost=:average_cost, created_at=:created_at WHERE id=:id",
+                        item,
+                    )
+                else:
+                    connection.execute(
+                        "INSERT INTO holdings (id, symbol, name, quantity, average_cost, created_at) VALUES (:id, :symbol, :name, :quantity, :average_cost, :created_at)",
+                        item,
+                    )
+                committed.append(item)
+            connection.execute(f"DELETE FROM holding_drafts WHERE id IN ({placeholders})", draft_ids)
+        return committed
 
     def delete(self, holding_id: str) -> bool:
         with self._connect() as connection:
