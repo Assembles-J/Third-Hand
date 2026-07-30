@@ -154,6 +154,7 @@ class MarketQuote(BaseModel):
     delay_seconds: int | None = None
     license_scope: str = "unknown"
     freshness_note: str = ""
+    refresh_status: str = "fresh"
 
 
 class RiskAssessment(BaseModel):
@@ -371,19 +372,34 @@ def resume_draft_lookups() -> None:
 
 
 @app.get("/v1/market/quotes", response_model=list[MarketQuote])
-def market_quotes(symbols: Annotated[list[str], Query()], background_tasks: BackgroundTasks) -> list[MarketQuote]:
-    """Return the last saved snapshot immediately, then refresh it in the background."""
+def market_quotes(
+    symbols: Annotated[list[str], Query()],
+    background_tasks: BackgroundTasks,
+    refresh: Annotated[bool, Query()] = False,
+) -> list[MarketQuote]:
+    """Return cached data quickly, or synchronously refresh when the client asks."""
     requested = list(dict.fromkeys(symbol.strip().upper() for symbol in symbols if symbol.strip()))
     cached = store.cached_quotes(requested)
+    cached_symbols = {str(item["symbol"]) for item in cached}
+    has_complete_cache = cached_symbols.issuperset(requested)
+    if refresh or not has_complete_cache:
+        try:
+            quotes = market_data.quotes(requested)
+            store.save_quotes(quotes)
+            return [MarketQuote.model_validate({**item, "refresh_status": "fresh"}) for item in quotes]
+        except MarketDataUnavailable as error:
+            if not cached:
+                raise HTTPException(status_code=503, detail={"message": str(error), "code": error.code}) from error
+            stale = [{
+                **item,
+                "refresh_status": "stale_fallback",
+                "freshness_note": f"{item.get('freshness_note', '')} 本次刷新失败：{error}".strip(),
+            } for item in cached]
+            return [MarketQuote.model_validate(item) for item in stale]
     if cached:
         background_tasks.add_task(refresh_quote_cache, requested)
-        return [MarketQuote.model_validate(item) for item in cached]
-    try:
-        quotes = market_data.quotes(requested)
-        store.save_quotes(quotes)
-        return [MarketQuote.model_validate(item) for item in quotes]
-    except MarketDataUnavailable as error:
-        raise HTTPException(status_code=503, detail={"message": str(error), "code": error.code}) from error
+        return [MarketQuote.model_validate({**item, "refresh_status": "cached_refreshing"}) for item in cached]
+    return []
 
 
 @app.get("/v1/market/symbols", response_model=list[SymbolLookupResult])
