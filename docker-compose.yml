@@ -14,7 +14,12 @@ services:
       MARKET_REFRESH_ENABLED: ${MARKET_REFRESH_ENABLED:-true}
       MARKET_REFRESH_INTERVAL_SECONDS: ${MARKET_REFRESH_INTERVAL_SECONDS:-60}
       TUSHARE_TOKEN: ${TUSHARE_TOKEN:-}
+      THIRD_HAND_AI_PROVIDER: ${THIRD_HAND_AI_PROVIDER:-auto}
+      AI_REQUEST_TIMEOUT_SECONDS: ${AI_REQUEST_TIMEOUT_SECONDS:-30}
+      FINGPT_BASE_URL: ${FINGPT_BASE_URL:-}
+      FINGPT_MODEL: ${FINGPT_MODEL:-fingpt}
       DEEPSEEK_API_KEY: ${DEEPSEEK_API_KEY:-}
+      DEEPSEEK_MODEL: ${DEEPSEEK_MODEL:-deepseek-chat}
       APP_PUBLIC_BASE_URL: ${APP_PUBLIC_BASE_URL:-}
       APP_UPDATE_DIRECTORY: /app/releases
       APP_UPDATE_APK_FILE: ${APP_UPDATE_APK_FILE:-}
@@ -25,7 +30,6 @@ services:
       - ./data:/app/data
       - ./releases:/app/releases:ro
     ports:
-      # Nginx uses app_gateway; localhost binding is retained for server-side diagnostics.
       - "127.0.0.1:${API_PORT:-8000}:8000"
     networks:
       app_gateway:
