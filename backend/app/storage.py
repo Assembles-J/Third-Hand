@@ -330,6 +330,13 @@ class PortfolioStore:
 
     def save_personal_rule(self, item: dict[str, object]) -> dict[str, object]:
         with self._connect() as connection:
+            existing = connection.execute(
+                "SELECT id, version FROM personal_rules WHERE scope = ? AND COALESCE(symbol, '') = COALESCE(?, '') ORDER BY updated_at DESC LIMIT 1",
+                (item["scope"], item.get("symbol")),
+            ).fetchone()
+            if existing:
+                item["id"] = str(existing["id"])
+                item["version"] = int(existing["version"]) + 1
             connection.execute("INSERT INTO personal_rules (id,scope,symbol,max_position_percent,loss_review_percent,volatility_review_percent,enabled,version,updated_at) VALUES (:id,:scope,:symbol,:max_position_percent,:loss_review_percent,:volatility_review_percent,:enabled,:version,:updated_at) ON CONFLICT(id) DO UPDATE SET scope=excluded.scope,symbol=excluded.symbol,max_position_percent=excluded.max_position_percent,loss_review_percent=excluded.loss_review_percent,volatility_review_percent=excluded.volatility_review_percent,enabled=excluded.enabled,version=personal_rules.version+1,updated_at=excluded.updated_at", item)
         return item
 
