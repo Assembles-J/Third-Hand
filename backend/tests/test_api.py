@@ -97,6 +97,19 @@ def test_decision_context_debug_endpoint_persists_a_read_only_snapshot():
     assert store.decision_context(payload["context_id"])["input_hash"] == payload["input_hash"]
 
 
+def test_decision_evidence_endpoint_returns_evidence_but_no_action():
+    client.post("/v1/holdings", json={"symbol": "600519", "name": "test", "quantity": 100, "average_cost": 10})
+    store.save_quotes([{"symbol": "600519", "price": 12, "currency": "CNY", "source": "test", "as_of": "2026-07-31", "retrieved_at": "2026-07-31T10:00:00+08:00"}])
+    store.save_daily_prices("600519", [{"trading_date": f"2026-07-{index + 1:02d}", "open": 10, "close": 12, "high": 13, "low": 9, "source": "test"} for index in range(60)])
+    store.save_trade_plan({"id": "plan-1", "symbol": "600519", "horizon": "swing", "thesis": "test", "market_expectation": "test", "catalysts": [], "entry_condition": "entry", "add_condition": "add", "reduce_condition": "reduce", "exit_condition": "exit", "max_position_percent": 15, "risk_budget_percent": 3, "enabled": True, "version": 1})
+
+    response = client.get("/v1/decisions/evidence/600519")
+
+    assert response.status_code == 200
+    assert any(item["evidence_id"] == "data_quality.summary" for item in response.json())
+    assert all("action" not in item for item in response.json())
+
+
 def test_learning_cases_can_be_created_and_listed():
     payload = {
         "title": "公告核验练习", "context": "阅读公告后记录需要核验的事实与数据来源。",

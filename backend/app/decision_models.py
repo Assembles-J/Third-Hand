@@ -60,6 +60,8 @@ class TechnicalSnapshot(DecisionModel):
     sample_count: int
     trend: str
     trend_label: str
+    sma20: float | None = None
+    sma60: float | None = None
     rsi14: float
     rsi_state: str
     macd_histogram: float
@@ -113,6 +115,7 @@ class TradePlanSnapshot(DecisionModel):
     risk_budget_percent: float
     enabled: bool
     version: int
+    structured_conditions: tuple[dict[str, object], ...] = ()
 
 
 class PersonalRuleSnapshot(DecisionModel):
@@ -141,6 +144,22 @@ class DataQualitySummary(DecisionModel):
     missing_fields: tuple[str, ...] = ()
     stale_fields: tuple[str, ...] = ()
     warnings: tuple[str, ...] = ()
+
+
+class EvidenceItem(DecisionModel):
+    evidence_id: str
+    category: Literal["position", "price", "trend", "momentum", "volatility", "volume", "event", "fundamental", "market", "relative", "liquidity", "plan", "risk", "data_quality"]
+    direction: Literal["positive", "negative", "neutral", "uncertain"]
+    strength: float = Field(ge=0, le=1)
+    title: str
+    description: str
+    value: float | str | bool | None = None
+    threshold: float | str | None = None
+    source: str
+    as_of: datetime | str | None = None
+    fresh: bool
+    rule_id: str | None = None
+    source_reference: str | None = None
 
 
 class DecisionContext(DecisionModel):

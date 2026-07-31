@@ -43,6 +43,7 @@ from app.trading_calendar import TradingCalendarService
 from app.recommendations import candidate as build_candidate, first_fill, evaluations
 from app.decision_context import DecisionContextBuilder
 from app.decision_models import DecisionContext
+from app.evidence_engine import EvidenceEngine
 
 app = FastAPI(title="Third-Hand API", version="0.2.0")
 APP_STARTED_AT = time.monotonic()
@@ -451,6 +452,7 @@ price_history_service = PriceHistoryService()
 market_regime_service = MarketRegimeService()
 relative_strength_service = RelativeStrengthService()
 decision_context_builder = DecisionContextBuilder(store, technical_analysis_service)
+evidence_engine = EvidenceEngine()
 
 GLOSSARY = {
     "历史下行概率": GlossaryCard(term="历史下行概率", plain_explanation="在历史日线样本中，未来 5 个交易日累计下跌至少 5% 的出现频率。它是历史统计，不是未来发生概率的保证。", watch_for="先看统计窗口、下跌阈值和样本数量；样本不足时不应据此操作。"),
@@ -1071,6 +1073,17 @@ def decision_context(symbol: str) -> DecisionContext:
         raise HTTPException(status_code=422, detail=str(error)) from error
     store.save_decision_context(context.model_dump(mode="json"))
     return context
+
+
+@app.get("/v1/decisions/evidence/{symbol}")
+def decision_evidence(symbol: str) -> list[dict[str, object]]:
+    """Return deterministic evidence for a newly persisted input context."""
+    try:
+        context = decision_context_builder.build(symbol)
+    except ValueError as error:
+        raise HTTPException(status_code=422, detail=str(error)) from error
+    store.save_decision_context(context.model_dump(mode="json"))
+    return [item.model_dump(mode="json") for item in evidence_engine.build(context)]
 
 
 @app.get("/v1/portfolio/impact-graph")
