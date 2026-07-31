@@ -541,131 +541,106 @@ private fun TodayScreen() {
     val context = LocalContext.current
     val api = ApiClient.service(context)
     var holdings by remember { mutableStateOf<List<HoldingDto>>(emptyList()) }
-    var drafts by remember { mutableStateOf<List<HoldingDraftDto>>(emptyList()) }
-    var quotes by remember { mutableStateOf<List<MarketQuoteDto>>(emptyList()) }
-    var risks by remember { mutableStateOf<List<RiskAssessmentDto>>(emptyList()) }
     var portfolioAnalysis by remember { mutableStateOf<List<PortfolioAnalysisItemDto>>(emptyList()) }
+    var selectedSymbol by remember { mutableStateOf<String?>(null) }
     var error by remember { mutableStateOf<String?>(null) }
-    var refreshing by remember { mutableStateOf(false) }
-    var refreshMessage by remember { mutableStateOf<String?>(null) }
-    var riskLoading by remember { mutableStateOf(false) }
-    var riskError by remember { mutableStateOf<String?>(null) }
+    var statusMessage by remember { mutableStateOf<String?>(null) }
+    var analyzing by remember { mutableStateOf(false) }
     val scope = rememberCoroutineScope()
-    fun refreshRiskAssessments() = scope.launch {
-        riskLoading = true
-        riskError = null
+    fun load() = scope.launch {
         try {
-            risks = api.riskAssessments()
-        } catch (exception: Exception) {
-            riskError = "风险评估暂时不可用，不影响行情展示。"
-        } finally {
-            riskLoading = false
-        }
-    }
-    fun refreshPortfolioAnalysis() = scope.launch {
-        try { portfolioAnalysis = api.portfolioAnalysis().items } catch (_: Exception) { portfolioAnalysis = emptyList() }
-    }
-    fun refresh(forceQuotes: Boolean = false) = scope.launch {
-        try {
-            refreshing = true
             error = null
-            refreshMessage = null
-            try {
-                holdings = api.holdings()
-                drafts = api.holdingDrafts()
-            } catch (exception: Exception) {
-                error = "无法读取持仓：${exception.message ?: "请确认后端正在运行"}"
-                return@launch
-            }
-            if (holdings.isEmpty()) {
-                quotes = emptyList()
-                risks = emptyList()
-                portfolioAnalysis = emptyList()
-                refreshMessage = if (drafts.isNotEmpty()) "待补全记录没有证券代码，暂时无法拉取行情。" else "还没有正式持仓可供查询。"
-                return@launch
-            }
-            try {
-                val symbols = holdings.map { it.symbol }
-                quotes = ApiClient.marketQuotes(api, MarketQuoteBatchRequestDto(symbols, refresh = forceQuotes))
-                refreshMessage = when {
-                    quotes.any { it.refresh_status == "stale_fallback" } -> "刷新失败，当前显示上次成功获取的行情"
-                    forceQuotes -> "行情已主动刷新"
-                    else -> "已展示最近一次行情，服务器正在后台更新"
-                }
-            } catch (exception: Exception) {
-                error = "持仓已加载；行情暂时不可用，请稍后刷新。"
-            }
-            refreshRiskAssessments()
-            refreshPortfolioAnalysis()
+            holdings = api.holdings()
+            portfolioAnalysis = api.portfolioAnalysis().items
+            if (selectedSymbol == null) selectedSymbol = holdings.firstOrNull()?.symbol
+        } catch (exception: Exception) {
+            error = "无法读取决策数据：${exception.message ?: "请确认后端正在运行"}"
+        }
+    }
+    fun analyzeSelected() = scope.launch {
+        val holding = holdings.firstOrNull { it.symbol == selectedSymbol } ?: return@launch
+        analyzing = true
+        error = null
+        statusMessage = "正在请求最新行情，并建立 ${holding.name} 的决策上下文…"
+        try {
+            // This request only starts the server-side market refresh.  The separate
+            // AI conversation consumes the saved context; UI never waits on an LLM.
+            ApiClient.marketQuotes(api, MarketQuoteBatchRequestDto(listOf(holding.symbol), refresh = true))
+            val decision = api.decisionContext(holding.symbol)
+            portfolioAnalysis = api.portfolioAnalysis().items
+            statusMessage = "已固化决策快照（数据完整度 ${decision.data_quality.score_percent}%）。AI 解读会在独立会话完成后回写；当前先展示可核验的规则结论。"
+        } catch (exception: Exception) {
+            error = "未能启动主动分析：${exception.message ?: "请稍后重试"}"
         } finally {
-            refreshing = false
+            analyzing = false
         }
     }
-    // On entry prefer the server cache and let its background worker refresh.
-    // The hero refresh button remains the explicit forced-refresh path.
-    LaunchedEffect(Unit) { refresh() }
-    LaunchedEffect(Unit) {
-        while (true) {
-            delay(2_000)
-            if (drafts.any { it.lookup_status == "pending" || it.lookup_status == "querying" }) {
-                try {
-                    // Draft resolution is independent of quotes, risk, and portfolio analysis.
-                    drafts = api.holdingDrafts()
-                } catch (_: Exception) { }
-            }
-        }
-    }
-    LaunchedEffect(holdings.map { it.symbol }) {
-        if (holdings.isEmpty()) return@LaunchedEffect
-        while (true) {
-            delay(60_000)
-            try {
-                quotes = ApiClient.marketQuotes(api, MarketQuoteBatchRequestDto(holdings.map { it.symbol }))
-                refreshMessage = if (quotes.any { it.refresh_status == "stale_fallback" }) {
-                    "自动刷新失败，继续显示上次行情"
-                } else {
-                    "已同步服务器最新行情"
-                }
-            } catch (_: Exception) {
-                refreshMessage = "自动刷新失败，继续显示上次行情"
-            }
-        }
-    }
+    LaunchedEffect(Unit) { load() }
+    val selectedHolding = holdings.firstOrNull { it.symbol == selectedSymbol }
+    val selectedAnalysis = portfolioAnalysis.firstOrNull { it.symbol == selectedSymbol }
     LazyColumn(contentPadding = androidx.compose.foundation.layout.PaddingValues(bottom = 24.dp), verticalArrangement = Arrangement.spacedBy(14.dp)) {
-        item { AppHero("今日行情", "THIRD-HAND · 让资产向阳生长", action = { HeroRefreshAction({ refresh(forceQuotes = true) }, !refreshing) }) }
-        item { Column(Modifier.padding(horizontal = 20.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
-            Text("把握正在发生的机会", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold)
-            Text("行情来自公开源快照，仅供参考，不构成投资建议。", color = MaterialTheme.colorScheme.onSurfaceVariant, style = MaterialTheme.typography.bodySmall)
-        } }
-        error?.let { message -> item { StatusCard(message, error = true) } }
-        refreshMessage?.let { message -> item { StatusCard(message, positive = true) } }
-        if (drafts.isNotEmpty()) item {
-            Card(
-                modifier = Modifier.padding(horizontal = 20.dp).fillMaxWidth(),
-                colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.secondaryContainer),
-            ) {
-                Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
-                    Text("有 ${drafts.size} 条待补全持仓", style = MaterialTheme.typography.titleMedium)
-                    Text("补充证券代码后，首页会自动显示对应行情。")
+        item { AppHero("今日决策", "THIRD-HAND · 先核验，再判断", action = { HeroRefreshAction(::load, !analyzing) }) }
+        item {
+            Column(Modifier.padding(horizontal = 20.dp), verticalArrangement = Arrangement.spacedBy(5.dp)) {
+                Text("AI 决策工作台", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold)
+                Text("行情不在这里重复展示；请选择持仓，沿着证据、规则和结论查看本次分析。", color = MaterialTheme.colorScheme.onSurfaceVariant, style = MaterialTheme.typography.bodySmall)
+            }
+        }
+        error?.let { item { StatusCard(it, error = true) } }
+        statusMessage?.let { item { StatusCard(it, positive = true) } }
+        if (holdings.isEmpty()) item { StatusCard("先在“持仓”页添加第一只持仓，才能建立决策分析。") }
+        if (holdings.isNotEmpty()) item {
+            Column(Modifier.padding(horizontal = 20.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                Text("选择要分析的持仓", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
+                holdings.forEach { holding ->
+                    val selected = holding.symbol == selectedSymbol
+                    OutlinedButton(
+                        onClick = { selectedSymbol = holding.symbol; statusMessage = null },
+                        modifier = Modifier.fillMaxWidth(),
+                        shape = RoundedCornerShape(14.dp),
+                        colors = ButtonDefaults.outlinedButtonColors(containerColor = if (selected) MaterialTheme.colorScheme.primaryContainer else Color.Transparent),
+                    ) {
+                        Column(Modifier.fillMaxWidth()) {
+                            Text("${holding.name} · ${holding.symbol}", fontWeight = FontWeight.SemiBold)
+                            Text(if (selected) "当前分析对象" else "点击切换分析对象", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                        }
+                    }
                 }
             }
         }
-        if (holdings.isEmpty() && drafts.isEmpty()) item { StatusCard("先在“持仓”页添加第一只股票，例如小米集团-W（01810）。") }
-        if (holdings.isNotEmpty() && quotes.isEmpty()) item { StatusCard("暂未获得任何行情；请检查网络、数据源或证券代码。", error = true) }
-        items(quotes) { quote ->
-            val holding = holdings.firstOrNull { it.symbol == quote.symbol }
-            QuoteCard(if (holding == null) quote else quote.copy(name = holding.name), holding)
+        selectedHolding?.let { holding -> item {
+            Column(Modifier.padding(horizontal = 20.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                PrimaryAction("根据当前行情主动分析 ${holding.name}", Icons.Filled.AutoGraph, ::analyzeSelected, Modifier.fillMaxWidth(), enabled = !analyzing)
+                Text("将刷新行情并固化本次输入；AI 解读由独立会话异步执行，不会阻塞规则分析。", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            }
+        } }
+        selectedAnalysis?.let { item { DecisionReasoningRoute(it) } }
+        if (selectedHolding != null && selectedAnalysis == null) item { StatusCard("该持仓的规则分析正在准备中。点击主动分析可立即建立一份可追溯的输入快照。") }
+    }
+}
+
+@Composable
+private fun DecisionReasoningRoute(item: PortfolioAnalysisItemDto) {
+    val steps = item.analysis_trace.ifEmpty {
+        listOf(AnalysisTraceStepDto("决策结论", "unavailable", "尚未取得本次分析的可视化轨迹。"))
+    }
+    Card(Modifier.padding(horizontal = 20.dp).fillMaxWidth(), shape = RoundedCornerShape(18.dp)) {
+        Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+            Text("${item.name} 的决策路线", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
+            Text("结论：${analysisActionLabel(item.action)} · 证据完整度 ${item.confidence_percent}%", color = analysisActionColor(item.action), style = MaterialTheme.typography.labelLarge, fontWeight = FontWeight.Bold)
+            ExplainableText(item.reason, style = MaterialTheme.typography.bodyMedium)
+            steps.forEachIndexed { index, step ->
+                Row(verticalAlignment = Alignment.Top) {
+                    Text("${index + 1}", modifier = Modifier.clip(RoundedCornerShape(99.dp)).background(analysisTraceColor(step.status)).padding(horizontal = 8.dp, vertical = 3.dp), color = MaterialTheme.colorScheme.onPrimary, style = MaterialTheme.typography.labelSmall, fontWeight = FontWeight.Bold)
+                    Column(Modifier.padding(start = 10.dp).weight(1f)) {
+                        Text("${step.stage} · ${analysisTraceStatus(step.status)}", style = MaterialTheme.typography.labelLarge, fontWeight = FontWeight.SemiBold)
+                        Text(step.detail, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    }
+                }
+                if (index != steps.lastIndex) HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
+            }
+            Text("下一步：AI 会话将基于已固化的证据快照补充解释与待核验项；不会生成自动交易指令。", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
         }
-        val readyRisks = risks.filter { it.status != "data_insufficient" }
-        val deferredRisks = risks.filter { it.status == "data_insufficient" }
-        if (readyRisks.isNotEmpty()) item { Text("持仓风险观察", modifier = Modifier.padding(start = 20.dp, top = 4.dp, end = 20.dp), style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold) }
-        if (riskLoading) item { StatusCard("正在计算历史风险统计…") }
-        riskError?.let { message -> item { StatusCard(message, error = true) } }
-        items(readyRisks, key = { it.symbol }) { assessment -> RiskAssessmentCard(assessment) }
-        if (portfolioAnalysis.isNotEmpty()) item { Text("持仓复核建议", modifier = Modifier.padding(horizontal = 20.dp), style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold) }
-        items(portfolioAnalysis, key = { it.symbol }) { item -> PortfolioAnalysisCard(item) }
-        if (deferredRisks.isNotEmpty()) item { Text("后台数据准备", modifier = Modifier.padding(horizontal = 20.dp, vertical = 8.dp), color = MaterialTheme.colorScheme.onSurfaceVariant, style = MaterialTheme.typography.labelMedium) }
-        items(deferredRisks, key = { "deferred-${it.symbol}" }) { assessment -> RiskAssessmentCard(assessment) }
     }
 }
 

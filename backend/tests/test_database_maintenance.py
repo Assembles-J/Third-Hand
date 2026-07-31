@@ -11,11 +11,11 @@ def test_migration_runner_is_idempotent(tmp_path):
     database = tmp_path / "third-hand.db"
     PortfolioStore(database)
 
-    assert run_migrations(database) == ["0001_legacy_schema_baseline"]
+    assert run_migrations(database) == []
     assert run_migrations(database) == []
     with sqlite3.connect(database) as connection:
-        assert connection.execute("SELECT migration_id FROM schema_migrations").fetchall() == [
-            ("0001_legacy_schema_baseline",)
+        assert connection.execute("SELECT migration_id FROM schema_migrations ORDER BY migration_id").fetchall() == [
+            ("0001_legacy_schema_baseline",), ("0002_decision_contexts",),
         ]
 
 

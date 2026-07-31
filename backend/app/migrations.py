@@ -24,7 +24,22 @@ def _record_legacy_schema_baseline(_connection: sqlite3.Connection) -> None:
     """Mark the pre-runner schema as the migration baseline."""
 
 
-MIGRATIONS = (Migration("0001_legacy_schema_baseline", _record_legacy_schema_baseline),)
+def _create_decision_contexts(connection: sqlite3.Connection) -> None:
+    connection.execute(
+        "CREATE TABLE IF NOT EXISTS decision_contexts ("
+        "context_id TEXT PRIMARY KEY, symbol TEXT NOT NULL, input_hash TEXT NOT NULL, "
+        "payload TEXT NOT NULL, created_at TEXT NOT NULL)"
+    )
+    connection.execute(
+        "CREATE INDEX IF NOT EXISTS idx_decision_contexts_symbol_created "
+        "ON decision_contexts(symbol, created_at DESC)"
+    )
+
+
+MIGRATIONS = (
+    Migration("0001_legacy_schema_baseline", _record_legacy_schema_baseline),
+    Migration("0002_decision_contexts", _create_decision_contexts),
+)
 
 
 def run_migrations(database_path: str | Path) -> list[str]:

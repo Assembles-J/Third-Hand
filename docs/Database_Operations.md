@@ -8,7 +8,7 @@
 ..\.verify-venv\Scripts\python.exe -m app.migrations --database data\third_hand.db
 ```
 
-首次执行只会登记 `0001_legacy_schema_baseline`；再次执行不会重复登记或修改业务数据。
+首次执行会登记当前版本的迁移（包括历史 schema 基线及新增 Context 表）；再次执行不会重复应用已登记的迁移。
 
 创建经过 SQLite 完整性校验的备份：
 

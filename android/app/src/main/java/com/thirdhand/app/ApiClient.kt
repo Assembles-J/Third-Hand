@@ -202,6 +202,20 @@ data class DecisionSnapshotDto(
     val event_evidence: List<DecisionEventDto> = emptyList(), val missing_evidence: List<String> = emptyList(),
     val evidence_completeness_percent: Int = 0, val candidate_action: String = "", val confidence_definition: String = "", val historical_calibration: HistoricalCalibrationDto? = null, val market_regime: MarketRegimeDto? = null, val relative_strength: RelativeStrengthDto? = null,
 )
+data class DecisionDataQualityDto(
+    val status: String,
+    val score_percent: Int,
+    val missing_fields: List<String> = emptyList(),
+    val stale_fields: List<String> = emptyList(),
+    val warnings: List<String> = emptyList(),
+)
+data class DecisionContextDto(
+    val context_id: String,
+    val symbol: String,
+    val name: String,
+    val generated_at: String,
+    val data_quality: DecisionDataQualityDto,
+)
 data class PortfolioAnalysisItemDto(val symbol: String, val name: String, val action: String, val reason: String, val evidence: List<String>, val confidence_percent: Int, val rule_snapshot: Map<String, Any>? = null, val technical_snapshot: TechnicalSnapshotDto? = null, val decision_snapshot: DecisionSnapshotDto? = null, val analysis_trace: List<AnalysisTraceStepDto> = emptyList(), val disclaimer: String)
 data class PortfolioAnalysisDto(val id: String, val generated_at: String, val items: List<PortfolioAnalysisItemDto>)
 data class ImpactGraphNodeDto(
@@ -350,6 +364,8 @@ interface ThirdHandApi {
     suspend fun riskAssessments(): List<RiskAssessmentDto>
     @GET("v1/portfolio/analysis")
     suspend fun portfolioAnalysis(): PortfolioAnalysisDto
+    @GET("v1/decisions/context/{symbol}")
+    suspend fun decisionContext(@Path("symbol") symbol: String): DecisionContextDto
     @GET("v1/portfolio/impact-graph")
     suspend fun impactGraph(@Query("symbol") symbol: String? = null): ImpactGraphDto
 

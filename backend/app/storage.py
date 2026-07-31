@@ -250,6 +250,10 @@ class PortfolioStore:
                 self._ensure_column(connection, "learning_cases", "confidence", "REAL NOT NULL DEFAULT 0.5")
                 self._ensure_column(connection, "learning_cases", "evidence_links", "TEXT NOT NULL DEFAULT '[]'")
                 self._seed_research_rules(connection)
+            # New schema changes are registered independently from this legacy
+            # bootstrap so migrations remain auditable and repeatable.
+            from app.migrations import run_migrations
+            run_migrations(self.database_path)
 
     @staticmethod
     def _seed_research_rules(connection: sqlite3.Connection) -> None:
@@ -506,6 +510,7 @@ class PortfolioStore:
             connection.execute("DELETE FROM content_cache")
             connection.execute("DELETE FROM glossary_entries")
             connection.execute("DELETE FROM glossary_lookup_history")
+            connection.execute("DELETE FROM decision_contexts")
 
     def admin_summary(self) -> dict[str, int]:
         """Return only aggregate, non-sensitive operational counters for the admin console."""
@@ -645,6 +650,22 @@ class PortfolioStore:
         with self._connect() as connection:
             row = connection.execute(
                 "SELECT payload FROM portfolio_analysis_cache WHERE analysis_key='current'"
+            ).fetchone()
+        return json.loads(str(row["payload"])) if row else None
+
+    def save_decision_context(self, item: dict[str, object]) -> None:
+        with self._connect() as connection:
+            connection.execute(
+                "INSERT INTO decision_contexts (context_id, symbol, input_hash, payload, created_at) "
+                "VALUES (?, ?, ?, ?, ?)",
+                (str(item["context_id"]), str(item["symbol"]), str(item["input_hash"]),
+                 json.dumps(item, ensure_ascii=False, default=str), str(item["generated_at"])),
+            )
+
+    def decision_context(self, context_id: str) -> dict[str, object] | None:
+        with self._connect() as connection:
+            row = connection.execute(
+                "SELECT payload FROM decision_contexts WHERE context_id=?", (context_id,)
             ).fetchone()
         return json.loads(str(row["payload"])) if row else None
 

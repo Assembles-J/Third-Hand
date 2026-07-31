@@ -41,6 +41,8 @@ from app.market_regime import MarketRegimeService
 from app.relative_strength import RelativeStrengthService
 from app.trading_calendar import TradingCalendarService
 from app.recommendations import candidate as build_candidate, first_fill, evaluations
+from app.decision_context import DecisionContextBuilder
+from app.decision_models import DecisionContext
 
 app = FastAPI(title="Third-Hand API", version="0.2.0")
 APP_STARTED_AT = time.monotonic()
@@ -448,6 +450,7 @@ technical_analysis_service = TechnicalAnalysisService()
 price_history_service = PriceHistoryService()
 market_regime_service = MarketRegimeService()
 relative_strength_service = RelativeStrengthService()
+decision_context_builder = DecisionContextBuilder(store, technical_analysis_service)
 
 GLOSSARY = {
     "历史下行概率": GlossaryCard(term="历史下行概率", plain_explanation="在历史日线样本中，未来 5 个交易日累计下跌至少 5% 的出现频率。它是历史统计，不是未来发生概率的保证。", watch_for="先看统计窗口、下跌阈值和样本数量；样本不足时不应据此操作。"),
@@ -1057,6 +1060,17 @@ def portfolio_analysis() -> PortfolioAnalysis:
         payload = assess_holdings(holdings, store.cached_quotes([str(item["symbol"]) for item in holdings]), store)
         payload["generated_at"] = beijing_now().isoformat()
     return PortfolioAnalysis.model_validate(payload)
+
+
+@app.get("/v1/decisions/context/{symbol}", response_model=DecisionContext)
+def decision_context(symbol: str) -> DecisionContext:
+    """Persist and return a read-only phase-1 decision input snapshot."""
+    try:
+        context = decision_context_builder.build(symbol)
+    except ValueError as error:
+        raise HTTPException(status_code=422, detail=str(error)) from error
+    store.save_decision_context(context.model_dump(mode="json"))
+    return context
 
 
 @app.get("/v1/portfolio/impact-graph")
