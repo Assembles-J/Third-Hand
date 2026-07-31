@@ -407,6 +407,8 @@ private fun TradePlanScreen() {
 
 @Composable
 private fun TradePlanDialog(initial: TradePlanDto?, initialSymbol: String = "", onDismiss: () -> Unit, onSave: (TradePlanInputDto) -> Unit) {
+    val api = ApiClient.service(LocalContext.current)
+    val scope = rememberCoroutineScope()
     var symbol by remember(initial, initialSymbol) { mutableStateOf(initial?.symbol ?: initialSymbol) }
     var horizon by remember(initial) { mutableStateOf(initial?.horizon ?: "swing") }
     var thesis by remember(initial) { mutableStateOf(initial?.thesis ?: "") }
@@ -421,24 +423,48 @@ private fun TradePlanDialog(initial: TradePlanDto?, initialSymbol: String = "", 
     var maxPosition by remember(initial) { mutableStateOf(initial?.max_position_percent?.toString() ?: "15") }
     var riskBudget by remember(initial) { mutableStateOf(initial?.risk_budget_percent?.toString() ?: "3") }
     var validation by remember { mutableStateOf<String?>(null) }
+    var draftNotice by remember { mutableStateOf<String?>(null) }
+    var drafting by remember { mutableStateOf(false) }
+    var showAdvanced by remember(initial) { mutableStateOf(initial?.benchmark_symbol != null || initial?.benchmark_name != null) }
+    fun applyDraft() = scope.launch {
+        if (symbol.trim().isBlank()) { validation = "请先填写证券代码，系统才能生成草案。"; return@launch }
+        drafting = true
+        validation = null
+        runCatching { api.tradePlanDraft(symbol.trim().uppercase()) }
+            .onSuccess { draft ->
+                symbol = draft.symbol; horizon = draft.horizon; thesis = draft.thesis; expectation = draft.market_expectation
+                catalysts = draft.catalysts.joinToString("；"); entry = draft.entry_condition; add = draft.add_condition
+                reduce = draft.reduce_condition; exit = draft.exit_condition; maxPosition = draft.max_position_percent.toString()
+                riskBudget = draft.risk_budget_percent.toString(); draftNotice = draft.notice
+            }
+            .onFailure { validation = "无法生成草案：${it.message ?: "请确认后端已更新后重试。"}" }
+        drafting = false
+    }
     Dialog(onDismissRequest = onDismiss) {
         Surface(Modifier.fillMaxWidth().heightIn(max = 700.dp), shape = RoundedCornerShape(18.dp)) {
             Column(Modifier.padding(18.dp).verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(8.dp)) {
                 Text(if (initial == null) "新建交易计划" else "编辑交易计划", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold)
-                Text("计划是条件核验模板，不是自动交易授权。", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                PlanField("证券代码", symbol) { symbol = it }
+                Text("先用系统草案降低录入负担，再确认真正属于你的交易逻辑。计划不是自动交易授权。", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                PlanField("证券代码", symbol, help = "用于关联持仓、行情、风险数据与后续复核。") { symbol = it }
+                if (initial == null) FilledTonalButton(onClick = ::applyDraft, enabled = !drafting, modifier = Modifier.fillMaxWidth()) {
+                    Icon(Icons.Filled.AutoGraph, null); Spacer(Modifier.width(6.dp)); Text(if (drafting) "正在生成研究草案…" else "根据持仓与风险生成草案")
+                }
+                draftNotice?.let { Text(it, style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.primary) }
                 Row(verticalAlignment = Alignment.CenterVertically) { RadioButton(horizon == "swing", { horizon = "swing" }); Text("波段（默认）"); Spacer(Modifier.width(12.dp)); RadioButton(horizon == "short", { horizon = "short" }); Text("短线") }
-                PlanField("交易逻辑", thesis, 3) { thesis = it }
-                PlanField("市场原有预期", expectation, 2) { expectation = it }
-                PlanField("比较基准代码（如 sh000300）", benchmarkSymbol) { benchmarkSymbol = it }
-                PlanField("比较基准名称（如 沪深300）", benchmarkName) { benchmarkName = it }
-                PlanField("催化剂（用；分隔）", catalysts, 2) { catalysts = it }
-                PlanField("入场条件", entry, 2) { entry = it }
-                PlanField("加仓条件", add, 2) { add = it }
-                PlanField("减仓条件", reduce, 2) { reduce = it }
-                PlanField("退出 / 失效条件", exit, 2) { exit = it }
-                PlanField("最大仓位 %", maxPosition) { maxPosition = it }
-                PlanField("单笔风险预算 %", riskBudget) { riskBudget = it }
+                PlanField("交易逻辑", thesis, 3, "你为什么持有它；用于判断原始依据是否仍成立。") { thesis = it }
+                PlanField("市场原有预期", expectation, 2, "市场普遍已经预期什么；用来识别预期差和风险。") { expectation = it }
+                PlanField("催化剂（用；分隔）", catalysts, 2, "未来可能验证或推翻逻辑的事件，例如财报、行业数据、公告。") { catalysts = it }
+                PlanField("入场条件", entry, 2, "什么情况下才允许新建仓，避免只因价格波动而追入。") { entry = it }
+                PlanField("加仓条件", add, 2, "什么证据增强时才加仓；系统会同时检查仓位上限与风险。") { add = it }
+                PlanField("减仓条件", reduce, 2, "什么风险或仓位信号出现时应复核减仓。") { reduce = it }
+                PlanField("退出 / 失效条件", exit, 2, "什么事实证明原交易逻辑不再成立，是最重要的风险边界。") { exit = it }
+                PlanField("最大仓位 %", maxPosition, help = "单一标的最多占总资产的比例；用于限制集中风险。") { maxPosition = it }
+                PlanField("单笔风险预算 %", riskBudget, help = "一次交易最多允许承担的总资产损失比例；用于计算建议数量。") { riskBudget = it }
+                TextButton(onClick = { showAdvanced = !showAdvanced }) { Text(if (showAdvanced) "收起高级比较项" else "显示高级比较项（可选）") }
+                if (showAdvanced) {
+                    PlanField("比较基准代码（如 sh000300）", benchmarkSymbol, help = "可选。用于判断该标的相对市场是强还是弱。") { benchmarkSymbol = it }
+                    PlanField("比较基准名称（如 沪深300）", benchmarkName, help = "可选，仅用于界面显示。") { benchmarkName = it }
+                }
                 validation?.let { Text(it, color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.bodySmall) }
                 Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
                     OutlinedButton(onClick = onDismiss, modifier = Modifier.weight(1f)) { Text("取消") }
@@ -455,8 +481,8 @@ private fun TradePlanDialog(initial: TradePlanDto?, initialSymbol: String = "", 
 }
 
 @Composable
-private fun PlanField(label: String, value: String, lines: Int = 1, onChange: (String) -> Unit) {
-    OutlinedTextField(value = value, onValueChange = onChange, label = { Text(label) }, modifier = Modifier.fillMaxWidth(), minLines = lines, maxLines = lines + 2)
+private fun PlanField(label: String, value: String, lines: Int = 1, help: String = "", onChange: (String) -> Unit) {
+    OutlinedTextField(value = value, onValueChange = onChange, label = { Text(label) }, supportingText = if (help.isBlank()) null else ({ Text(help) }), modifier = Modifier.fillMaxWidth(), minLines = lines, maxLines = lines + 2)
 }
 
 @Composable
@@ -542,6 +568,7 @@ private fun TodayScreen() {
     val api = ApiClient.service(context)
     var holdings by remember { mutableStateOf<List<HoldingDto>>(emptyList()) }
     var portfolioAnalysis by remember { mutableStateOf<List<PortfolioAnalysisItemDto>>(emptyList()) }
+    var decisionReport by remember { mutableStateOf<DecisionReportDto?>(null) }
     var selectedSymbol by remember { mutableStateOf<String?>(null) }
     var error by remember { mutableStateOf<String?>(null) }
     var statusMessage by remember { mutableStateOf<String?>(null) }
@@ -553,6 +580,7 @@ private fun TodayScreen() {
             holdings = api.holdings()
             portfolioAnalysis = api.portfolioAnalysis().items
             if (selectedSymbol == null) selectedSymbol = holdings.firstOrNull()?.symbol
+            selectedSymbol?.let { symbol -> decisionReport = runCatching { api.latestDecision(symbol) }.getOrNull() }
         } catch (exception: Exception) {
             error = "无法读取决策数据：${exception.message ?: "请确认后端正在运行"}"
         }
@@ -561,16 +589,27 @@ private fun TodayScreen() {
         val holding = holdings.firstOrNull { it.symbol == selectedSymbol } ?: return@launch
         analyzing = true
         error = null
-        statusMessage = "正在请求最新行情，并建立 ${holding.name} 的决策上下文…"
+        statusMessage = "正在刷新行情并生成 ${holding.name} 的决策报告…"
         try {
-            // This request only starts the server-side market refresh.  The separate
-            // AI conversation consumes the saved context; UI never waits on an LLM.
             ApiClient.marketQuotes(api, MarketQuoteBatchRequestDto(listOf(holding.symbol), refresh = true))
-            val decision = api.decisionContext(holding.symbol)
-            portfolioAnalysis = api.portfolioAnalysis().items
-            statusMessage = "已固化决策快照（数据完整度 ${decision.data_quality.score_percent}%）。AI 解读会在独立会话完成后回写；当前先展示可核验的规则结论。"
+            val job = api.generateDecision(DecisionGenerateRequestDto(listOf(holding.symbol))).jobs.firstOrNull()
+                ?: error("服务端未返回决策任务")
+            repeat(24) {
+                val current = api.decisionJob(job.job_id)
+                when (current.status) {
+                    "succeeded" -> {
+                        decisionReport = api.latestDecision(holding.symbol)
+                        portfolioAnalysis = api.portfolioAnalysis().items
+                        statusMessage = "决策报告已生成：包含证据、规则候选与仓位测算；不会自动交易。"
+                        return@launch
+                    }
+                    "failed" -> error(current.error_message ?: "决策任务失败")
+                }
+                delay(750)
+            }
+            error("决策任务仍在后台处理，请稍后刷新此页查看结果")
         } catch (exception: Exception) {
-            error = "未能启动主动分析：${exception.message ?: "请稍后重试"}"
+            error = "未能生成决策报告：${exception.message ?: "请稍后重试"}"
         } finally {
             analyzing = false
         }
@@ -595,7 +634,12 @@ private fun TodayScreen() {
                 holdings.forEach { holding ->
                     val selected = holding.symbol == selectedSymbol
                     OutlinedButton(
-                        onClick = { selectedSymbol = holding.symbol; statusMessage = null },
+                        onClick = {
+                            selectedSymbol = holding.symbol
+                            decisionReport = null
+                            statusMessage = null
+                            scope.launch { decisionReport = runCatching { api.latestDecision(holding.symbol) }.getOrNull() }
+                        },
                         modifier = Modifier.fillMaxWidth(),
                         shape = RoundedCornerShape(14.dp),
                         colors = ButtonDefaults.outlinedButtonColors(containerColor = if (selected) MaterialTheme.colorScheme.primaryContainer else Color.Transparent),
@@ -611,23 +655,24 @@ private fun TodayScreen() {
         selectedHolding?.let { holding -> item {
             Column(Modifier.padding(horizontal = 20.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
                 PrimaryAction("根据当前行情主动分析 ${holding.name}", Icons.Filled.AutoGraph, ::analyzeSelected, Modifier.fillMaxWidth(), enabled = !analyzing)
-                Text("将刷新行情并固化本次输入；AI 解读由独立会话异步执行，不会阻塞规则分析。", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                Text("会生成可追溯报告：证据冲突、规则候选、仓位约束及可选 AI 研究结论；不会自动交易。", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
             }
         } }
-        selectedAnalysis?.let { item { DecisionReasoningRoute(it) } }
-        if (selectedHolding != null && selectedAnalysis == null) item { StatusCard("该持仓的规则分析正在准备中。点击主动分析可立即建立一份可追溯的输入快照。") }
+        decisionReport?.let { report -> item { DecisionReportRoute(report) } }
+        if (decisionReport == null) selectedAnalysis?.let { item { BaselineReviewRoute(it) } }
+        if (selectedHolding != null && decisionReport == null) item { StatusCard("尚未生成新版决策报告。点击主动分析后将在这里展示可追溯的证据与仓位结果。") }
     }
 }
 
 @Composable
-private fun DecisionReasoningRoute(item: PortfolioAnalysisItemDto) {
+private fun BaselineReviewRoute(item: PortfolioAnalysisItemDto) {
     val steps = item.analysis_trace.ifEmpty {
         listOf(AnalysisTraceStepDto("决策结论", "unavailable", "尚未取得本次分析的可视化轨迹。"))
     }
     Card(Modifier.padding(horizontal = 20.dp).fillMaxWidth(), shape = RoundedCornerShape(18.dp)) {
         Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
-            Text("${item.name} 的决策路线", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
-            Text("结论：${analysisActionLabel(item.action)} · 证据完整度 ${item.confidence_percent}%", color = analysisActionColor(item.action), style = MaterialTheme.typography.labelLarge, fontWeight = FontWeight.Bold)
+            Text("基础风险复核", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
+            Text("${analysisActionLabel(item.action)} · 数据完整度 ${item.confidence_percent}%", color = analysisActionColor(item.action), style = MaterialTheme.typography.labelLarge, fontWeight = FontWeight.Bold)
             ExplainableText(item.reason, style = MaterialTheme.typography.bodyMedium)
             steps.forEachIndexed { index, step ->
                 Row(verticalAlignment = Alignment.Top) {
@@ -639,9 +684,96 @@ private fun DecisionReasoningRoute(item: PortfolioAnalysisItemDto) {
                 }
                 if (index != steps.lastIndex) HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
             }
-            Text("下一步：AI 会话将基于已固化的证据快照补充解释与待核验项；不会生成自动交易指令。", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            Text("这是旧版基础复核，仅作数据检查；请以上方新版决策报告作为本次主动分析结果。", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
         }
     }
+}
+
+@Composable
+private fun DecisionReportRoute(report: DecisionReportDto) {
+    Card(Modifier.padding(horizontal = 20.dp).fillMaxWidth(), shape = RoundedCornerShape(18.dp)) {
+        Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+            Text("本次决策报告", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
+            Text(
+                "${decisionActionLabel(report.action)} · ${decisionStatusLabel(report.status)}",
+                color = decisionActionColor(report.action), style = MaterialTheme.typography.labelLarge, fontWeight = FontWeight.Bold,
+            )
+            Text(report.summary, style = MaterialTheme.typography.bodyMedium)
+            Text("生成于 ${beijingTimestamp(report.generated_at)} · 策略 ${report.policy_version}", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+
+            report.action_candidates.firstOrNull()?.let { candidate ->
+                HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
+                if (candidate.blocked_reasons.isNotEmpty()) {
+                    Text("解除阻断", style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.SemiBold)
+                    Text("本次未生成操作结论。请先完成以下项目，再重新分析。", style = MaterialTheme.typography.bodySmall)
+                    candidate.blocked_reasons.map(::blockerGuidance).forEach { guidance ->
+                        Text(guidance.title, color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.bodySmall, fontWeight = FontWeight.SemiBold)
+                        Text(guidance.nextStep, style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    }
+                } else {
+                    Text("规则候选", style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.SemiBold)
+                    Text("${decisionActionLabel(candidate.action)} · 优先级 ${candidate.priority} · 规则评分 ${(candidate.policy_score * 100).toInt()}%", style = MaterialTheme.typography.bodySmall)
+                }
+            }
+
+            report.sizing?.let { sizing ->
+                HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
+                Text("仓位约束", style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.SemiBold)
+                val target = sizing.target_quantity ?: sizing.suggested_quantity
+                Text(
+                    if (target == null) "${sizingStatusLabel(sizing.status)}：当前 ${formatPositionValue(sizing.current_quantity)} 股，暂不提供数量建议。"
+                    else "${sizingStatusLabel(sizing.status)}：当前 ${formatPositionValue(sizing.current_quantity)} 股，建议目标 ${formatPositionValue(target)} 股。",
+                    style = MaterialTheme.typography.bodySmall,
+                )
+                sizing.current_position_percent?.let { Text("当前仓位 ${formatPositionValue(it)}%${sizing.target_position_percent?.let { targetPercent -> " · 目标 ${formatPositionValue(targetPercent)}%" } ?: ""}", style = MaterialTheme.typography.bodySmall) }
+                sizing.blocked_reasons.map(::blockerGuidance).forEach { guidance -> Text("需处理：${guidance.title}", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.error) }
+            }
+
+            report.ai_assessment?.let { ai ->
+                HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
+                Text("AI 研究解读", style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.SemiBold)
+                Text("交易逻辑：${thesisStatusLabel(ai.thesis_status)} · 不确定性：${uncertaintyLabel(ai.uncertainty)}", style = MaterialTheme.typography.bodySmall, fontWeight = FontWeight.Medium)
+                Text(ai.summary, style = MaterialTheme.typography.bodySmall)
+                ai.missing_evidence.forEach { missing -> Text("待核验：$missing", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant) }
+            }
+
+            HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
+            Text("关键证据", style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.SemiBold)
+            if (report.evidence.isEmpty()) Text("本次没有可展示的结构化证据。", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            report.evidence.sortedByDescending { it.strength }.take(5).forEach { evidence ->
+                Text("${evidenceDirectionLabel(evidence.direction)} ${evidence.title}", color = evidenceDirectionColor(evidence.direction), style = MaterialTheme.typography.bodySmall, fontWeight = FontWeight.SemiBold)
+                Text(evidence.description, style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            }
+            Text("报告仅用于研究与复核，不构成交易指令，也不会自动执行。", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+        }
+    }
+}
+
+private fun decisionActionLabel(action: String): String = when (action) {
+    "OPEN" -> "建立仓位候选"; "ADD" -> "加仓候选"; "HOLD" -> "持有"; "WATCH" -> "观察"; "REDUCE" -> "减仓复核"; "EXIT" -> "退出复核"; "BLOCKED" -> "暂不生成结论"; else -> action
+}
+
+@Composable
+private fun decisionActionColor(action: String): Color = when (action) {
+    "REDUCE", "EXIT", "BLOCKED" -> MaterialTheme.colorScheme.error
+    "ADD", "OPEN" -> MaterialTheme.colorScheme.tertiary
+    else -> MaterialTheme.colorScheme.primary
+}
+
+private fun decisionStatusLabel(status: String): String = when (status) { "READY" -> "数据可用"; "DEGRADED" -> "数据需留意"; "BLOCKED" -> "数据阻断"; else -> status }
+private fun sizingStatusLabel(status: String): String = when (status) { "ready" -> "测算完成"; "blocked" -> "测算受阻"; "not_applicable" -> "当前不适用"; else -> status }
+private fun thesisStatusLabel(status: String): String = when (status) { "strengthened" -> "强化"; "unchanged" -> "维持"; "weakened" -> "削弱"; "invalidated" -> "失效"; else -> "待判断" }
+private fun uncertaintyLabel(level: String): String = when (level) { "low" -> "低"; "medium" -> "中"; "high" -> "高"; else -> level }
+private fun evidenceDirectionLabel(direction: String): String = when (direction) { "positive" -> "支持"; "negative" -> "反对"; "uncertain" -> "不确定"; else -> "中性" }
+@Composable
+private fun evidenceDirectionColor(direction: String): Color = when (direction) { "negative" -> MaterialTheme.colorScheme.error; "positive" -> MaterialTheme.colorScheme.tertiary; else -> MaterialTheme.colorScheme.onSurfaceVariant }
+private data class BlockerGuidance(val title: String, val nextStep: String)
+private fun blockerGuidance(code: String): BlockerGuidance = when (code) {
+    "trade_plan.enabled" -> BlockerGuidance("缺少已启用的交易计划", "前往“管理”→“交易计划”，为该标的新增或启用计划，并填写入场、加仓、减仓、退出条件、仓位上限和风险预算；保存后回到此页重新分析。")
+    "quote.price" -> BlockerGuidance("缺少可用行情价格", "前往“持仓”刷新行情；若仍失败，请核对证券代码、网络连接和行情服务状态。")
+    "daily_bars.minimum_60" -> BlockerGuidance("日线历史不足 60 个交易日", "保持网络连接并稍后重试，等待后端补齐历史日线；新上市或停牌标的可能暂时无法生成完整结论。")
+    "account.total_assets" -> BlockerGuidance("无法计算组合总资产", "请确认所有持仓均有可用行情，并在“持仓”页录入可用资金；随后重新刷新行情。")
+    else -> BlockerGuidance("需要补充：$code", "请刷新行情并核对持仓、资金和交易计划信息后重新分析。")
 }
 
 private fun beijingTimestamp(value: String?): String {
@@ -831,7 +963,7 @@ private fun UpdateDownloadProgressCard(progress: UpdateDownloadProgress, modifie
     }
     Card(modifier.fillMaxWidth(), colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.secondaryContainer)) {
         Column(Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-            Text("${progress.state.label}$progressText$sizeText", style = MaterialTheme.typography.bodySmall, fontWeight = FontWeight.Medium)
+            Text("${progress.message}$progressText$sizeText", style = MaterialTheme.typography.bodySmall, fontWeight = FontWeight.Medium)
             if (progress.fraction != null) {
                 LinearProgressIndicator(progress = { progress.fraction }, modifier = Modifier.fillMaxWidth())
             } else if (progress.state.isActive) {

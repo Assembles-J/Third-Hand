@@ -454,6 +454,21 @@ class TradePlan(TradePlanInput):
     updated_at: datetime
 
 
+class TradePlanDraft(BaseModel):
+    symbol: str
+    horizon: str
+    thesis: str
+    market_expectation: str
+    catalysts: list[str]
+    entry_condition: str
+    add_condition: str
+    reduce_condition: str
+    exit_condition: str
+    max_position_percent: float
+    risk_budget_percent: float
+    notice: str
+
+
 store = PortfolioStore()
 market_data = MarketDataService()
 trading_calendar = TradingCalendarService()
@@ -1265,6 +1280,35 @@ def save_personal_rule(payload: PersonalRuleInput) -> PersonalRule:
 @app.get("/v1/trade-plans", response_model=list[TradePlan])
 def list_trade_plans() -> list[TradePlan]:
     return [TradePlan.model_validate(item) for item in store.trade_plans()]
+
+
+@app.get("/v1/trade-plans/draft/{symbol}", response_model=TradePlanDraft)
+def trade_plan_draft(symbol: str) -> TradePlanDraft:
+    """Return editable, conservative defaults; never infer a user's investment thesis."""
+    normalized = symbol.strip().upper()
+    holding = next((item for item in store.list() if str(item["symbol"]).upper() == normalized), None)
+    name = str(holding["name"]) if holding else normalized
+    risk = store.cached_risk(normalized) or {}
+    rules = [item for item in store.personal_rules() if item.get("enabled")]
+    rule = next((item for item in rules if item.get("scope") == "symbol" and item.get("symbol") == normalized), next((item for item in rules if item.get("scope") == "global"), None))
+    volatility = float(risk.get("annualized_volatility_percent") or 0)
+    high_volatility = volatility >= 40
+    rule_cap = float(rule["max_position_percent"]) if rule else 15.0
+    max_position = min(rule_cap, 10.0) if high_volatility else rule_cap
+    risk_budget = 1.0 if high_volatility else 2.0
+    risk_note = f"当前年化波动 {volatility:.1f}% 偏高，已采用更保守的仓位与风险预算。" if high_volatility else "已按个人仓位上限和常用波段风险预算预填。"
+    return TradePlanDraft(
+        symbol=normalized, horizon="swing",
+        thesis=f"待确认：{name} 的持有依据（请补充业绩、估值或行业逻辑）。",
+        market_expectation="待确认：市场已计入的主要预期，以及与预期相反的风险。",
+        catalysts=["财报披露", "行业数据", "公司公告"],
+        entry_condition="仅在交易逻辑仍成立且风险预算允许时，分批执行。",
+        add_condition="仅在逻辑强化、仓位低于上限且未触发风险条件时考虑。",
+        reduce_condition="仓位接近上限、风险恶化或逻辑弱化时，复核减仓。",
+        exit_condition="交易逻辑失效、核心事实被证伪或触发风险边界时退出。",
+        max_position_percent=max_position, risk_budget_percent=risk_budget,
+        notice=f"这是可编辑的研究草案，不是交易建议。{risk_note}",
+    )
 
 
 @app.post("/v1/trade-plans", response_model=TradePlan)

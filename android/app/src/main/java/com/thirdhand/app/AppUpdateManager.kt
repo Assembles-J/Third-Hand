@@ -53,6 +53,8 @@ data class UpdateDownloadProgress(
     val state: UpdateDownloadState,
     val downloadedBytes: Long,
     val totalBytes: Long,
+    val reasonCode: Int = 0,
+    val message: String = state.label,
 ) {
     val fraction: Float? = totalBytes.takeIf { it > 0 }
         ?.let { (downloadedBytes.toDouble() / it).coerceIn(0.0, 1.0).toFloat() }
@@ -116,10 +118,18 @@ object AppUpdateManager {
         preferences(context).edit().putBoolean(AutomaticDownloadEnabled, enabled).apply()
     }
 
-    /** Starts the default background download only on an unmetered Wi-Fi connection. */
+    /** Starts the default background download on Wi-Fi, including Wi-Fi marked as metered. */
     fun downloadAutomaticallyOnWifi(context: Context, update: AppUpdate): UpdateLaunchResult? {
         if (!automaticDownloadEnabled(context) || !isOnWifi(context) || completedDownload(context) != null) return null
-        if (downloadProgress(context)?.state?.isActive == true) return null
+        val existing = downloadProgress(context)
+        if (existing?.state?.isActive == true) {
+            // Older builds used setAllowedOverMetered(false), which leaves a metered Wi-Fi
+            // download permanently queued. Recreate that task with the corrected Wi-Fi rule.
+            if (
+                existing.state != UpdateDownloadState.PAUSED ||
+                existing.reasonCode != DownloadManager.PAUSED_QUEUED_FOR_WIFI
+            ) return null
+        }
         if (
             Build.VERSION.SDK_INT <= Build.VERSION_CODES.P &&
             context.checkSelfPermission(Manifest.permission.WRITE_EXTERNAL_STORAGE) != PackageManager.PERMISSION_GRANTED
@@ -136,17 +146,29 @@ object AppUpdateManager {
         val cursor = manager.query(DownloadManager.Query().setFilterById(id)) ?: return null
         cursor.use {
             if (!it.moveToFirst()) return null
-            val state = when (it.getInt(it.getColumnIndexOrThrow(DownloadManager.COLUMN_STATUS))) {
+            val status = it.getInt(it.getColumnIndexOrThrow(DownloadManager.COLUMN_STATUS))
+            val reason = it.getInt(it.getColumnIndexOrThrow(DownloadManager.COLUMN_REASON))
+            val state = when (status) {
                 DownloadManager.STATUS_PENDING -> UpdateDownloadState.PENDING
                 DownloadManager.STATUS_RUNNING -> UpdateDownloadState.DOWNLOADING
                 DownloadManager.STATUS_PAUSED -> UpdateDownloadState.PAUSED
                 DownloadManager.STATUS_SUCCESSFUL -> UpdateDownloadState.VERIFYING
                 else -> UpdateDownloadState.FAILED
             }
+            val message = if (status == DownloadManager.STATUS_PAUSED) {
+                when (reason) {
+                    DownloadManager.PAUSED_QUEUED_FOR_WIFI -> "等待可用的 Wi‑Fi 网络"
+                    DownloadManager.PAUSED_WAITING_FOR_NETWORK -> "网络暂时不可用，等待恢复"
+                    DownloadManager.PAUSED_WAITING_TO_RETRY -> "下载暂时中断，系统即将重试"
+                    else -> state.label
+                }
+            } else state.label
             return UpdateDownloadProgress(
                 state = state,
                 downloadedBytes = it.getLong(it.getColumnIndexOrThrow(DownloadManager.COLUMN_BYTES_DOWNLOADED_SO_FAR)).coerceAtLeast(0L),
                 totalBytes = it.getLong(it.getColumnIndexOrThrow(DownloadManager.COLUMN_TOTAL_SIZE_BYTES)).coerceAtLeast(0L),
+                reasonCode = reason,
+                message = message,
             )
         }
     }
@@ -201,10 +223,13 @@ object AppUpdateManager {
             .setTitle("Third-Hand ${update.versionName}")
             .setDescription("正在下载更新，完成后可在管理页面安装")
             .setMimeType(ApkMimeType)
-            .setAllowedOverMetered(!wifiOnly)
+            // Some devices mark ordinary Wi-Fi as metered. Network type still limits
+            // automatic downloads to Wi-Fi, while allowing those Wi-Fi connections.
+            .setAllowedOverMetered(true)
             .setAllowedOverRoaming(false)
             .setNotificationVisibility(DownloadManager.Request.VISIBILITY_VISIBLE_NOTIFY_COMPLETED)
             .setDestinationInExternalPublicDir(Environment.DIRECTORY_DOWNLOADS, "$DownloadDirectory/$filename")
+        if (wifiOnly) request.setAllowedNetworkTypes(DownloadManager.Request.NETWORK_WIFI)
         val downloadId = manager.enqueue(request)
         preferences(context).edit()
             .putLong(DownloadId, downloadId)
@@ -284,7 +309,7 @@ object AppUpdateManager {
 
     fun clearFailedDownload(context: Context, id: Long) {
         context.getSystemService(DownloadManager::class.java).remove(id)
-        preferences(context).edit().clear().apply()
+        clearDownloadPreferences(context)
     }
 
     fun openInstaller(context: Context, uri: Uri): Boolean {
@@ -351,7 +376,7 @@ object AppUpdateManager {
             preferences.getLong(CompletedDownloadId, -1L),
         ).filter { it >= 0 }.toLongArray()
         if (ids.isNotEmpty()) manager.remove(*ids)
-        preferences.edit().clear().apply()
+        clearDownloadPreferences(context)
     }
 
     private fun clearPreviousDownload(context: Context, manager: DownloadManager) {
@@ -361,7 +386,20 @@ object AppUpdateManager {
             preferences.getLong(CompletedDownloadId, -1L),
         ).filter { it >= 0 }.toLongArray()
         if (ids.isNotEmpty()) manager.remove(*ids)
-        preferences.edit().clear().apply()
+        clearDownloadPreferences(context)
+    }
+
+    private fun clearDownloadPreferences(context: Context) {
+        preferences(context).edit()
+            .remove(DownloadId)
+            .remove(CompletedDownloadId)
+            .remove(ExpectedSha256)
+            .remove(ExpectedSize)
+            .remove(ExpectedVersionCode)
+            .remove(ExpectedVersionName)
+            .remove(DownloadFilename)
+            .remove(SignatureMatches)
+            .apply()
     }
 
     private fun preferences(context: Context) =

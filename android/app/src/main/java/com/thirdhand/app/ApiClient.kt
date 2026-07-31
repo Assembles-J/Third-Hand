@@ -216,6 +216,41 @@ data class DecisionContextDto(
     val generated_at: String,
     val data_quality: DecisionDataQualityDto,
 )
+data class DecisionGenerateRequestDto(val symbols: List<String>, val force: Boolean = true)
+data class DecisionJobStartDto(val symbol: String, val job_id: String, val status: String)
+data class DecisionGenerateResponseDto(val jobs: List<DecisionJobStartDto>)
+data class DecisionJobDto(val job_id: String, val symbol: String, val status: String, val error_message: String? = null)
+data class DecisionEvidenceDto(
+    val evidence_id: String, val category: String, val direction: String, val strength: Double,
+    val title: String, val description: String, val value: Any? = null, val threshold: Any? = null,
+    val source: String, val fresh: Boolean, val rule_id: String? = null,
+)
+data class DecisionActionCandidateDto(
+    val action: String, val priority: Int, val policy_score: Double,
+    val supporting_evidence_ids: List<String> = emptyList(), val opposing_evidence_ids: List<String> = emptyList(),
+    val triggered_rule_ids: List<String> = emptyList(), val blocked_reasons: List<String> = emptyList(),
+)
+data class DecisionReasoningStepDto(val stage: String, val summary: String, val evidence_ids: List<String> = emptyList())
+data class DecisionAiAssessmentDto(
+    val thesis_status: String, val preferred_action: String, val supporting_evidence_ids: List<String> = emptyList(),
+    val opposing_evidence_ids: List<String> = emptyList(), val missing_evidence: List<String> = emptyList(),
+    val reasoning_steps: List<DecisionReasoningStepDto> = emptyList(), val uncertainty: String, val summary: String,
+)
+data class PositionSizingResultDto(
+    val status: String, val current_quantity: Double, val suggested_quantity: Double? = null, val target_quantity: Double? = null,
+    val current_position_percent: Double? = null, val target_position_percent: Double? = null,
+    val quantity_by_risk: Double? = null, val quantity_by_cash: Double? = null, val quantity_by_position_cap: Double? = null,
+    val quantity_by_liquidity: Double? = null, val lot_size: Int? = null, val entry_price: Double? = null,
+    val invalidation_price: Double? = null, val risk_per_share: Double? = null, val risk_capital: Double? = null,
+    val blocked_reasons: List<String> = emptyList(), val sizing_version: String,
+)
+data class DecisionReportDto(
+    val decision_id: String, val context_id: String, val symbol: String, val generated_at: String, val status: String,
+    val action: String, val summary: String, val evidence: List<DecisionEvidenceDto> = emptyList(),
+    val action_candidates: List<DecisionActionCandidateDto> = emptyList(), val ai_assessment: DecisionAiAssessmentDto? = null,
+    val sizing: PositionSizingResultDto? = null, val policy_version: String, val prompt_version: String? = null,
+    val input_hash: String, val automatic_execution: Boolean = false,
+)
 data class PortfolioAnalysisItemDto(val symbol: String, val name: String, val action: String, val reason: String, val evidence: List<String>, val confidence_percent: Int, val rule_snapshot: Map<String, Any>? = null, val technical_snapshot: TechnicalSnapshotDto? = null, val decision_snapshot: DecisionSnapshotDto? = null, val analysis_trace: List<AnalysisTraceStepDto> = emptyList(), val disclaimer: String)
 data class PortfolioAnalysisDto(val id: String, val generated_at: String, val items: List<PortfolioAnalysisItemDto>)
 data class ImpactGraphNodeDto(
@@ -273,6 +308,12 @@ data class TradePlanDto(
     val catalysts: List<String>, val entry_condition: String, val add_condition: String, val reduce_condition: String,
     val exit_condition: String, val max_position_percent: Double, val risk_budget_percent: Double,
     val enabled: Boolean, val version: Int, val updated_at: String,
+)
+data class TradePlanDraftDto(
+    val symbol: String, val horizon: String, val thesis: String, val market_expectation: String,
+    val catalysts: List<String>, val entry_condition: String, val add_condition: String,
+    val reduce_condition: String, val exit_condition: String, val max_position_percent: Double,
+    val risk_budget_percent: Double, val notice: String,
 )
 data class TradePlanInputDto(
     val symbol: String, val horizon: String, val thesis: String, val market_expectation: String, val benchmark_symbol: String? = null, val benchmark_name: String? = null,
@@ -366,6 +407,12 @@ interface ThirdHandApi {
     suspend fun portfolioAnalysis(): PortfolioAnalysisDto
     @GET("v1/decisions/context/{symbol}")
     suspend fun decisionContext(@Path("symbol") symbol: String): DecisionContextDto
+    @POST("v1/decisions/generate")
+    suspend fun generateDecision(@Body request: DecisionGenerateRequestDto): DecisionGenerateResponseDto
+    @GET("v1/decisions/jobs/{jobId}")
+    suspend fun decisionJob(@Path("jobId") jobId: String): DecisionJobDto
+    @GET("v1/decisions/latest")
+    suspend fun latestDecision(@Query("symbol") symbol: String): DecisionReportDto
     @GET("v1/portfolio/impact-graph")
     suspend fun impactGraph(@Query("symbol") symbol: String? = null): ImpactGraphDto
 
@@ -389,6 +436,8 @@ interface ThirdHandApi {
 
     @GET("v1/trade-plans")
     suspend fun tradePlans(): List<TradePlanDto>
+    @GET("v1/trade-plans/draft/{symbol}")
+    suspend fun tradePlanDraft(@Path("symbol") symbol: String): TradePlanDraftDto
     @POST("v1/trade-plans")
     suspend fun saveTradePlan(@Body item: TradePlanInputDto): TradePlanDto
 
