@@ -30,6 +30,14 @@ android { namespace = "com.thirdhand.app"; compileSdk = 35
         }
     }
     buildTypes {
+        getByName("debug") {
+            // Keep the development app independently installable alongside the
+            // production app. Debug APKs use the default debug signing key,
+            // whereas release APKs use the release key, so sharing an ID makes
+            // Android treat them as conflicting packages.
+            applicationIdSuffix = ".debug"
+            versionNameSuffix = "-debug"
+        }
         getByName("release") {
             if (!releaseStorePath.isNullOrBlank()) {
                 signingConfig = signingConfigs.getByName("release")
@@ -65,6 +73,7 @@ dependencies {
     implementation("org.jetbrains.kotlinx:kotlinx-coroutines-play-services:1.9.0")
     implementation("com.squareup.retrofit2:retrofit:2.11.0")
     implementation("com.squareup.retrofit2:converter-gson:2.11.0")
+    implementation("com.squareup.okhttp3:logging-interceptor:4.12.0")
     implementation("com.google.mlkit:text-recognition-chinese:16.0.1")
     debugImplementation("androidx.compose.ui:ui-tooling")
 }

@@ -1,6 +1,7 @@
 package com.thirdhand.app
 
 import android.os.Bundle
+import android.util.Log
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.activity.ComponentActivity
@@ -112,8 +113,8 @@ private fun ThirdHandApp(resumeSignal: Int) {
     var tab by remember { mutableIntStateOf(0) }
     var startupUpdate by remember { mutableStateOf<AppUpdate?>(null) }
     var updateMessage by remember { mutableStateOf<String?>(null) }
-    val labels = listOf("今日", "持仓", "消息", "我的", "管理")
-    val icons = listOf(Icons.Filled.AutoGraph, Icons.Filled.Wallet, Icons.AutoMirrored.Filled.Article, Icons.Filled.AccountCircle, Icons.Filled.AdminPanelSettings)
+    val labels = listOf("今日", "持仓", "消息", "我的与管理")
+    val icons = listOf(Icons.Filled.AutoGraph, Icons.Filled.Wallet, Icons.AutoMirrored.Filled.Article, Icons.Filled.AdminPanelSettings)
     LaunchedEffect(resumeSignal) {
         try {
             startupUpdate = AppUpdateManager.check(context)
@@ -142,11 +143,10 @@ private fun ThirdHandApp(resumeSignal: Int) {
                     0 -> TodayScreen()
                     1 -> HoldingsScreen()
                     2 -> FeedScreen()
-                    3 -> ProfileScreen(
+                    else -> UnifiedCenterScreen(
                         themeMode = themeMode,
                         onThemeModeChange = { mode -> ThemeStore.save(context, mode); themeMode = mode },
                     )
-                    else -> AdminDashboardScreen()
                 }
             }
         }
@@ -315,7 +315,7 @@ private fun TodayScreen() {
             }
             try {
                 val symbols = holdings.map { it.symbol }
-                quotes = api.quotes(MarketQuoteBatchRequestDto(symbols, refresh = forceQuotes))
+                quotes = ApiClient.marketQuotes(api, MarketQuoteBatchRequestDto(symbols, refresh = forceQuotes))
                 refreshMessage = when {
                     quotes.any { it.refresh_status == "stale_fallback" } -> "刷新失败，当前显示上次成功获取的行情"
                     forceQuotes -> "行情已主动刷新"
@@ -342,7 +342,7 @@ private fun TodayScreen() {
         while (true) {
             delay(60_000)
             try {
-                quotes = api.quotes(MarketQuoteBatchRequestDto(holdings.map { it.symbol }))
+                quotes = ApiClient.marketQuotes(api, MarketQuoteBatchRequestDto(holdings.map { it.symbol }))
                 refreshMessage = if (quotes.any { it.refresh_status == "stale_fallback" }) {
                     "自动刷新失败，继续显示上次行情"
                 } else {
@@ -671,9 +671,22 @@ private fun HoldingsScreen() {
             error = null
             quoteError = null
             quotesBySymbol = if (holdings.isEmpty()) emptyMap() else try {
-                api.quotes(MarketQuoteBatchRequestDto(holdings.map { it.symbol }, refresh = true)).associateBy { it.symbol }
+                val requestedSymbols = holdings.map { it.symbol }
+                Log.d("ThirdHandMarket", "HOLDINGS_REQUEST symbols=$requestedSymbols refresh=true")
+                val fetchedQuotes = ApiClient.marketQuotes(api, MarketQuoteBatchRequestDto(requestedSymbols, refresh = true))
+                val failures = fetchedQuotes.filter { it.price == null || !it.error_code.isNullOrBlank() }
+                if (failures.isNotEmpty()) {
+                    quoteError = failures.joinToString("；") { quote ->
+                        "${quote.symbol}: ${quote.error_code ?: "missing_price"} ${quote.error_message ?: quote.freshness_note}"
+                    }
+                    Log.e("ThirdHandMarket", "HOLDINGS_RESPONSE_FAILURE $quoteError")
+                } else {
+                    Log.d("ThirdHandMarket", "HOLDINGS_RESPONSE_OK quotes=$fetchedQuotes")
+                }
+                fetchedQuotes.associateBy { it.symbol }
             } catch (exception: Exception) {
-                quoteError = "现价暂不可用；成本与持仓信息仍可查看。"
+                quoteError = "请求异常 ${exception::class.simpleName}: ${exception.message ?: "无额外错误信息"}"
+                Log.e("ThirdHandMarket", "HOLDINGS_REQUEST_FAILURE", exception)
                 emptyMap()
             }
         }
@@ -778,6 +791,8 @@ private fun HoldingsScreen() {
                     Text("来源：${it.source}", style = MaterialTheme.typography.bodySmall)
                     Text("更新时间：${beijingTimestamp(it.retrieved_at)}", style = MaterialTheme.typography.bodySmall)
                     if (it.freshness_note.isNotBlank()) Text("数据说明：${it.freshness_note}", style = MaterialTheme.typography.bodySmall)
+                    if (!it.error_code.isNullOrBlank()) Text("错误代码：${it.error_code}", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.error)
+                    if (!it.error_message.isNullOrBlank()) Text("错误详情：${it.error_message}", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.error)
                 }
                 quoteError?.let { Text("摘要：$it", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.error) }
             }
@@ -1230,7 +1245,7 @@ private fun GlossaryInfoCard(card: GlossaryCardDto) =
     }
 
 @Composable
-private fun ProfileScreen(themeMode: ThemeMode, onThemeModeChange: (ThemeMode) -> Unit) {
+fun ProfileScreen(themeMode: ThemeMode, onThemeModeChange: (ThemeMode) -> Unit) {
     val context = LocalContext.current
     val api = ApiClient.service(context)
     val scope = rememberCoroutineScope()
@@ -1241,6 +1256,8 @@ private fun ProfileScreen(themeMode: ThemeMode, onThemeModeChange: (ThemeMode) -
     var checkingUpdate by remember { mutableStateOf(false) }
     var personalRules by remember { mutableStateOf<List<PersonalRuleDto>>(emptyList()) }
     var learningCases by remember { mutableStateOf<List<LearningCaseDto>>(emptyList()) }
+    var learningAnalysis by remember { mutableStateOf<LearningCaseAnalysisDto?>(null) }
+    var analyzingLearning by remember { mutableStateOf(false) }
     var researchStatus by remember { mutableStateOf<String?>(null) }
     var showRuleDialog by remember { mutableStateOf(false) }
     var showLearningDialog by remember { mutableStateOf(false) }
@@ -1266,6 +1283,19 @@ private fun ProfileScreen(themeMode: ThemeMode, onThemeModeChange: (ThemeMode) -
                 updateStatus = "暂时无法检查更新，请确认服务地址和网络"
             } finally {
                 checkingUpdate = false
+            }
+        }
+    }
+    fun analyzeLearningCases() {
+        scope.launch {
+            analyzingLearning = true
+            researchStatus = null
+            try {
+                learningAnalysis = api.learningCaseAnalysis()
+            } catch (exception: Exception) {
+                researchStatus = "AI 复盘分析暂时不可用：${exception.message ?: "请稍后重试"}"
+            } finally {
+                analyzingLearning = false
             }
         }
     }
@@ -1299,7 +1329,15 @@ private fun ProfileScreen(themeMode: ThemeMode, onThemeModeChange: (ThemeMode) -
         )
     }
     LazyColumn(contentPadding = androidx.compose.foundation.layout.PaddingValues(bottom = 24.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
-        item { AppHero("我的", "守护资产的每一段生长") }
+        item { AppHero("资产与复盘", "把每次判断沉淀为下一次的依据") }
+        item {
+            AiLearningAnalysisCard(
+                analysis = learningAnalysis,
+                hasCases = learningCases.isNotEmpty(),
+                loading = analyzingLearning,
+                onAnalyze = { analyzeLearningCases() },
+            )
+        }
         item { Text("服务地址（模拟器默认 10.0.2.2；实机填写电脑局域网 IP 或 HTTPS 域名）", modifier = Modifier.padding(horizontal = 20.dp), color = MaterialTheme.colorScheme.onSurfaceVariant) }
         item { OutlinedTextField(baseUrl, { baseUrl = it }, label = { Text("例如 http://192.168.1.10:8000/") }, modifier = Modifier.padding(horizontal = 20.dp).fillMaxWidth()) }
         item { Column(Modifier.padding(horizontal = 20.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {

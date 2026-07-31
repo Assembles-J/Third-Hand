@@ -1,8 +1,13 @@
 package com.thirdhand.app
 
 import android.content.Context
+import android.util.Log
+import okhttp3.Interceptor
+import okhttp3.OkHttpClient
+import okio.Buffer
 import retrofit2.Retrofit
 import retrofit2.Response
+import retrofit2.HttpException
 import retrofit2.converter.gson.GsonConverterFactory
 import retrofit2.http.Body
 import retrofit2.http.DELETE
@@ -171,6 +176,13 @@ data class LearningCaseInputDto(
     val outcome: String, val position_band: String, val planned_action: String, val confidence: Double,
     val evidence_links: List<String> = emptyList(),
 )
+data class LearningCaseAnalysisDto(
+    val summary: String,
+    val recurring_patterns: List<String> = emptyList(),
+    val next_review_focus: List<String> = emptyList(),
+    val confidence: String,
+    val disclaimer: String,
+)
 data class ResearchRuleDto(
     val id: String, val category: String, val title: String, val trigger_text: String,
     val guidance: String, val confidence_ceiling: Double, val source_url: String, val version: String,
@@ -224,6 +236,13 @@ interface ThirdHandApi {
     @POST("v1/market/quotes/batch")
     suspend fun quotes(@Body request: MarketQuoteBatchRequestDto): List<MarketQuoteDto>
 
+    // Compatibility endpoint for servers deployed before batch POST was added.
+    @GET("v1/market/quotes")
+    suspend fun quotesLegacy(
+        @Query("symbols") symbols: List<String>,
+        @Query("refresh") refresh: Boolean,
+    ): List<MarketQuoteDto>
+
     @POST("v1/market/symbols/resolve")
     suspend fun symbolLookup(@Body request: SymbolResolveRequestDto): List<SymbolLookupResultDto>
 
@@ -237,6 +256,9 @@ interface ThirdHandApi {
 
     @POST("v1/learning-cases")
     suspend fun createLearningCase(@Body item: LearningCaseInputDto): LearningCaseDto
+
+    @POST("v1/learning-cases/analysis")
+    suspend fun learningCaseAnalysis(): LearningCaseAnalysisDto
 
     @GET("v1/research-rules")
     suspend fun researchRules(): List<ResearchRuleDto>
@@ -258,8 +280,51 @@ interface ThirdHandApi {
 }
 
 object ApiClient {
+    private const val MARKET_LOG_TAG = "ThirdHandMarket"
     private var configuredBaseUrl = ""
     private var configuredService: ThirdHandApi? = null
+
+    private fun requestBodyForLog(request: okhttp3.Request): String = request.body?.let { body ->
+        Buffer().use { buffer ->
+            body.writeTo(buffer)
+            buffer.readUtf8()
+        }
+    } ?: "<empty>"
+
+    private val marketDebugInterceptor = Interceptor { chain ->
+        val request = chain.request()
+        if (!BuildConfig.DEBUG || !request.url.encodedPath.contains("/v1/market/")) {
+            return@Interceptor chain.proceed(request)
+        }
+        val startedAt = System.nanoTime()
+        Log.d(MARKET_LOG_TAG, "REQUEST ${request.method} ${request.url} body=${requestBodyForLog(request)}")
+        try {
+            chain.proceed(request).also { response ->
+                val elapsedMs = (System.nanoTime() - startedAt) / 1_000_000
+                Log.d(
+                    MARKET_LOG_TAG,
+                    "RESPONSE ${response.code} ${request.method} ${request.url} elapsed_ms=$elapsedMs body=${response.peekBody(1024L * 1024L).string()}",
+                )
+            }
+        } catch (exception: Exception) {
+            val elapsedMs = (System.nanoTime() - startedAt) / 1_000_000
+            Log.e(MARKET_LOG_TAG, "FAILURE ${request.method} ${request.url} elapsed_ms=$elapsedMs", exception)
+            throw exception
+        }
+    }
+
+    /**
+     * Some production servers may still expose only the original GET endpoint.
+     * A 405 is an API-version mismatch, so retrying with GET is safe and avoids
+     * presenting it to the user as a market-data failure.
+     */
+    suspend fun marketQuotes(api: ThirdHandApi, request: MarketQuoteBatchRequestDto): List<MarketQuoteDto> = try {
+        api.quotes(request)
+    } catch (error: HttpException) {
+        if (error.code() != 405) throw error
+        Log.w(MARKET_LOG_TAG, "BATCH_POST_405_FALLBACK_TO_GET symbols=${request.symbols} refresh=${request.refresh}")
+        api.quotesLegacy(request.symbols, request.refresh)
+    }
 
     fun service(context: Context): ThirdHandApi {
         val baseUrl = EndpointStore.baseUrl(context)
@@ -267,6 +332,7 @@ object ApiClient {
             configuredBaseUrl = baseUrl
             configuredService = Retrofit.Builder()
             .baseUrl(baseUrl)
+            .client(OkHttpClient.Builder().addInterceptor(marketDebugInterceptor).build())
             .addConverterFactory(GsonConverterFactory.create())
             .build()
             .create(ThirdHandApi::class.java)
