@@ -928,6 +928,18 @@ class PortfolioStore:
         with self._connect() as connection: rows = connection.execute(query, args).fetchall()
         return [json.loads(str(row["payload"])) for row in rows]
 
+    def set_recommendation_evaluation_status(self, recommendation_id: str, evaluation_status: str) -> bool:
+        with self._connect() as connection:
+            row = connection.execute("SELECT payload FROM research_recommendations WHERE id=?", (recommendation_id,)).fetchone()
+            if not row:
+                return False
+            payload = json.loads(str(row["payload"]))
+            if payload.get("evaluation_status") == evaluation_status:
+                return False
+            payload["evaluation_status"] = evaluation_status
+            connection.execute("UPDATE research_recommendations SET payload=? WHERE id=?", (json.dumps(payload, ensure_ascii=False), recommendation_id))
+        return True
+
     def save_evaluations(self, recommendation_id: str, items: list[dict[str, object]]) -> None:
         with self._connect() as connection:
             connection.executemany("INSERT OR REPLACE INTO recommendation_evaluations VALUES (?, ?, ?)", [(recommendation_id, int(item["horizon"]), json.dumps(item, ensure_ascii=False)) for item in items])

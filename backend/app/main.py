@@ -226,6 +226,8 @@ class ResearchRecommendation(BaseModel):
     suggested_quantity: float | None = None; quantity_status: str | None = None
     conditions: list[dict[str, object]] = Field(default_factory=list); blocked_reasons: list[str] = Field(default_factory=list)
     automatic_execution: bool = False; evaluation_version: str | None = None
+    generated_at: datetime | None = None; generated_trading_date: str | None = None
+    evaluation_status: str | None = None
 
 
 class AiJob(BaseModel):
@@ -1301,7 +1303,8 @@ def generate_recommendations(payload: RecommendationRequest) -> list[ResearchRec
     quotes = {str(item["symbol"]): item for item in store.cached_quotes(payload.symbols)}
     results = []
     for symbol in dict.fromkeys(item.strip().upper() for item in payload.symbols):
-        item = {"id": str(uuid4()), **build_candidate(symbol, holdings.get(symbol), quotes.get(symbol), store.daily_prices(symbol), store.trade_plan(symbol), float(store.available_cash()["available_cash"]))}
+        bars = store.daily_prices(symbol)
+        item = {"id": str(uuid4()), "generated_at": beijing_now().isoformat(), "generated_trading_date": str(bars[-1]["trading_date"]) if bars else None, "evaluation_status": "pending", **build_candidate(symbol, holdings.get(symbol), quotes.get(symbol), bars, store.trade_plan(symbol), float(store.available_cash()["available_cash"]))}
         store.save_recommendation(item)
         store.save_recommendation_events(str(item["id"]), list(item.get("trigger_events", [])))
         results.append(item)
@@ -1315,17 +1318,28 @@ def list_recommendations(symbol: str | None = None) -> list[ResearchRecommendati
 
 @app.post("/v1/research-recommendations/evaluate")
 def evaluate_recommendations() -> dict[str, int]:
-    evaluated = 0
+    evaluated = untriggered = legacy_unverifiable = 0
     for item in store.recommendations():
         if item.get("status") != "ready" or item.get("suggested_quantity") is None: continue
-        fill, index = first_fill(item, store.daily_prices(str(item["symbol"])))
-        if fill is None: continue
         bars = store.daily_prices(str(item["symbol"]))
+        if not item.get("generated_trading_date"):
+            if store.set_recommendation_evaluation_status(str(item["id"]), "legacy_unverifiable"):
+                store.save_recommendation_events(str(item["id"]), [{"event_type": "legacy_unverifiable", "trading_date": None, "trigger_price": None}])
+            legacy_unverifiable += 1
+            continue
+        fill, index = first_fill(item, bars)
+        if fill is None:
+            if store.set_recommendation_evaluation_status(str(item["id"]), "untriggered"):
+                store.save_recommendation_events(str(item["id"]), [{"event_type": "untriggered", "trading_date": bars[-1]["trading_date"] if bars else None, "trigger_price": None}])
+            untriggered += 1
+            continue
         items = evaluations(fill, index, bars, float(item["suggested_quantity"]), str(item.get("action")))
         store.save_evaluations(str(item["id"]), items)
         store.save_paper_tracking(str(item["id"]), str(item["symbol"]), fill, float(item["suggested_quantity"]), str(item.get("action")), bars[index:])
+        if store.set_recommendation_evaluation_status(str(item["id"]), "filled"):
+            store.save_recommendation_events(str(item["id"]), [{"event_type": "filled", "trading_date": fill["date"], "trigger_price": fill["price"]}])
         evaluated += 1
-    return {"evaluated": evaluated}
+    return {"evaluated": evaluated, "untriggered": untriggered, "legacy_unverifiable": legacy_unverifiable}
 
 
 @app.get("/v1/research-recommendations/{recommendation_id}/evaluations")

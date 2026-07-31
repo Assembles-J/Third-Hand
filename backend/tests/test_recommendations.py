@@ -42,7 +42,7 @@ def test_trim_candidate_uses_quarter_of_existing_position():
 
 
 def test_first_fill_and_evaluation_keep_trim_pnl_direction():
-    recommendation = {"action": "trim", "price_zone": {"low": 10, "high": 11}}
+    recommendation = {"action": "trim", "price_zone": {"low": 10, "high": 11}, "generated_trading_date": "2026-07-31"}
     bars = [
         {"trading_date": "2026-08-01", "open": 10.5, "high": 11, "low": 10, "close": 10.5},
         {"trading_date": "2026-08-02", "open": 9, "high": 9.5, "low": 8.5, "close": 9},
@@ -56,3 +56,29 @@ def test_first_fill_and_evaluation_keep_trim_pnl_direction():
     assert result[0]["gross_pnl"] > 0
     assert result[0]["mfe_percent"] > 0
     assert result[0]["mae_percent"] < 0
+
+
+def test_first_fill_never_uses_the_generation_day_or_earlier_bars():
+    recommendation = {"action": "add", "price_zone": {"low": 9, "high": 11}, "generated_trading_date": "2026-08-02"}
+    bars = [
+        {"trading_date": "2026-08-01", "open": 10, "high": 11, "low": 9, "close": 10},
+        {"trading_date": "2026-08-02", "open": 10, "high": 11, "low": 9, "close": 10},
+        {"trading_date": "2026-08-03", "open": 10.5, "high": 11, "low": 10, "close": 10.5},
+    ]
+
+    fill, index = first_fill(recommendation, bars)
+
+    assert index == 2
+    assert fill["date"] == "2026-08-03"
+
+
+def test_evaluations_include_the_60_day_horizon_when_future_bars_exist():
+    bars = [
+        {"trading_date": f"2026-09-{index + 1:02d}", "open": 10, "high": 11, "low": 9, "close": 10}
+        for index in range(61)
+    ]
+
+    result = evaluations({"price": 10, "date": "2026-09-01"}, 0, bars, 100, "add")
+
+    assert result[-1]["horizon"] == 60
+    assert "mfe_percent" in result[-1] and "mae_percent" in result[-1]

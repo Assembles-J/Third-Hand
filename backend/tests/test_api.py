@@ -127,6 +127,23 @@ def test_decision_shadow_endpoint_persists_policy_candidates_without_replacing_r
     assert client.get("/v1/research-recommendations").json() == []
 
 
+def test_recommendation_evaluation_uses_only_future_bars_and_marks_legacy_or_untriggered_records():
+    bars = [
+        {"trading_date": "2026-07-30", "open": 10, "high": 11, "low": 9, "close": 10, "source": "test"},
+        {"trading_date": "2026-07-31", "open": 10, "high": 11, "low": 9, "close": 10, "source": "test"},
+    ]
+    store.save_daily_prices("600519", bars)
+    store.save_recommendation({"id": "current", "symbol": "600519", "status": "ready", "action": "add", "suggested_quantity": 100, "price_zone": {"low": 9, "high": 11}, "generated_trading_date": "2026-07-30", "evaluation_status": "pending"})
+    store.save_recommendation({"id": "legacy", "symbol": "600519", "status": "ready", "action": "add", "suggested_quantity": 100, "price_zone": {"low": 9, "high": 11}})
+    store.save_recommendation({"id": "untriggered", "symbol": "600519", "status": "ready", "action": "add", "suggested_quantity": 100, "price_zone": {"low": 1, "high": 2}, "generated_trading_date": "2026-07-30", "evaluation_status": "pending"})
+
+    response = client.post("/v1/research-recommendations/evaluate")
+    statuses = {item["id"]: item.get("evaluation_status") for item in store.recommendations()}
+
+    assert response.json() == {"evaluated": 1, "untriggered": 1, "legacy_unverifiable": 1}
+    assert statuses == {"current": "filled", "legacy": "legacy_unverifiable", "untriggered": "untriggered"}
+
+
 def test_learning_cases_can_be_created_and_listed():
     payload = {
         "title": "公告核验练习", "context": "阅读公告后记录需要核验的事实与数据来源。",

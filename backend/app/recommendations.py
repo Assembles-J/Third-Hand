@@ -28,12 +28,17 @@ def candidate(symbol: str, holding: dict | None, quote: dict | None, bars: list[
         quantity_status = "cash_based_25_percent_100_share_lot" if quantity > 0 else "cash_insufficient_for_one_lot"
     structured = list(plan.get("structured_conditions") or [])
     conditions = structured or [{"trigger": action, "field": "close", "operator": "between", "value": [low, high]}, {"field": "plan_enabled", "operator": "equals", "value": True}]
-    return {"symbol": symbol, "status": "ready", "action": action, "price_zone": {"low": low, "high": high}, "invalidation_price": round(low * .97, 2), "suggested_quantity": quantity, "quantity_status": quantity_status, "conditions": conditions, "trigger_events": [{"event_type": "condition_checked", "trading_date": bars[-1].get("trading_date"), "trigger_price": price, "conditions": conditions, "matched": low <= price <= high}], "automatic_execution": False, "evaluation_version": "daily_bar_assumption_v1"}
+    return {"symbol": symbol, "status": "ready", "action": action, "price_zone": {"low": low, "high": high}, "invalidation_price": round(low * .97, 2), "suggested_quantity": quantity, "quantity_status": quantity_status, "conditions": conditions, "trigger_events": [{"event_type": "condition_checked", "trading_date": bars[-1].get("trading_date"), "trigger_price": price, "conditions": conditions, "matched": low <= price <= high}], "automatic_execution": False, "evaluation_version": "paper-evaluation-v2"}
 
 
 def first_fill(recommendation: dict, bars: list[dict]) -> tuple[dict | None, int | None]:
+    generated_trading_date = recommendation.get("generated_trading_date")
+    if not generated_trading_date:
+        return None, None
     zone = recommendation["price_zone"]
     for index, bar in enumerate(bars):
+        if str(bar["trading_date"]) <= str(generated_trading_date):
+            continue
         open_, high, low = (float(bar.get(key) or bar["close"]) for key in ("open", "high", "low"))
         if recommendation["action"] == "add" and (open_ <= zone["high"] or low <= zone["high"]):
             return {"price": min(open_, zone["high"]) * (1 + SLIPPAGE_RATE), "date": bar["trading_date"]}, index
