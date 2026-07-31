@@ -136,6 +136,25 @@ def test_holding_lifecycle_and_feed():
     assert client.delete(f"/v1/holdings/{holding_id}").status_code == 204
 
 
+def test_sale_records_realized_profit_and_reduces_holding():
+    holding = client.post("/v1/holdings", json={"symbol": "600519", "name": "贵州茅台", "quantity": 10, "average_cost": 1000}).json()
+    response = client.post(f"/v1/holdings/{holding['id']}/sales", json={"quantity": 4, "sale_price": 1200, "reason": "达到预先设定的仓位上限"})
+    assert response.status_code == 201
+    sale = response.json()
+    assert sale["realized_pnl"] == 800
+    assert sale["remaining_quantity"] == 6
+    assert sale["reason"]
+    assert client.get("/v1/holdings").json()[0]["quantity"] == 6
+    assert client.get("/v1/sales").json()[0]["id"] == sale["id"]
+
+
+def test_sale_rejects_quantity_above_position():
+    holding = client.post("/v1/holdings", json={"symbol": "600519", "name": "贵州茅台", "quantity": 2, "average_cost": 1000}).json()
+    response = client.post(f"/v1/holdings/{holding['id']}/sales", json={"quantity": 3, "sale_price": 1200})
+    assert response.status_code == 422
+    assert client.get("/v1/holdings").json()[0]["quantity"] == 2
+
+
 def test_holding_draft_can_be_confirmed_later(monkeypatch):
     monkeypatch.setattr(market_data, "lookup_symbols", lambda names: [{"query": name, "matches": []} for name in names])
     draft = client.post("/v1/holding-drafts", json={"name": "小米集团", "quantity": 100, "average_cost": 45.5})

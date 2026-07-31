@@ -141,7 +141,40 @@ class PortfolioStore:
                 connection.execute("CREATE TABLE IF NOT EXISTS learning_cases (id TEXT PRIMARY KEY, symbol TEXT, title TEXT NOT NULL, context TEXT NOT NULL, lesson TEXT NOT NULL, outcome TEXT NOT NULL, position_band TEXT NOT NULL DEFAULT '', planned_action TEXT NOT NULL DEFAULT '', confidence REAL NOT NULL DEFAULT 0.5, evidence_links TEXT NOT NULL DEFAULT '[]', created_at TEXT NOT NULL)")
                 connection.execute("CREATE TABLE IF NOT EXISTS research_rules (id TEXT PRIMARY KEY, category TEXT NOT NULL, title TEXT NOT NULL, trigger_text TEXT NOT NULL, guidance TEXT NOT NULL, confidence_ceiling REAL NOT NULL, source_url TEXT NOT NULL, version TEXT NOT NULL)")
                 connection.execute("CREATE TABLE IF NOT EXISTS personal_rules (id TEXT PRIMARY KEY, scope TEXT NOT NULL, symbol TEXT, max_position_percent REAL NOT NULL, loss_review_percent REAL NOT NULL, volatility_review_percent REAL NOT NULL, enabled INTEGER NOT NULL DEFAULT 1, version INTEGER NOT NULL DEFAULT 1, updated_at TEXT NOT NULL)")
+                connection.execute("""
+                    CREATE TABLE IF NOT EXISTS trade_plans (
+                        id TEXT PRIMARY KEY,
+                        symbol TEXT NOT NULL UNIQUE,
+                        horizon TEXT NOT NULL,
+                        thesis TEXT NOT NULL,
+                        market_expectation TEXT NOT NULL,
+                        benchmark_symbol TEXT,
+                        benchmark_name TEXT,
+                        catalysts_json TEXT NOT NULL,
+                        entry_condition TEXT NOT NULL,
+                        add_condition TEXT NOT NULL,
+                        reduce_condition TEXT NOT NULL,
+                        exit_condition TEXT NOT NULL,
+                        max_position_percent REAL NOT NULL,
+                        risk_budget_percent REAL NOT NULL,
+                        enabled INTEGER NOT NULL DEFAULT 1,
+                        version INTEGER NOT NULL DEFAULT 1,
+                        updated_at TEXT NOT NULL
+                    )
+                """)
+                self._ensure_column(connection, "trade_plans", "benchmark_symbol", "TEXT")
+                self._ensure_column(connection, "trade_plans", "benchmark_name", "TEXT")
                 connection.execute("CREATE TABLE IF NOT EXISTS analysis_runs (id TEXT PRIMARY KEY, payload TEXT NOT NULL, created_at TEXT NOT NULL)")
+                connection.execute("""
+                    CREATE TABLE IF NOT EXISTS sale_records (
+                        id TEXT PRIMARY KEY, holding_id TEXT NOT NULL, symbol TEXT NOT NULL, name TEXT NOT NULL,
+                        quantity REAL NOT NULL, sale_price REAL NOT NULL, average_cost REAL NOT NULL,
+                        proceeds REAL NOT NULL, cost_basis REAL NOT NULL, realized_pnl REAL NOT NULL,
+                        realized_pnl_percent REAL NOT NULL, remaining_quantity REAL NOT NULL,
+                        reason TEXT NOT NULL DEFAULT '', analysis_snapshot TEXT NOT NULL DEFAULT '{}', sold_at TEXT NOT NULL
+                    )
+                """)
+                connection.execute("CREATE INDEX IF NOT EXISTS idx_sale_records_symbol_time ON sale_records(symbol, sold_at DESC)")
                 connection.execute("""
                     CREATE TABLE IF NOT EXISTS calibration_observations (
                         id TEXT PRIMARY KEY,
@@ -396,11 +429,13 @@ class PortfolioStore:
             connection.execute("DELETE FROM market_quote_cache")
             connection.execute("DELETE FROM symbol_lookup_cache")
             connection.execute("DELETE FROM personal_rules")
+            connection.execute("DELETE FROM trade_plans")
             connection.execute("DELETE FROM learning_cases")
             connection.execute("DELETE FROM risk_cache")
             connection.execute("DELETE FROM daily_price_cache")
             connection.execute("DELETE FROM portfolio_analysis_cache")
             connection.execute("DELETE FROM analysis_runs")
+            connection.execute("DELETE FROM sale_records")
             connection.execute("DELETE FROM calibration_observations")
             connection.execute("DELETE FROM ai_analysis_cache")
             connection.execute("DELETE FROM ai_analysis_cache_v2")
@@ -611,6 +646,59 @@ class PortfolioStore:
                 item["version"] = int(existing["version"]) + 1
             connection.execute("INSERT INTO personal_rules (id,scope,symbol,max_position_percent,loss_review_percent,volatility_review_percent,enabled,version,updated_at) VALUES (:id,:scope,:symbol,:max_position_percent,:loss_review_percent,:volatility_review_percent,:enabled,:version,:updated_at) ON CONFLICT(id) DO UPDATE SET scope=excluded.scope,symbol=excluded.symbol,max_position_percent=excluded.max_position_percent,loss_review_percent=excluded.loss_review_percent,volatility_review_percent=excluded.volatility_review_percent,enabled=excluded.enabled,version=personal_rules.version+1,updated_at=excluded.updated_at", item)
         return item
+
+    def sell_holding(self, holding_id: str, sale_id: str, quantity: float, sale_price: float, reason: str, analysis_snapshot: dict[str, object]) -> dict[str, object] | None:
+        """Atomically record realized P/L and reduce (or close) the open holding."""
+        with self._connect() as connection:
+            holding = connection.execute("SELECT * FROM holdings WHERE id=?", (holding_id,)).fetchone()
+            if not holding:
+                return None
+            available, cost = float(holding["quantity"]), float(holding["average_cost"])
+            if quantity > available + 1e-9:
+                raise ValueError("出售数量不能超过当前持仓数量")
+            remaining = max(0.0, available - quantity)
+            proceeds, cost_basis = quantity * sale_price, quantity * cost
+            pnl = proceeds - cost_basis
+            item = {"id": sale_id, "holding_id": holding_id, "symbol": str(holding["symbol"]), "name": str(holding["name"]), "quantity": quantity, "sale_price": sale_price, "average_cost": cost, "proceeds": proceeds, "cost_basis": cost_basis, "realized_pnl": pnl, "realized_pnl_percent": pnl / cost_basis * 100 if cost_basis else 0.0, "remaining_quantity": remaining, "reason": reason, "analysis_snapshot": analysis_snapshot, "sold_at": beijing_now().isoformat()}
+            connection.execute("""INSERT INTO sale_records VALUES (:id,:holding_id,:symbol,:name,:quantity,:sale_price,:average_cost,:proceeds,:cost_basis,:realized_pnl,:realized_pnl_percent,:remaining_quantity,:reason,:analysis_snapshot,:sold_at)""", {**item, "analysis_snapshot": json.dumps(analysis_snapshot, ensure_ascii=False, default=str)})
+            if remaining <= 1e-9:
+                connection.execute("DELETE FROM holdings WHERE id=?", (holding_id,))
+            else:
+                connection.execute("UPDATE holdings SET quantity=?, created_at=? WHERE id=?", (remaining, item["sold_at"], holding_id))
+        return item
+
+    def sale_records(self, symbol: str | None = None, limit: int = 200) -> list[dict[str, object]]:
+        query, params = (("SELECT * FROM sale_records WHERE symbol=? ORDER BY sold_at DESC LIMIT ?", [symbol, limit]) if symbol else ("SELECT * FROM sale_records ORDER BY sold_at DESC LIMIT ?", [limit]))
+        with self._connect() as connection:
+            rows = connection.execute(query, params).fetchall()
+        return [{**dict(row), "analysis_snapshot": json.loads(str(row["analysis_snapshot"]))} for row in rows]
+
+    def trade_plans(self) -> list[dict[str, object]]:
+        with self._connect() as connection:
+            rows = connection.execute("SELECT * FROM trade_plans ORDER BY updated_at DESC").fetchall()
+        return [{**dict(row), "catalysts": json.loads(str(row["catalysts_json"])), "enabled": bool(row["enabled"])} for row in rows]
+
+    def trade_plan(self, symbol: str) -> dict[str, object] | None:
+        with self._connect() as connection:
+            row = connection.execute("SELECT * FROM trade_plans WHERE symbol=?", (symbol,)).fetchone()
+        return ({**dict(row), "catalysts": json.loads(str(row["catalysts_json"])), "enabled": bool(row["enabled"])} if row else None)
+
+    def save_trade_plan(self, item: dict[str, object]) -> dict[str, object]:
+        now = beijing_now().isoformat()
+        item = {"benchmark_symbol": None, "benchmark_name": None, **item}
+        item = {**item, "catalysts_json": json.dumps(item.get("catalysts", []), ensure_ascii=False), "updated_at": now}
+        with self._connect() as connection:
+            existing = connection.execute("SELECT id, version FROM trade_plans WHERE symbol=?", (item["symbol"],)).fetchone()
+            if existing:
+                item["id"], item["version"] = str(existing["id"]), int(existing["version"]) + 1
+            connection.execute(
+                """INSERT INTO trade_plans
+                (id,symbol,horizon,thesis,market_expectation,benchmark_symbol,benchmark_name,catalysts_json,entry_condition,add_condition,reduce_condition,exit_condition,max_position_percent,risk_budget_percent,enabled,version,updated_at)
+                VALUES (:id,:symbol,:horizon,:thesis,:market_expectation,:benchmark_symbol,:benchmark_name,:catalysts_json,:entry_condition,:add_condition,:reduce_condition,:exit_condition,:max_position_percent,:risk_budget_percent,:enabled,:version,:updated_at)
+                ON CONFLICT(symbol) DO UPDATE SET horizon=excluded.horizon,thesis=excluded.thesis,market_expectation=excluded.market_expectation,benchmark_symbol=excluded.benchmark_symbol,benchmark_name=excluded.benchmark_name,catalysts_json=excluded.catalysts_json,entry_condition=excluded.entry_condition,add_condition=excluded.add_condition,reduce_condition=excluded.reduce_condition,exit_condition=excluded.exit_condition,max_position_percent=excluded.max_position_percent,risk_budget_percent=excluded.risk_budget_percent,enabled=excluded.enabled,version=excluded.version,updated_at=excluded.updated_at""",
+                item,
+            )
+        return {**item, "catalysts": json.loads(str(item.pop("catalysts_json"))), "enabled": bool(item["enabled"])}
 
     def save_analysis_run(self, item: dict[str, object]) -> None:
         with self._connect() as connection:

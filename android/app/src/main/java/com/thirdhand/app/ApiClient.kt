@@ -116,6 +116,15 @@ data class RiskAssessmentDto(
     val disclaimer: String,
 )
 
+data class SaleInputDto(val quantity: Double, val sale_price: Double, val reason: String = "")
+data class SaleRecordDto(
+    val id: String, val holding_id: String, val symbol: String, val name: String, val quantity: Double,
+    val sale_price: Double, val average_cost: Double, val proceeds: Double, val cost_basis: Double,
+    val realized_pnl: Double, val realized_pnl_percent: Double, val remaining_quantity: Double,
+    val reason: String = "", val sold_at: String,
+)
+data class DailyPriceDto(val trading_date: String, val close: Double, val high: Double? = null, val low: Double? = null)
+
 data class NewsItemDto(
     val id: String,
     val title: String,
@@ -178,9 +187,13 @@ data class TechnicalSnapshotDto(
 data class DecisionEventDto(val id: String, val title: String, val impact: String, val summary: String, val source_url: String? = null, val published_at: String? = null)
 data class CalibrationHorizonDto(val sample_count: Int = 0, val average_return_percent: Double? = null, val rule_alignment_rate_percent: Double? = null)
 data class HistoricalCalibrationDto(val action: String = "", val definition: String = "", val horizons: Map<String, CalibrationHorizonDto> = emptyMap())
+data class MarketIndexRegimeDto(val symbol: String, val name: String, val five_day_return_percent: Double, val trend: String, val above_sma20: Boolean)
+data class MarketRegimeDto(val status: String = "unavailable", val regime: String = "unknown", val indexes: List<MarketIndexRegimeDto> = emptyList(), val source: String = "", val note: String = "")
+data class RelativeHorizonDto(val stock_return_percent: Double, val benchmark_return_percent: Double, val relative_return_percent: Double)
+data class RelativeStrengthDto(val status: String = "not_configured", val benchmark_symbol: String? = null, val benchmark_name: String? = null, val horizons: Map<String, RelativeHorizonDto> = emptyMap(), val label: String? = null, val note: String = "")
 data class DecisionSnapshotDto(
     val event_evidence: List<DecisionEventDto> = emptyList(), val missing_evidence: List<String> = emptyList(),
-    val evidence_completeness_percent: Int = 0, val candidate_action: String = "", val confidence_definition: String = "", val historical_calibration: HistoricalCalibrationDto? = null,
+    val evidence_completeness_percent: Int = 0, val candidate_action: String = "", val confidence_definition: String = "", val historical_calibration: HistoricalCalibrationDto? = null, val market_regime: MarketRegimeDto? = null, val relative_strength: RelativeStrengthDto? = null,
 )
 data class PortfolioAnalysisItemDto(val symbol: String, val name: String, val action: String, val reason: String, val evidence: List<String>, val confidence_percent: Int, val rule_snapshot: Map<String, Any>? = null, val technical_snapshot: TechnicalSnapshotDto? = null, val decision_snapshot: DecisionSnapshotDto? = null, val analysis_trace: List<AnalysisTraceStepDto> = emptyList(), val disclaimer: String)
 data class PortfolioAnalysisDto(val id: String, val generated_at: String, val items: List<PortfolioAnalysisItemDto>)
@@ -226,6 +239,17 @@ data class PersonalRuleInputDto(
     val scope: String, val symbol: String? = null, val max_position_percent: Double,
     val loss_review_percent: Double, val volatility_review_percent: Double, val enabled: Boolean = true,
 )
+data class TradePlanDto(
+    val id: String, val symbol: String, val horizon: String, val thesis: String, val market_expectation: String, val benchmark_symbol: String? = null, val benchmark_name: String? = null,
+    val catalysts: List<String>, val entry_condition: String, val add_condition: String, val reduce_condition: String,
+    val exit_condition: String, val max_position_percent: Double, val risk_budget_percent: Double,
+    val enabled: Boolean, val version: Int, val updated_at: String,
+)
+data class TradePlanInputDto(
+    val symbol: String, val horizon: String, val thesis: String, val market_expectation: String, val benchmark_symbol: String? = null, val benchmark_name: String? = null,
+    val catalysts: List<String>, val entry_condition: String, val add_condition: String, val reduce_condition: String,
+    val exit_condition: String, val max_position_percent: Double, val risk_budget_percent: Double, val enabled: Boolean = true,
+)
 
 interface ThirdHandApi {
     @GET("health")
@@ -250,6 +274,15 @@ interface ThirdHandApi {
     suspend fun addHolding(@Body holding: HoldingInputDto): HoldingDto
     @PUT("v1/holdings/{id}")
     suspend fun updateHolding(@Path("id") id: String, @Body holding: HoldingInputDto): HoldingDto
+
+    @POST("v1/holdings/{id}/sales")
+    suspend fun sellHolding(@Path("id") id: String, @Body sale: SaleInputDto): SaleRecordDto
+
+    @GET("v1/sales")
+    suspend fun sales(@Query("symbol") symbol: String? = null): List<SaleRecordDto>
+
+    @GET("v1/market/history/{symbol}")
+    suspend fun marketHistory(@Path("symbol") symbol: String, @Query("limit") limit: Int = 120): List<DailyPriceDto>
 
     @DELETE("v1/holdings/{id}")
     suspend fun deleteHolding(@Path("id") id: String)
@@ -306,6 +339,11 @@ interface ThirdHandApi {
 
     @POST("v1/personal-rules")
     suspend fun savePersonalRule(@Body item: PersonalRuleInputDto): PersonalRuleDto
+
+    @GET("v1/trade-plans")
+    suspend fun tradePlans(): List<TradePlanDto>
+    @POST("v1/trade-plans")
+    suspend fun saveTradePlan(@Body item: TradePlanInputDto): TradePlanDto
 
     @GET("v1/glossary/{term}")
     suspend fun glossary(@Path("term") term: String): GlossaryCardDto

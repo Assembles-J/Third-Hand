@@ -13,6 +13,7 @@ def test_decision_snapshot_keeps_sources_and_separates_evidence_confidence():
             "ai_analysis": {"impact": "positive", "summary": "回购推进"},
         }],
         "risk_review",
+        {"enabled": True, "horizon": "swing", "thesis": "测试逻辑", "catalysts": ["公告"], "reduce_condition": "测试减仓条件", "max_position_percent": 15, "risk_budget_percent": 3},
     )
 
     assert snapshot["quote"]["price"] == 20
@@ -20,3 +21,4 @@ def test_decision_snapshot_keeps_sources_and_separates_evidence_confidence():
     assert snapshot["evidence_completeness_percent"] == 100
     assert "不代表" in snapshot["confidence_definition"]
     assert "仓位" in snapshot["candidate_action"]
+    assert snapshot["trade_plan"]["horizon"] == "swing"

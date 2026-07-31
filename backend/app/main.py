@@ -36,6 +36,8 @@ from app.price_history import PriceHistoryService, PriceHistoryUnavailable
 from app.impact_graph import build_impact_graph
 from app.decision_snapshot import build_decision_snapshot
 from app.calibration import summarize_calibration
+from app.market_regime import MarketRegimeService
+from app.relative_strength import RelativeStrengthService
 from app.trading_calendar import TradingCalendarService
 
 app = FastAPI(title="Third-Hand API", version="0.2.0")
@@ -147,6 +149,25 @@ class HoldingInput(BaseModel):
 class Holding(HoldingInput):
     id: str
     created_at: datetime
+
+
+class SaleInput(BaseModel):
+    quantity: float = Field(gt=0)
+    sale_price: float = Field(gt=0)
+    reason: str = Field(default="", max_length=1000)
+
+
+class SaleRecord(BaseModel):
+    id: str; holding_id: str; symbol: str; name: str; quantity: float; sale_price: float; average_cost: float
+    proceeds: float; cost_basis: float; realized_pnl: float; realized_pnl_percent: float; remaining_quantity: float
+    reason: str = ""; analysis_snapshot: dict[str, object] = Field(default_factory=dict); sold_at: datetime
+
+
+class DailyPrice(BaseModel):
+    trading_date: str
+    close: float
+    high: float | None = None
+    low: float | None = None
 
 
 class HoldingDraftInput(BaseModel):
@@ -305,6 +326,34 @@ class PersonalRule(PersonalRuleInput):
     id: str; version: int; updated_at: datetime
 
 
+class TradePlanInput(BaseModel):
+    symbol: str = Field(min_length=1, max_length=16)
+    horizon: str = Field(pattern="^(swing|short)$")
+    thesis: str = Field(min_length=10, max_length=1200)
+    market_expectation: str = Field(min_length=5, max_length=800)
+    benchmark_symbol: str | None = Field(default=None, max_length=16)
+    benchmark_name: str | None = Field(default=None, max_length=80)
+    catalysts: list[str] = Field(min_length=1, max_length=6)
+    entry_condition: str = Field(min_length=5, max_length=800)
+    add_condition: str = Field(min_length=5, max_length=800)
+    reduce_condition: str = Field(min_length=5, max_length=800)
+    exit_condition: str = Field(min_length=5, max_length=800)
+    max_position_percent: float = Field(gt=0, le=100)
+    risk_budget_percent: float = Field(gt=0, le=100)
+    enabled: bool = True
+
+    @field_validator("symbol")
+    @classmethod
+    def normalize_trade_plan_symbol(cls, value: str) -> str:
+        return value.strip().upper()
+
+
+class TradePlan(TradePlanInput):
+    id: str
+    version: int
+    updated_at: datetime
+
+
 store = PortfolioStore()
 market_data = MarketDataService()
 trading_calendar = TradingCalendarService()
@@ -315,6 +364,8 @@ risk_service = RiskService()
 ai_analysis_service = AiAnalysisService(store)
 technical_analysis_service = TechnicalAnalysisService()
 price_history_service = PriceHistoryService()
+market_regime_service = MarketRegimeService()
+relative_strength_service = RelativeStrengthService()
 
 GLOSSARY = {
     "pe": GlossaryCard(term="PE（市盈率）", plain_explanation="股价相对于每股盈利的倍数。它不是越低越好，要结合行业和盈利质量判断。", watch_for="亏损或一次性收益会使 PE 失真。"),
@@ -598,11 +649,14 @@ def refresh_derived_cache(symbols: list[str], trigger: str, force_history: bool 
         payload = assess_holdings(holdings, quotes, store, technical_analysis_service)
         content_items = store.cached_content(symbols)
         holding_by_symbol = {str(item["symbol"]): item for item in holdings}
+        market_regime = market_regime_service.assess()
         for review in payload["items"]:
             symbol = str(review["symbol"])
+            plan = store.trade_plan(symbol)
+            relative_strength = relative_strength_service.assess(store.daily_prices(symbol), plan.get("benchmark_symbol") if plan else None, plan.get("benchmark_name") if plan else None)
             review["decision_snapshot"] = build_decision_snapshot(
                 holding_by_symbol[symbol], quote_by_symbol.get(symbol), store.cached_risk(symbol),
-                review.get("rule_snapshot"), content_items, str(review["action"]),
+                review.get("rule_snapshot"), content_items, str(review["action"]), plan, market_regime, relative_strength,
             )
         payload["generated_at"] = beijing_now().isoformat()
         store.save_calibration_observations(payload)
@@ -919,6 +973,17 @@ def save_personal_rule(payload: PersonalRuleInput) -> PersonalRule:
     return PersonalRule.model_validate(store.save_personal_rule(item))
 
 
+@app.get("/v1/trade-plans", response_model=list[TradePlan])
+def list_trade_plans() -> list[TradePlan]:
+    return [TradePlan.model_validate(item) for item in store.trade_plans()]
+
+
+@app.post("/v1/trade-plans", response_model=TradePlan)
+def save_trade_plan(payload: TradePlanInput) -> TradePlan:
+    item = {"id": str(uuid4()), **payload.model_dump(), "version": 1}
+    return TradePlan.model_validate(store.save_trade_plan(item))
+
+
 @app.get("/v1/glossary/{term}", response_model=GlossaryCard)
 def glossary(term: str) -> GlossaryCard:
     item = GLOSSARY.get(term.strip().lower())
@@ -953,6 +1018,30 @@ def update_holding(holding_id: str, payload: HoldingInput, background_tasks: Bac
     queue_background(refresh_quote_cache, [item["symbol"]], True, "holding-updated")
     queue_background(refresh_derived_cache, [item["symbol"]], "holding-updated")
     return Holding.model_validate(item)
+
+
+@app.post("/v1/holdings/{holding_id}/sales", response_model=SaleRecord, status_code=status.HTTP_201_CREATED)
+def sell_holding(holding_id: str, payload: SaleInput) -> SaleRecord:
+    analysis = store.cached_portfolio_analysis() or {}
+    analysis_item = next((item for item in analysis.get("items", []) if str(item.get("symbol")) == str(next((h["symbol"] for h in store.list() if str(h["id"]) == holding_id), ""))), {})
+    try:
+        item = store.sell_holding(holding_id, str(uuid4()), payload.quantity, payload.sale_price, payload.reason, analysis_item)
+    except ValueError as error:
+        raise HTTPException(status_code=422, detail=str(error)) from error
+    if item is None:
+        raise HTTPException(status_code=404, detail="未找到持仓")
+    return SaleRecord.model_validate(item)
+
+
+@app.get("/v1/sales", response_model=list[SaleRecord])
+def list_sales(symbol: str | None = None) -> list[SaleRecord]:
+    return [SaleRecord.model_validate(item) for item in store.sale_records(symbol)]
+
+
+@app.get("/v1/market/history/{symbol}", response_model=list[DailyPrice])
+def market_history(symbol: str, limit: int = Query(default=120, ge=20, le=800)) -> list[DailyPrice]:
+    """Persisted daily bars only; chart rendering never queries an upstream source."""
+    return [DailyPrice.model_validate(item) for item in store.daily_prices(symbol.strip().upper(), limit)]
 
 
 @app.get("/v1/holding-drafts", response_model=list[HoldingDraft])

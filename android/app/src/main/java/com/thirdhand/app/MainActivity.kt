@@ -23,6 +23,7 @@ import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.gestures.detectHorizontalDragGestures
 import androidx.compose.foundation.background
+import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -73,6 +74,8 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalUriHandler
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.Alignment
+import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.clipToBounds
 import androidx.compose.ui.window.Dialog
@@ -113,8 +116,6 @@ private fun ThirdHandApp(resumeSignal: Int) {
     var tab by remember { mutableIntStateOf(0) }
     var startupUpdate by remember { mutableStateOf<AppUpdate?>(null) }
     var updateMessage by remember { mutableStateOf<String?>(null) }
-    val labels = listOf("今日", "持仓", "消息", "影响", "我的与管理")
-    val icons = listOf(Icons.Filled.AutoGraph, Icons.Filled.Wallet, Icons.AutoMirrored.Filled.Article, Icons.Filled.AccountCircle, Icons.Filled.AdminPanelSettings)
     LaunchedEffect(resumeSignal) {
         try {
             startupUpdate = AppUpdateManager.check(context)
@@ -124,30 +125,20 @@ private fun ThirdHandApp(resumeSignal: Int) {
         }
     }
     ThirdHandTheme(themeMode) {
-        Scaffold(
-            bottomBar = {
-                NavigationBar(containerColor = MaterialTheme.colorScheme.surface) {
-                    labels.forEachIndexed { index, label ->
-                        NavigationBarItem(
-                            selected = tab == index,
-                            onClick = { tab = index },
-                            icon = { Icon(icons[index], contentDescription = label) },
-                            label = { Text(label) },
-                        )
-                    }
-                }
-            },
-        ) { padding ->
+        Scaffold { padding ->
             Surface(modifier = Modifier.fillMaxSize().padding(padding), color = MaterialTheme.colorScheme.background) {
+                Column {
+                    Row(Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 6.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        TextButton(onClick = { tab = 0 }) { Text("今日", color = if (tab == 0) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant) }
+                        TextButton(onClick = { tab = 1 }) { Text("持仓", color = if (tab == 1) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant) }
+                        TextButton(onClick = { tab = 2 }) { Text("管理", color = if (tab == 2) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant) }
+                    }
                 when (tab) {
                     0 -> TodayScreen()
                     1 -> HoldingsScreen()
-                    2 -> FeedScreen()
-                    3 -> ImpactGraphScreen()
-                    else -> UnifiedCenterScreen(
-                        themeMode = themeMode,
-                        onThemeModeChange = { mode -> ThemeStore.save(context, mode); themeMode = mode },
-                    )
+                    2 -> UnifiedCenterScreen(ThemeMode.DARK, onThemeModeChange = {themeMode -> })
+                    else -> TodayScreen()
+                }
                 }
             }
         }
@@ -264,6 +255,106 @@ private fun StatusCard(message: String, positive: Boolean = false, error: Boolea
     Card(Modifier.padding(horizontal = 20.dp).fillMaxWidth(), colors = colors, shape = RoundedCornerShape(16.dp)) {
         Text(message, Modifier.padding(14.dp), color = if (error) MaterialTheme.colorScheme.onErrorContainer else MaterialTheme.colorScheme.onSurface, fontWeight = FontWeight.Medium)
     }
+}
+
+@Composable
+private fun TradePlanScreen() {
+    val context = LocalContext.current
+    val api = ApiClient.service(context)
+    var plans by remember { mutableStateOf<List<TradePlanDto>>(emptyList()) }
+    var loading by remember { mutableStateOf(true) }
+    var error by remember { mutableStateOf<String?>(null) }
+    var editing by remember { mutableStateOf<TradePlanDto?>(null) }
+    var createPlan by remember { mutableStateOf(false) }
+    val scope = rememberCoroutineScope()
+    fun load() = scope.launch {
+        loading = true; error = null
+        try { plans = api.tradePlans() } catch (_: Exception) { error = "暂时无法读取交易计划，请稍后重试。" } finally { loading = false }
+    }
+    LaunchedEffect(Unit) { load() }
+    LazyColumn(contentPadding = androidx.compose.foundation.layout.PaddingValues(bottom = 24.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+        item { AppHero("交易计划", "波段优先 · 条件先于操作", action = { HeroRefreshAction(::load, !loading) }) }
+        item {
+            Column(Modifier.padding(horizontal = 20.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                Text("先写逻辑、催化剂、加减仓与退出条件；行情和新闻只负责验证条件。", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                PrimaryAction("新建计划", Icons.Filled.Add, { createPlan = true }, Modifier.fillMaxWidth())
+            }
+        }
+        if (loading) item { StatusCard("正在读取交易计划…") }
+        error?.let { item { StatusCard(it, error = true) } }
+        if (!loading && plans.isEmpty()) item { StatusCard("还没有计划。建议先为当前持仓建立波段计划。") }
+        items(plans, key = { it.symbol }) { plan ->
+            Card(Modifier.padding(horizontal = 20.dp).fillMaxWidth().clickable { editing = plan }) {
+                Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                    Text("${plan.symbol} · ${if (plan.horizon == "swing") "波段" else "短线"}", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
+                    Text(plan.thesis, style = MaterialTheme.typography.bodySmall, maxLines = 3, overflow = TextOverflow.Ellipsis)
+                    Text("催化剂：${plan.catalysts.joinToString("、")}", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 2, overflow = TextOverflow.Ellipsis)
+                    Text("最大仓位 ${plan.max_position_percent}% · 风险预算 ${plan.risk_budget_percent}% · v${plan.version}", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.primary)
+                }
+            }
+        }
+    }
+    if (createPlan || editing != null) TradePlanDialog(
+        initial = editing,
+        onDismiss = { createPlan = false; editing = null },
+        onSave = { input -> scope.launch {
+            try { api.saveTradePlan(input); createPlan = false; editing = null; load() } catch (_: Exception) { error = "保存交易计划失败，请检查填写内容和后端连接。" }
+        } },
+    )
+}
+
+@Composable
+private fun TradePlanDialog(initial: TradePlanDto?, onDismiss: () -> Unit, onSave: (TradePlanInputDto) -> Unit) {
+    var symbol by remember(initial) { mutableStateOf(initial?.symbol ?: "") }
+    var horizon by remember(initial) { mutableStateOf(initial?.horizon ?: "swing") }
+    var thesis by remember(initial) { mutableStateOf(initial?.thesis ?: "") }
+    var expectation by remember(initial) { mutableStateOf(initial?.market_expectation ?: "") }
+    var benchmarkSymbol by remember(initial) { mutableStateOf(initial?.benchmark_symbol ?: "") }
+    var benchmarkName by remember(initial) { mutableStateOf(initial?.benchmark_name ?: "") }
+    var catalysts by remember(initial) { mutableStateOf(initial?.catalysts?.joinToString("；") ?: "") }
+    var entry by remember(initial) { mutableStateOf(initial?.entry_condition ?: "") }
+    var add by remember(initial) { mutableStateOf(initial?.add_condition ?: "") }
+    var reduce by remember(initial) { mutableStateOf(initial?.reduce_condition ?: "") }
+    var exit by remember(initial) { mutableStateOf(initial?.exit_condition ?: "") }
+    var maxPosition by remember(initial) { mutableStateOf(initial?.max_position_percent?.toString() ?: "15") }
+    var riskBudget by remember(initial) { mutableStateOf(initial?.risk_budget_percent?.toString() ?: "3") }
+    var validation by remember { mutableStateOf<String?>(null) }
+    Dialog(onDismissRequest = onDismiss) {
+        Surface(Modifier.fillMaxWidth().heightIn(max = 700.dp), shape = RoundedCornerShape(18.dp)) {
+            Column(Modifier.padding(18.dp).verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                Text(if (initial == null) "新建交易计划" else "编辑交易计划", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold)
+                Text("计划是条件核验模板，不是自动交易授权。", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                PlanField("证券代码", symbol) { symbol = it }
+                Row(verticalAlignment = Alignment.CenterVertically) { RadioButton(horizon == "swing", { horizon = "swing" }); Text("波段（默认）"); Spacer(Modifier.width(12.dp)); RadioButton(horizon == "short", { horizon = "short" }); Text("短线") }
+                PlanField("交易逻辑", thesis, 3) { thesis = it }
+                PlanField("市场原有预期", expectation, 2) { expectation = it }
+                PlanField("比较基准代码（如 sh000300）", benchmarkSymbol) { benchmarkSymbol = it }
+                PlanField("比较基准名称（如 沪深300）", benchmarkName) { benchmarkName = it }
+                PlanField("催化剂（用；分隔）", catalysts, 2) { catalysts = it }
+                PlanField("入场条件", entry, 2) { entry = it }
+                PlanField("加仓条件", add, 2) { add = it }
+                PlanField("减仓条件", reduce, 2) { reduce = it }
+                PlanField("退出 / 失效条件", exit, 2) { exit = it }
+                PlanField("最大仓位 %", maxPosition) { maxPosition = it }
+                PlanField("单笔风险预算 %", riskBudget) { riskBudget = it }
+                validation?.let { Text(it, color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.bodySmall) }
+                Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                    OutlinedButton(onClick = onDismiss, modifier = Modifier.weight(1f)) { Text("取消") }
+                    Button(onClick = {
+                        val max = maxPosition.toDoubleOrNull(); val risk = riskBudget.toDoubleOrNull()
+                        val catalystItems = catalysts.split('；', ';').map(String::trim).filter(String::isNotBlank)
+                        if (listOf(symbol, thesis, expectation, entry, add, reduce, exit).any { it.trim().length < 5 } || catalystItems.isEmpty() || max == null || risk == null) validation = "请补全所有条件，并填写有效的仓位和风险预算。"
+                        else onSave(TradePlanInputDto(symbol.trim().uppercase(), horizon, thesis.trim(), expectation.trim(), benchmarkSymbol.trim().ifBlank { null }, benchmarkName.trim().ifBlank { null }, catalystItems, entry.trim(), add.trim(), reduce.trim(), exit.trim(), max, risk))
+                    }, modifier = Modifier.weight(1f)) { Text("保存") }
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun PlanField(label: String, value: String, lines: Int = 1, onChange: (String) -> Unit) {
+    OutlinedTextField(value = value, onValueChange = onChange, label = { Text(label) }, modifier = Modifier.fillMaxWidth(), minLines = lines, maxLines = lines + 2)
 }
 
 @Composable
@@ -463,12 +554,16 @@ private fun TodayScreen() {
             val holding = holdings.firstOrNull { it.symbol == quote.symbol }
             QuoteCard(if (holding == null) quote else quote.copy(name = holding.name), holding)
         }
-        if (holdings.isNotEmpty()) item { Text("持仓风险观察", modifier = Modifier.padding(start = 20.dp, top = 4.dp, end = 20.dp), style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold) }
+        val readyRisks = risks.filter { it.status != "data_insufficient" }
+        val deferredRisks = risks.filter { it.status == "data_insufficient" }
+        if (readyRisks.isNotEmpty()) item { Text("持仓风险观察", modifier = Modifier.padding(start = 20.dp, top = 4.dp, end = 20.dp), style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold) }
         if (riskLoading) item { StatusCard("正在计算历史风险统计…") }
         riskError?.let { message -> item { StatusCard(message, error = true) } }
-        items(risks, key = { it.symbol }) { assessment -> RiskAssessmentCard(assessment) }
+        items(readyRisks, key = { it.symbol }) { assessment -> RiskAssessmentCard(assessment) }
         if (portfolioAnalysis.isNotEmpty()) item { Text("持仓复核建议", modifier = Modifier.padding(horizontal = 20.dp), style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold) }
         items(portfolioAnalysis, key = { it.symbol }) { item -> PortfolioAnalysisCard(item) }
+        if (deferredRisks.isNotEmpty()) item { Text("后台数据准备", modifier = Modifier.padding(horizontal = 20.dp, vertical = 8.dp), color = MaterialTheme.colorScheme.onSurfaceVariant, style = MaterialTheme.typography.labelMedium) }
+        items(deferredRisks, key = { "deferred-${it.symbol}" }) { assessment -> RiskAssessmentCard(assessment) }
     }
 }
 
@@ -714,6 +809,7 @@ private fun HoldingsScreen() {
     val context = LocalContext.current
     val api = ApiClient.service(context)
     var holdings by remember { mutableStateOf<List<HoldingDto>>(emptyList()) }
+    var sales by remember { mutableStateOf<List<SaleRecordDto>>(emptyList()) }
     var drafts by remember { mutableStateOf<List<HoldingDraftDto>>(emptyList()) }
     var quotesBySymbol by remember { mutableStateOf<Map<String, MarketQuoteDto>>(emptyMap()) }
     var analysisBySymbol by remember { mutableStateOf<Map<String, PortfolioAnalysisItemDto>>(emptyMap()) }
@@ -723,6 +819,8 @@ private fun HoldingsScreen() {
     var showAdd by remember { mutableStateOf(false) }
     var editingDraft by remember { mutableStateOf<HoldingDraftDto?>(null) }
     var editingHolding by remember { mutableStateOf<HoldingDto?>(null) }
+    var selectedHolding by remember { mutableStateOf<HoldingDto?>(null) }
+    var sellingHolding by remember { mutableStateOf<HoldingDto?>(null) }
     var revealedHoldingId by remember { mutableStateOf<String?>(null) }
     var deleteCandidate by remember { mutableStateOf<HoldingDto?>(null) }
     var showMarketStatusDetails by remember { mutableStateOf(false) }
@@ -754,6 +852,7 @@ private fun HoldingsScreen() {
     fun refresh() = scope.launch {
         try {
             holdings = api.holdings()
+            sales = api.sales()
             drafts = api.holdingDrafts()
             analysisRun = try { api.portfolioAnalysis() } catch (_: Exception) { null }
             analysisBySymbol = analysisRun?.items?.associateBy { it.symbol } ?: emptyMap()
@@ -813,6 +912,15 @@ private fun HoldingsScreen() {
         if (analysisBySymbol.isNotEmpty()) item {
             AnalysisEntry(count = analysisBySymbol.size, onClick = { showAnalysisDetails = true })
         }
+        if (sales.isNotEmpty()) item {
+            val realized = sales.sumOf { it.realized_pnl }
+            Text(
+                "已实现盈亏 ${signedPositionValue(realized)} · ${sales.size} 笔出售记录",
+                modifier = Modifier.padding(horizontal = 20.dp, vertical = 4.dp),
+                color = if (realized >= 0) Color(0xFFD32F2F) else Color(0xFF178A4B),
+                style = MaterialTheme.typography.bodySmall,
+            )
+        }
         error?.let { message -> item { StatusCard(message, error = true) } }
         scanError?.let { message -> item { StatusCard(message, error = true) } }
         if (drafts.isNotEmpty()) item { Text("待补全代码", modifier = Modifier.padding(start = 20.dp, top = 6.dp, end = 20.dp), style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold) }
@@ -828,7 +936,8 @@ private fun HoldingsScreen() {
             HoldingTableRow(
                 holding = holding,
                 quote = quotesBySymbol[holding.symbol],
-                onEdit = { editingHolding = holding },
+                onEdit = { selectedHolding = holding },
+                onSell = { sellingHolding = holding },
                 isDeleteRevealed = revealedHoldingId == holding.id,
                 onRevealDelete = { revealedHoldingId = holding.id },
                 onCloseDelete = { revealedHoldingId = null },
@@ -857,6 +966,23 @@ private fun HoldingsScreen() {
         initial = HoldingInputDto(holding.symbol, holding.name, holding.quantity, holding.average_cost),
         onDismiss = { editingHolding = null },
         onSave = { input -> scope.launch { try { api.updateHolding(holding.id, input); editingHolding = null; refresh() } catch (_: Exception) { error = "更新持仓失败，请稍后重试。" } } },
+    ) }
+    selectedHolding?.let { holding -> HoldingDetailDialog(
+        holding = holding,
+        quote = quotesBySymbol[holding.symbol],
+        analysis = analysisBySymbol[holding.symbol],
+        onDismiss = { selectedHolding = null },
+        onSell = { selectedHolding = null; sellingHolding = holding },
+        onEdit = { selectedHolding = null; editingHolding = holding },
+    ) }
+    sellingHolding?.let { holding -> SellHoldingDialog(
+        holding = holding,
+        suggestedPrice = quotesBySymbol[holding.symbol]?.price,
+        onDismiss = { sellingHolding = null },
+        onConfirm = { sale -> scope.launch {
+            try { api.sellHolding(holding.id, sale); sellingHolding = null; refresh() }
+            catch (exception: Exception) { error = "出售记录失败：${exception.message ?: "请检查数量和价格"}" }
+        } },
     ) }
     deleteCandidate?.let { holding -> AlertDialog(
         onDismissRequest = { deleteCandidate = null },
@@ -901,6 +1027,65 @@ private fun formatPositionValue(value: Double): String = "%.2f".format(value)
 private fun signedPositionValue(value: Double): String = if (value >= 0) "+${formatPositionValue(value)}" else formatPositionValue(value)
 
 @Composable
+private fun HoldingDetailDialog(
+    holding: HoldingDto, quote: MarketQuoteDto?, analysis: PortfolioAnalysisItemDto?,
+    onDismiss: () -> Unit, onSell: () -> Unit, onEdit: () -> Unit,
+) {
+    val api = ApiClient.service(LocalContext.current)
+    var bars by remember(holding.id) { mutableStateOf<List<DailyPriceDto>>(emptyList()) }
+    var sales by remember(holding.id) { mutableStateOf<List<SaleRecordDto>>(emptyList()) }
+    var risk by remember(holding.id) { mutableStateOf<RiskAssessmentDto?>(null) }
+    LaunchedEffect(holding.id) {
+        bars = runCatching { api.marketHistory(holding.symbol) }.getOrDefault(emptyList())
+        sales = runCatching { api.sales(holding.symbol) }.getOrDefault(emptyList())
+        risk = runCatching { api.riskAssessments().firstOrNull { it.symbol == holding.symbol } }.getOrNull()
+    }
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text("${holding.name} · ${holding.symbol}") },
+        text = { Column(Modifier.verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+            Text("持有 ${holding.quantity} · 成本 ${holding.average_cost} · 现价 ${quote?.price ?: "--"}", style = MaterialTheme.typography.bodySmall)
+            Text("行情 K 线（最近 ${bars.size} 日）", fontWeight = FontWeight.SemiBold)
+            if (bars.size >= 2) KLineChart(bars) else Text("日线正在后台准备。", style = MaterialTheme.typography.bodySmall)
+            analysis?.let { Column {
+                Text("持仓分析 · ${analysisActionLabel(it.action)}", fontWeight = FontWeight.SemiBold)
+                Text(it.reason, style = MaterialTheme.typography.bodySmall)
+                it.technical_snapshot?.let { snapshot -> Text(snapshot.summary, style = MaterialTheme.typography.bodySmall) }
+            } }
+            risk?.let { assessment ->
+                Text("风险分析", fontWeight = FontWeight.SemiBold)
+                Text(if (assessment.status == "data_insufficient") assessment.message else "下行概率 ${assessment.historical_downside_probability}% · 年化波动 ${assessment.annualized_volatility_percent}% · ${assessment.risk_level}", style = MaterialTheme.typography.bodySmall)
+            }
+            Text("卖出记录", fontWeight = FontWeight.SemiBold)
+            if (sales.isEmpty()) Text("暂无出售记录。", style = MaterialTheme.typography.bodySmall)
+            sales.take(8).forEach { sale ->
+                Text("${sale.sold_at.take(10)} · ${sale.quantity} 股 @ ${sale.sale_price} · 已实现 ${signedPositionValue(sale.realized_pnl)}${if (sale.reason.isBlank()) "" else " · ${sale.reason}"}", style = MaterialTheme.typography.bodySmall)
+            }
+        } },
+        confirmButton = { Row { TextButton(onClick = onEdit) { Text("编辑") }; Button(onClick = onSell) { Text("出售") } } },
+        dismissButton = { TextButton(onClick = onDismiss) { Text("关闭") } },
+    )
+}
+
+@Composable
+private fun KLineChart(bars: List<DailyPriceDto>) = Canvas(Modifier.fillMaxWidth().height(150.dp)) {
+    val visible = bars.takeLast(60)
+    val values = visible.flatMap { listOfNotNull(it.high, it.low, it.close) }
+    val minimum = values.minOrNull() ?: return@Canvas
+    val maximum = values.maxOrNull() ?: return@Canvas
+    val span = (maximum - minimum).takeIf { it > 0 } ?: 1.0
+    val step = size.width / visible.size
+    visible.forEachIndexed { index, bar ->
+        val x = step * index + step / 2
+        fun y(value: Double) = size.height - ((value - minimum) / span * size.height).toFloat()
+        val high = y(bar.high ?: bar.close); val low = y(bar.low ?: bar.close); val close = y(bar.close)
+        drawLine(Color(0xFF5B7C99), Offset(x, high), Offset(x, low), strokeWidth = 1.5f)
+        drawCircle(if (index > 0 && bar.close >= visible[index - 1].close) Color(0xFFD32F2F) else Color(0xFF178A4B), radius = 3.5f, center = Offset(x, close))
+    }
+    drawLine(Color.LightGray, Offset(0f, size.height), Offset(size.width, size.height), strokeWidth = 1f)
+}
+
+@Composable
 private fun HoldingTableHeader() {
     Row(
         Modifier.fillMaxWidth().padding(horizontal = 10.dp, vertical = 7.dp),
@@ -925,6 +1110,7 @@ private fun HoldingTableRow(
     holding: HoldingDto,
     quote: MarketQuoteDto?,
     onEdit: () -> Unit,
+    onSell: () -> Unit,
     isDeleteRevealed: Boolean,
     onRevealDelete: () -> Unit,
     onCloseDelete: () -> Unit,
@@ -992,12 +1178,46 @@ private fun HoldingTableRow(
                 sub = currentPrice?.let { "现 ${formatCurrency(it, currency)} · ${rmbEstimate(it, currency)}" } ?: "—",
                 color = MaterialTheme.colorScheme.onSurface, modifier = Modifier.weight(1f),
             )
+            TextButton(onClick = onSell, contentPadding = androidx.compose.foundation.layout.PaddingValues(horizontal = 4.dp)) {
+                Text("出售", color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.labelSmall)
+            }
             if (!isDeleteRevealed) Icon(Icons.Filled.ChevronRight, "编辑 ${holding.name}", tint = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.width(12.dp))
         }
     }
     Column(Modifier.fillMaxWidth()) {
         HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = .65f))
     }
+}
+
+@Composable
+private fun SellHoldingDialog(
+    holding: HoldingDto,
+    suggestedPrice: Double?,
+    onDismiss: () -> Unit,
+    onConfirm: (SaleInputDto) -> Unit,
+) {
+    var quantity by remember(holding.id) { mutableStateOf(holding.quantity.toString()) }
+    var price by remember(holding.id) { mutableStateOf(suggestedPrice?.toString().orEmpty()) }
+    var reason by remember(holding.id) { mutableStateOf("") }
+    val parsedQuantity = quantity.toDoubleOrNull()
+    val parsedPrice = price.toDoubleOrNull()
+    val valid = parsedQuantity != null && parsedQuantity > 0 && parsedQuantity <= holding.quantity && parsedPrice != null && parsedPrice > 0
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text("出售 ${holding.name}") },
+        text = { Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+            Text("可售数量：${holding.quantity}；成本：${holding.average_cost}", style = MaterialTheme.typography.bodySmall)
+            OutlinedTextField(quantity, { quantity = it }, label = { Text("出售数量") }, modifier = Modifier.fillMaxWidth())
+            OutlinedTextField(price, { price = it }, label = { Text("成交价") }, modifier = Modifier.fillMaxWidth())
+            OutlinedTextField(reason, { reason = it }, label = { Text("出售依据／复盘备注（可选）") }, modifier = Modifier.fillMaxWidth(), minLines = 2)
+            if (valid) {
+                val pnl = parsedQuantity!! * (parsedPrice!! - holding.average_cost)
+                Text("预计已实现盈亏：${signedPositionValue(pnl)}", color = if (pnl >= 0) Color(0xFFD32F2F) else Color(0xFF178A4B), style = MaterialTheme.typography.bodySmall)
+            }
+        } },
+        confirmButton = { Button(onClick = { onConfirm(SaleInputDto(parsedQuantity!!, parsedPrice!!, reason.trim())) }, enabled = valid) { Text("确认出售") } },
+        dismissButton = { TextButton(onClick = onDismiss) { Text("取消") } },
+    )
 }
 
 @Composable
@@ -1107,6 +1327,14 @@ private fun AnalysisDetailItem(item: PortfolioAnalysisItemDto, expanded: Boolean
                 Text("决策快照", modifier = Modifier.padding(top = 10.dp), color = MaterialTheme.colorScheme.primary, style = MaterialTheme.typography.labelSmall, fontWeight = FontWeight.Bold)
                 Text("证据完整度 ${snapshot.evidence_completeness_percent}%", style = MaterialTheme.typography.bodySmall, fontWeight = FontWeight.SemiBold)
                 Text(snapshot.candidate_action, style = MaterialTheme.typography.bodySmall)
+                snapshot.market_regime?.let { regime ->
+                    Text("市场环境：${marketRegimeLabel(regime.regime)}", modifier = Modifier.padding(top = 6.dp), style = MaterialTheme.typography.labelMedium, fontWeight = FontWeight.Bold)
+                    Text(regime.indexes.joinToString(" · ") { "${it.name} ${it.five_day_return_percent}%" }.ifBlank { regime.note }, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                }
+                snapshot.relative_strength?.let { strength ->
+                    Text("相对强弱：${strength.label ?: "待配置"}", modifier = Modifier.padding(top = 6.dp), style = MaterialTheme.typography.labelMedium, fontWeight = FontWeight.Bold)
+                    Text(strength.horizons.entries.joinToString(" · ") { "${it.key}日差 ${it.value.relative_return_percent}%" }.ifBlank { strength.note }, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                }
                 snapshot.historical_calibration?.let { calibration ->
                     Text("历史校准", modifier = Modifier.padding(top = 6.dp), style = MaterialTheme.typography.labelMedium, fontWeight = FontWeight.Bold)
                     calibration.horizons.forEach { (days, result) ->
@@ -1165,6 +1393,13 @@ private fun analysisActionColor(action: String): Color = when (action) {
     "risk_review" -> MaterialTheme.colorScheme.error
     "wait_for_confirmation" -> MaterialTheme.colorScheme.primary
     else -> MaterialTheme.colorScheme.tertiary
+}
+
+private fun marketRegimeLabel(regime: String): String = when (regime) {
+    "supportive" -> "顺风"
+    "defensive" -> "防守"
+    "mixed" -> "分化"
+    else -> "数据待补"
 }
 
 private fun analysisTraceStatus(status: String): String = when (status) {
