@@ -78,6 +78,7 @@ market_refresh_thread: Thread | None = None
 market_refresh_state_lock = Lock()
 market_collection_lock = Lock()
 derived_refresh_lock = Lock()
+intraday_refresh_lock = Lock()
 daily_history_refreshed_for: dict[str, str] = {}
 daily_history_attempted_for: dict[str, str] = {}
 market_refresh_state: dict[str, object] = {
@@ -226,6 +227,12 @@ class AiJob(BaseModel):
     volume: float | None = None
     amount: float | None = None
     adjustment: str = "qfq"
+
+
+class IntradayPrice(BaseModel):
+    bar_time: str; open: float; close: float; high: float; low: float
+    volume: float | None = None; amount: float | None = None; average_price: float | None = None
+    source: str; updated_at: datetime
 
 
 class InstrumentMetadataInput(BaseModel):
@@ -443,6 +450,13 @@ market_regime_service = MarketRegimeService()
 relative_strength_service = RelativeStrengthService()
 
 GLOSSARY = {
+    "历史下行概率": GlossaryCard(term="历史下行概率", plain_explanation="在历史日线样本中，未来 5 个交易日累计下跌至少 5% 的出现频率。它是历史统计，不是未来发生概率的保证。", watch_for="先看统计窗口、下跌阈值和样本数量；样本不足时不应据此操作。"),
+    "年化波动": GlossaryCard(term="年化波动", plain_explanation="把每日价格涨跌的离散程度换算到一年尺度，数值越高表示价格路径通常越不平稳；它不表示必然下跌。", watch_for="波动率只衡量幅度，不判断方向；需结合仓位大小和承受范围。"),
+    "中期复核": GlossaryCard(term="中期复核", plain_explanation="不是买卖指令，而是在价格偏离成本、计划或基本假设时，重新检查原有判断是否仍成立。", watch_for="复核应查看公告、财报、行业环境和仓位，而非只看单日涨跌。"),
+    "波动复核": GlossaryCard(term="波动复核", plain_explanation="当年化波动超过你设置的阈值时，系统提醒你检查仓位是否仍匹配风险承受能力。", watch_for="它不要求立刻卖出，只提示需要重新核对风险预算。"),
+    "亏损复核": GlossaryCard(term="亏损复核", plain_explanation="当现价相对你的持仓成本跌幅超过设定阈值时，系统提醒复查原先买入逻辑、仓位和风险承受能力。", watch_for="它不是止损或补仓命令，不能只凭成本价做决定。"),
+    "技术面中期偏强": GlossaryCard(term="技术面中期偏强", plain_explanation="通常指价格与 60 日均线等中期趋势指标呈现较强的历史形态。它只描述价格趋势，不证明公司价值或未来收益。", watch_for="结合成交量、基本面、估值和市场环境，避免把技术标签当作结论。"),
+    "研究候选方案": GlossaryCard(term="研究候选方案", plain_explanation="系统基于已保存的交易计划、历史价格和可用资金计算的研究清单：候选价格区间、失效价、数量与模拟复盘。它不会自动交易。", watch_for="交易计划是你的风险边界；AI 可以协助提出假设和解释证据，但建议必须标明来源并由你确认。"),
     "pe": GlossaryCard(term="PE（市盈率）", plain_explanation="股价相对于每股盈利的倍数。它不是越低越好，要结合行业和盈利质量判断。", watch_for="亏损或一次性收益会使 PE 失真。"),
     "减持": GlossaryCard(term="减持", plain_explanation="股东卖出持有的公司股份。原因可能很多，单则消息不能证明基本面变差。", watch_for="看减持主体、比例、期限与公告全文。"),
     "回购": GlossaryCard(term="回购", plain_explanation="公司用资金买回自身股份，可能用于注销、激励或库存股。", watch_for="区分回购计划和实际完成金额。"),
@@ -735,9 +749,24 @@ def refresh_quote_cache(
 ) -> None:
     try:
         fetch_and_store_quotes(symbols, force_refresh=force_refresh, trigger=trigger)
+        queue_background(refresh_intraday_cache, symbols, trigger)
     except Exception:
         # The failure and its upstream code have already been recorded and logged.
         return
+
+
+def refresh_intraday_cache(symbols: list[str], trigger: str) -> None:
+    """One-minute collection stays outside read APIs and is serialized per process."""
+    if not symbols or not intraday_refresh_lock.acquire(blocking=False):
+        return
+    try:
+        for symbol in symbols:
+            try:
+                price_history_service.refresh_intraday(store, symbol)
+            except PriceHistoryUnavailable as error:
+                logger.info("分钟行情刷新跳过 trigger=%s symbol=%s error=%s", trigger, symbol, error)
+    finally:
+        intraday_refresh_lock.release()
 
 
 def queue_background(target, *args) -> None:
@@ -1129,6 +1158,11 @@ def save_glossary_entry(payload: GlossaryEntryInput) -> GlossaryCard:
     )
 
 
+@app.get("/v1/glossary", response_model=list[GlossaryCard])
+def list_glossary_entries() -> list[GlossaryCard]:
+    return [GlossaryCard(term=str(item["term"]), plain_explanation=str(item["plain_explanation"]), watch_for=str(item["watch_for"]), source=str(item["source"])) for item in store.glossary_entries()]
+
+
 @app.get("/v1/glossary/{term}", response_model=GlossaryCard)
 def glossary(term: str) -> GlossaryCard:
     """Compatibility endpoint; unlike the old version it also logs and finds saved terms."""
@@ -1195,6 +1229,12 @@ def list_sales(symbol: str | None = None) -> list[SaleRecord]:
 def market_history(symbol: str, limit: int = Query(default=120, ge=20, le=800)) -> list[DailyPrice]:
     """Persisted daily bars only; chart rendering never queries an upstream source."""
     return [DailyPrice.model_validate(item) for item in store.daily_prices(symbol.strip().upper(), limit)]
+
+
+@app.get("/v1/market/intraday/{symbol}", response_model=list[IntradayPrice])
+def market_intraday(symbol: str, limit: int = Query(default=500, ge=20, le=1500)) -> list[IntradayPrice]:
+    """SQLite-only minute bars; collection occurs in the scheduler/background task."""
+    return [IntradayPrice.model_validate(item) for item in store.intraday_prices(symbol.strip().upper(), limit)]
 
 
 @app.post("/v1/research-recommendations/generate", response_model=list[ResearchRecommendation])

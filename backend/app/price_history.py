@@ -1,7 +1,7 @@
 """Background collection and normalization of daily prices for held securities."""
 from __future__ import annotations
 
-from datetime import date, timedelta
+from datetime import date, timedelta, datetime
 import os
 
 from app.decimal_utils import decimal_text
@@ -67,6 +67,30 @@ class PriceHistoryService:
             if not bars:
                 raise PriceHistoryUnavailable("历史行情源暂时不可用。") from error
         store.save_daily_prices(symbol, bars)
+        return len(bars)
+
+    def refresh_intraday(self, store, symbol: str) -> int:
+        """Persist one-minute OHLCV bars; callers run this only in background jobs."""
+        symbol = symbol.strip().upper()
+        if self._kind(symbol) == "hk":
+            raise PriceHistoryUnavailable("港股分钟行情源尚未配置")
+        try:
+            import akshare as ak
+            today = datetime.now().strftime("%Y-%m-%d")
+            frame = ak.stock_zh_a_hist_min_em(symbol=symbol, start_date=f"{today} 09:30:00", end_date=f"{today} 15:00:00", period="1", adjust="")
+        except Exception as error:
+            raise PriceHistoryUnavailable("分钟行情源暂时不可用") from error
+        if frame is None or frame.empty:
+            raise PriceHistoryUnavailable("分钟行情为空或尚未开盘")
+        bars = []
+        for _, row in frame.iterrows():
+            try:
+                values = list(row.values)
+                # Eastmoney's documented column order: time, open, close, high, low, volume, amount, amplitude, change, change amount, turnover.
+                bars.append({"bar_time": str(values[0])[:19], "open": float(values[1]), "close": float(values[2]), "high": float(values[3]), "low": float(values[4]), "volume": float(values[5]) if len(values) > 5 else None, "amount": float(values[6]) if len(values) > 6 else None, "average_price": None, "source": "AKShare stock_zh_a_hist_min_em"})
+            except (TypeError, ValueError, IndexError):
+                continue
+        store.save_intraday_prices(symbol, bars)
         return len(bars)
 
     def _tushare_bars(self, symbol: str, start: str) -> list[dict[str, object]]:

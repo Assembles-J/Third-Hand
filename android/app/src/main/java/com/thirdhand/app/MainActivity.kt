@@ -32,6 +32,13 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.animation.core.animateDpAsState
+import androidx.compose.animation.AnimatedContent
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
+import androidx.compose.animation.slideInHorizontally
+import androidx.compose.animation.slideOutHorizontally
+import androidx.compose.animation.togetherWith
+import androidx.compose.animation.core.tween
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.AccountCircle
 import androidx.compose.material.icons.filled.ArrowBack
@@ -90,6 +97,9 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.TextStyle
+import androidx.compose.ui.text.AnnotatedString
+import androidx.compose.ui.text.buildAnnotatedString
+import androidx.compose.ui.text.SpanStyle
 import androidx.compose.ui.text.style.TextDecoration
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
@@ -117,10 +127,15 @@ class MainActivity : ComponentActivity() {
     }
 }
 
+private var savedGlossaryTerms by mutableStateOf<List<String>>(emptyList())
+
 @Composable
 @OptIn(ExperimentalMaterial3Api::class)
 private fun ThirdHandApp(resumeSignal: Int) {
     val context = LocalContext.current
+    LaunchedEffect(Unit) {
+        savedGlossaryTerms = runCatching { ApiClient.service(context).glossaryEntries().map { it.term }.filter { it.isNotBlank() } }.getOrDefault(emptyList())
+    }
     var themeMode by remember { mutableStateOf(ThemeStore.load(context)) }
     var tab by remember { mutableIntStateOf(0) }
     var detailHolding by remember { mutableStateOf<HoldingDto?>(null) }
@@ -170,33 +185,57 @@ private fun ThirdHandApp(resumeSignal: Int) {
         if (detailHolding != null) detailHolding = null else tab = 1
     }
     ThirdHandTheme(themeMode) {
-        Scaffold { padding ->
+        Scaffold(
+            bottomBar = {
+                if (detailHolding == null) {
+                    NavigationBar {
+                        listOf(
+                            Triple("今日", Icons.Filled.AutoGraph, 0),
+                            Triple("持仓", Icons.Filled.Wallet, 1),
+                            Triple("管理", Icons.Filled.AdminPanelSettings, 2),
+                        ).forEach { (label, icon, targetTab) ->
+                            NavigationBarItem(
+                                selected = tab == targetTab || (targetTab == 2 && tab == 3),
+                                onClick = { tab = targetTab },
+                                icon = { Icon(icon, contentDescription = label) },
+                                label = { Text(label) },
+                            )
+                        }
+                    }
+                }
+            },
+        ) { padding ->
             Surface(modifier = Modifier.fillMaxSize().padding(padding), color = MaterialTheme.colorScheme.background) {
                 if (detailHolding != null) {
                     HoldingDetailScreen(detailHolding!!, onBack = { detailHolding = null })
-                } else Column(Modifier.pointerInput(tab) {
+                } else androidx.compose.foundation.layout.Box(Modifier.fillMaxSize().pointerInput(tab) {
                     var horizontalDrag = 0f
                     detectHorizontalDragGestures(
                         onDragStart = { horizontalDrag = 0f },
                         onHorizontalDrag = { _, amount -> horizontalDrag += amount },
                         onDragEnd = {
-                            if (horizontalDrag <= -96f) tab = (tab + 1).coerceAtMost(2)
-                            if (horizontalDrag >= 96f) tab = (tab - 1).coerceAtLeast(0)
+                            if (horizontalDrag <= -56f) tab = (tab + 1).coerceAtMost(2)
+                            if (horizontalDrag >= 56f) tab = (tab - 1).coerceAtLeast(0)
                         },
                     )
                 }) {
-                    Row(Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 6.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                        TextButton(onClick = { tab = 0 }) { Text("今日", color = if (tab == 0) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant) }
-                        TextButton(onClick = { tab = 1 }) { Text("持仓", color = if (tab == 1) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant) }
-                        TextButton(onClick = { tab = 2 }) { Text("管理", color = if (tab == 2) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant) }
+                    AnimatedContent(
+                        targetState = tab,
+                        transitionSpec = {
+                            val movingForward = targetState > initialState
+                            (slideInHorizontally(animationSpec = tween(260)) { width -> if (movingForward) width else -width } + fadeIn(tween(180))) togetherWith
+                                (slideOutHorizontally(animationSpec = tween(220)) { width -> if (movingForward) -width / 3 else width / 3 } + fadeOut(tween(140)))
+                        },
+                        label = "bottomNavigationPage",
+                    ) { activeTab ->
+                        when (activeTab) {
+                            0 -> TodayScreen()
+                            1 -> HoldingsScreen(onOpenDetail = { detailHolding = it })
+                            2 -> UnifiedCenterScreen(ThemeMode.DARK, onThemeModeChange = { themeMode -> })
+                            3 -> TradePlanScreen()
+                            else -> TodayScreen()
+                        }
                     }
-                when (tab) {
-                    0 -> TodayScreen()
-                    1 -> HoldingsScreen(onOpenDetail = { detailHolding = it })
-                    2 -> UnifiedCenterScreen(ThemeMode.DARK, onThemeModeChange = {themeMode -> })
-                    3 -> TradePlanScreen()
-                    else -> TodayScreen()
-                }
                 }
             }
         }
@@ -838,24 +877,31 @@ private fun isUpdateStatusError(status: String): Boolean =
 
 @Composable
 private fun TechnicalMetric(label: String, value: String, modifier: Modifier = Modifier, onLookup: (() -> Unit)? = null) {
+    var lookupTerm by remember(label) { mutableStateOf<String?>(null) }
+    val indexedTerm = explainableTerms.firstOrNull { label.contains(it, ignoreCase = true) }
     Column(modifier, verticalArrangement = Arrangement.spacedBy(2.dp)) {
         Text(
             label,
-            modifier = if (onLookup != null) Modifier.clickable(onClick = onLookup) else Modifier,
+            modifier = if (onLookup != null || indexedTerm != null) Modifier.clickable(onClick = { onLookup?.invoke() ?: run { lookupTerm = indexedTerm } }) else Modifier,
             style = MaterialTheme.typography.labelSmall,
-            color = if (onLookup != null) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant,
-            textDecoration = if (onLookup != null) TextDecoration.Underline else TextDecoration.None,
+            color = if (onLookup != null || indexedTerm != null) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant,
+            textDecoration = if (onLookup != null || indexedTerm != null) TextDecoration.Underline else TextDecoration.None,
         )
         Text(value, style = MaterialTheme.typography.bodySmall, fontWeight = FontWeight.SemiBold)
     }
+    lookupTerm?.let { term -> GlossaryLookupDialog(term = term, onDismiss = { lookupTerm = null }) }
 }
 
 private fun signedPercent(value: Double): String = "${if (value >= 0) "+" else ""}${"%.1f".format(value)}%"
 
-private val explainableTerms = listOf(
+private val starterGlossaryTerms = listOf(
     "空头排列", "多头排列", "量价背离", "市盈率", "波动率",
+    "历史下行概率", "年化波动", "中期复核", "波动复核", "亏损复核", "技术面中期偏强", "研究候选方案",
     "MA20", "MA60", "RSI", "MACD", "ATR", "回撤", "减持", "回购", "PE",
 ).sortedByDescending { it.length }
+
+private val explainableTerms: List<String>
+    get() = (starterGlossaryTerms + savedGlossaryTerms).distinct().sortedByDescending { it.length }
 
 private fun glossaryTermAt(text: String, offset: Int): String? = explainableTerms.firstOrNull { term ->
     var start = text.indexOf(term, ignoreCase = true)
@@ -864,6 +910,16 @@ private fun glossaryTermAt(text: String, offset: Int): String? = explainableTerm
         start = text.indexOf(term, start + term.length, ignoreCase = true)
     }
     false
+}
+
+private fun phraseAt(text: String, offset: Int): String? {
+    if (text.isEmpty() || offset !in text.indices) return null
+    val separators = "，。；：、,.!?！？()（）[]【】\n"
+    var start = offset
+    var end = offset + 1
+    while (start > 0 && text[start - 1] !in separators && end - start < 24) start--
+    while (end < text.length && text[end] !in separators && end - start < 24) end++
+    return text.substring(start, end).trim().takeIf { it.length in 2..24 }
 }
 
 /** Long-press an indexed financial term to open its explanation without leaving the current page. */
@@ -879,12 +935,26 @@ private fun ExplainableText(
 ) {
     var layoutResult by remember(text) { mutableStateOf<androidx.compose.ui.text.TextLayoutResult?>(null) }
     var lookupTerm by remember { mutableStateOf<String?>(null) }
+    val annotated = remember(text) {
+        buildAnnotatedString {
+            append(text)
+            explainableTerms.forEach { term ->
+                var start = text.indexOf(term, ignoreCase = true)
+                while (start >= 0) {
+                    addStyle(SpanStyle(textDecoration = TextDecoration.Underline), start, start + term.length)
+                    start = text.indexOf(term, start + term.length, ignoreCase = true)
+                }
+            }
+        }
+    }
     Text(
-        text = text,
+        text = annotated,
         modifier = modifier.pointerInput(text) {
-            detectTapGestures(onLongPress = { position ->
+            detectTapGestures(onTap = { position ->
+                layoutResult?.getOffsetForPosition(position)?.let { offset -> (glossaryTermAt(text, offset) ?: phraseAt(text, offset))?.let { lookupTerm = it } }
+            }, onLongPress = { position ->
                 layoutResult?.getOffsetForPosition(position)?.let { offset ->
-                    glossaryTermAt(text, offset)?.let { lookupTerm = it }
+                    (glossaryTermAt(text, offset) ?: phraseAt(text, offset))?.let { lookupTerm = it }
                 }
             })
         },
@@ -997,7 +1067,6 @@ private fun HoldingsScreen(onOpenDetail: (HoldingDto) -> Unit) {
     var showCashEditor by remember { mutableStateOf(false) }
     var editingDraft by remember { mutableStateOf<HoldingDraftDto?>(null) }
     var editingHolding by remember { mutableStateOf<HoldingDto?>(null) }
-    var sellingHolding by remember { mutableStateOf<HoldingDto?>(null) }
     var revealedHoldingId by remember { mutableStateOf<String?>(null) }
     var deleteCandidate by remember { mutableStateOf<HoldingDto?>(null) }
     var showMarketStatusDetails by remember { mutableStateOf(false) }
@@ -1124,7 +1193,6 @@ private fun HoldingsScreen(onOpenDetail: (HoldingDto) -> Unit) {
                 holding = holding,
                 quote = quotesBySymbol[holding.symbol],
                 onEdit = { onOpenDetail(holding) },
-                onSell = { sellingHolding = holding },
                 isDeleteRevealed = revealedHoldingId == holding.id,
                 onRevealDelete = { revealedHoldingId = holding.id },
                 onCloseDelete = { revealedHoldingId = null },
@@ -1161,15 +1229,6 @@ private fun HoldingsScreen(onOpenDetail: (HoldingDto) -> Unit) {
         initial = HoldingInputDto(holding.symbol, holding.name, holding.quantity, holding.average_cost),
         onDismiss = { editingHolding = null },
         onSave = { input -> scope.launch { try { api.updateHolding(holding.id, input); editingHolding = null; refresh() } catch (_: Exception) { error = "更新持仓失败，请稍后重试。" } } },
-    ) }
-    sellingHolding?.let { holding -> SellHoldingDialog(
-        holding = holding,
-        suggestedPrice = quotesBySymbol[holding.symbol]?.price,
-        onDismiss = { sellingHolding = null },
-        onConfirm = { sale -> scope.launch {
-            try { api.sellHolding(holding.id, sale); sellingHolding = null; refresh() }
-            catch (exception: Exception) { error = "出售记录失败：${exception.message ?: "请检查数量和价格"}" }
-        } },
     ) }
     deleteCandidate?.let { holding -> AlertDialog(
         onDismissRequest = { deleteCandidate = null },
@@ -1218,6 +1277,7 @@ private fun HoldingDetailScreen(holding: HoldingDto, onBack: () -> Unit) {
     val api = ApiClient.service(LocalContext.current)
     val scope = rememberCoroutineScope()
     var bars by remember(holding.id) { mutableStateOf<List<DailyPriceDto>>(emptyList()) }
+    var intradayBars by remember(holding.id) { mutableStateOf<List<DailyPriceDto>>(emptyList()) }
     var sales by remember(holding.id) { mutableStateOf<List<SaleRecordDto>>(emptyList()) }
     var risk by remember(holding.id) { mutableStateOf<RiskAssessmentDto?>(null) }
     var quote by remember(holding.id) { mutableStateOf<MarketQuoteDto?>(null) }
@@ -1230,6 +1290,7 @@ private fun HoldingDetailScreen(holding: HoldingDto, onBack: () -> Unit) {
     var sellOpen by remember { mutableStateOf(false) }
     LaunchedEffect(holding.id) {
         bars = runCatching { api.marketHistory(holding.symbol) }.getOrDefault(emptyList())
+        intradayBars = runCatching { api.marketIntraday(holding.symbol).map { bar -> DailyPriceDto(trading_date = bar.bar_time, open = bar.open, close = bar.close, high = bar.high, low = bar.low, volume = bar.volume, amount = bar.amount, adjustment = "1m") } }.getOrDefault(emptyList())
         sales = runCatching { api.sales(holding.symbol) }.getOrDefault(emptyList())
         risk = runCatching { api.riskAssessments().firstOrNull { it.symbol == holding.symbol } }.getOrNull()
         quote = runCatching { ApiClient.marketQuotes(api, MarketQuoteBatchRequestDto(listOf(holding.symbol))).firstOrNull() }.getOrNull()
@@ -1240,10 +1301,11 @@ private fun HoldingDetailScreen(holding: HoldingDto, onBack: () -> Unit) {
             evaluations = runCatching { api.recommendationEvaluations(item.id) }.getOrDefault(emptyList())
         }
     }
-    val chartBars = aggregateBars(
-        if (period == "日线") todaySnapshotBar(bars, quote) else bars,
-        period,
-    )
+    val chartBars = when (period) {
+        "今日" -> intradayBars
+        "日线" -> todaySnapshotBar(bars, quote)
+        else -> aggregateBars(bars, period)
+    }
     Column(Modifier.fillMaxSize()) {
         Row(Modifier.fillMaxWidth().padding(horizontal = 10.dp, vertical = 8.dp), verticalAlignment = Alignment.CenterVertically) {
             IconButton(onClick = onBack) { Icon(Icons.Filled.ArrowBack, "返回持仓") }
@@ -1254,8 +1316,8 @@ private fun HoldingDetailScreen(holding: HoldingDto, onBack: () -> Unit) {
             item { Column(Modifier.padding(horizontal = 20.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
             Text("持有 ${holding.quantity} · 成本 ${holding.average_cost} · 现价 ${quote?.price ?: "--"}", style = MaterialTheme.typography.bodySmall)
             Text("行情 K 线", fontWeight = FontWeight.SemiBold)
-            Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) { listOf("日线", "周线", "月线").forEach { label -> TextButton(onClick = { period = label }) { Text(label, color = if (period == label) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant) } } }
-            if (chartBars.size >= 2) KLineChart(chartBars, quote.takeIf { period == "日线" }) else Text("日线正在后台准备。", style = MaterialTheme.typography.bodySmall)
+            Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) { listOf("今日", "日线", "周线", "月线").forEach { label -> TextButton(onClick = { period = label }) { Text(label, color = if (period == label) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant) } } }
+            if (chartBars.size >= 2) KLineChart(chartBars, quote.takeIf { period == "日线" || period == "今日" }) else Text(if (period == "今日") "今日分钟线正在后台同步；仅显示已缓存数据。" else "日线正在后台准备。", style = MaterialTheme.typography.bodySmall)
             } }
             analysis?.let { review -> item { Column(Modifier.padding(horizontal = 20.dp)) {
                 Text("持仓分析 · ${analysisActionLabel(review.action)}", fontWeight = FontWeight.SemiBold)
@@ -1320,7 +1382,7 @@ private fun aggregateBars(bars: List<DailyPriceDto>, period: String): List<Daily
         if (period == "周线") "${date.year}-${date.get(WeekFields.ISO.weekOfWeekBasedYear())}" else "${date.year}-${date.monthValue}"
     }.values.map { group ->
         val rows = group.map { it.second }
-        DailyPriceDto(trading_date = rows.last().trading_date, open = rows.first().open, close = rows.last().close, high = rows.maxOfOrNull { it.high ?: it.close }, low = rows.minOfOrNull { it.low ?: it.close }, volume = rows.sumOf { it.volume ?: 0.0 }, amount = rows.sumOf { it.amount ?: 0.0 }, adjustment = rows.last().adjustment)
+        DailyPriceDto(trading_date = rows.last().trading_date, open = rows.first().open, close = rows.last().close, high = rows.maxOfOrNull { it.high ?: it.close }, low = rows.minOfOrNull { it.low ?: it.close }, volume = rows.sumOf { it.volume ?: 0.0 }, amount = rows.sumOf { it.amount ?: 0.0 }, adjustment = rows.last().adjustment ?: "qfq")
     }.takeLast(120)
 }
 
@@ -1403,7 +1465,6 @@ private fun HoldingTableRow(
     holding: HoldingDto,
     quote: MarketQuoteDto?,
     onEdit: () -> Unit,
-    onSell: () -> Unit,
     isDeleteRevealed: Boolean,
     onRevealDelete: () -> Unit,
     onCloseDelete: () -> Unit,
@@ -1453,7 +1514,9 @@ private fun HoldingTableRow(
             Column(Modifier.weight(1.15f)) {
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     Text(holding.name, modifier = Modifier.weight(1f, false), maxLines = 1, overflow = TextOverflow.Ellipsis, fontWeight = FontWeight.SemiBold, style = MaterialTheme.typography.bodySmall)
-                    Text(marketTag(currency), modifier = Modifier.padding(start = 3.dp), color = MaterialTheme.colorScheme.onSurfaceVariant, style = MaterialTheme.typography.labelSmall)
+                    marketTag(currency)?.let { tag ->
+                        Text(tag, modifier = Modifier.padding(start = 3.dp), color = MaterialTheme.colorScheme.onSurfaceVariant, style = MaterialTheme.typography.labelSmall)
+                    }
                 }
                 Text(marketValue?.let { "${formatCurrency(it, currency)} · ${rmbEstimate(it, currency)}" } ?: "市值待更新", color = MaterialTheme.colorScheme.onSurfaceVariant, style = MaterialTheme.typography.labelSmall, maxLines = 1)
             }
@@ -1471,9 +1534,6 @@ private fun HoldingTableRow(
                 sub = currentPrice?.let { "现 ${formatCurrency(it, currency)} · ${rmbEstimate(it, currency)}" } ?: "—",
                 color = MaterialTheme.colorScheme.onSurface, modifier = Modifier.weight(1f),
             )
-            TextButton(onClick = onSell, contentPadding = androidx.compose.foundation.layout.PaddingValues(horizontal = 4.dp)) {
-                Text("出售", color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.labelSmall)
-            }
             if (!isDeleteRevealed) Icon(Icons.Filled.ChevronRight, "编辑 ${holding.name}", tint = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.width(12.dp))
         }
     }
@@ -1740,9 +1800,10 @@ private fun analysisActionLabel(action: String): String = when (action) {
     else -> "复核"
 }
 
-private fun marketTag(currency: String): String = when (currency) {
-    "HKD" -> "港股·HKD"
-    "CNY" -> "A股·CNY"
+private fun marketTag(currency: String): String? = when (currency) {
+    "CNY" -> null
+    "HKD" -> "港股"
+    "USD" -> "美股"
     else -> currency
 }
 
@@ -1870,7 +1931,8 @@ private fun GlossaryLookupDialog(term: String, onDismiss: () -> Unit) {
                         saving = true
                         scope.launch {
                             try {
-                                card = api.saveGlossary(GlossaryEntryInputDto(term, explanation.trim(), watchFor.trim()))
+                            card = api.saveGlossary(GlossaryEntryInputDto(term, explanation.trim(), watchFor.trim()))
+                            savedGlossaryTerms = (savedGlossaryTerms + term).distinct()
                             } catch (_: Exception) {
                                 error = "保存失败，请稍后重试。"
                             } finally {

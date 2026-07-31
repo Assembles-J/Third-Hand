@@ -171,6 +171,8 @@ class PortfolioStore:
                     "CREATE INDEX IF NOT EXISTS idx_daily_price_cache_symbol_date "
                     "ON daily_price_cache(symbol, trading_date DESC)"
                 )
+                connection.execute("CREATE TABLE IF NOT EXISTS intraday_price_cache (symbol TEXT NOT NULL, bar_time TEXT NOT NULL, open REAL NOT NULL, close REAL NOT NULL, high REAL NOT NULL, low REAL NOT NULL, volume REAL, amount REAL, average_price REAL, source TEXT NOT NULL, updated_at TEXT NOT NULL, PRIMARY KEY(symbol, bar_time))")
+                connection.execute("CREATE INDEX IF NOT EXISTS idx_intraday_price_cache_symbol_time ON intraday_price_cache(symbol, bar_time DESC)")
                 connection.execute("""
                     CREATE TABLE IF NOT EXISTS instrument_metadata (
                         symbol TEXT PRIMARY KEY,
@@ -487,6 +489,7 @@ class PortfolioStore:
             connection.execute("DELETE FROM learning_cases")
             connection.execute("DELETE FROM risk_cache")
             connection.execute("DELETE FROM daily_price_cache")
+            connection.execute("DELETE FROM intraday_price_cache")
             connection.execute("DELETE FROM portfolio_analysis_cache")
             connection.execute("DELETE FROM analysis_runs")
             connection.execute("DELETE FROM sale_records")
@@ -713,6 +716,22 @@ class PortfolioStore:
         with self._connect() as connection: rows = connection.execute("SELECT * FROM research_rules ORDER BY category, id").fetchall()
         return [dict(row) for row in rows]
 
+    def save_intraday_prices(self, symbol: str, bars: list[dict[str, object]]) -> None:
+        if not bars:
+            return
+        now = beijing_now().isoformat()
+        rows = [(
+            symbol, str(bar["bar_time"]), float(bar["open"]), float(bar["close"]), float(bar["high"]), float(bar["low"]),
+            bar.get("volume"), bar.get("amount"), bar.get("average_price"), str(bar.get("source", "AKShare intraday")), now,
+        ) for bar in bars]
+        with self._connect() as connection:
+            connection.executemany("INSERT OR REPLACE INTO intraday_price_cache VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)", rows)
+
+    def intraday_prices(self, symbol: str, limit: int = 500) -> list[dict[str, object]]:
+        with self._connect() as connection:
+            rows = connection.execute("SELECT bar_time,open,close,high,low,volume,amount,average_price,source,updated_at FROM intraday_price_cache WHERE symbol=? ORDER BY bar_time DESC LIMIT ?", (symbol, limit)).fetchall()
+        return [dict(row) for row in reversed(rows)]
+
     def save_glossary_entry(self, item: dict[str, object]) -> dict[str, object]:
         with self._connect() as connection:
             connection.execute(
@@ -729,6 +748,11 @@ class PortfolioStore:
         with self._connect() as connection:
             row = connection.execute("SELECT * FROM glossary_entries WHERE term_key = ?", (term_key,)).fetchone()
         return dict(row) if row else None
+
+    def glossary_entries(self, limit: int = 500) -> list[dict[str, object]]:
+        with self._connect() as connection:
+            rows = connection.execute("SELECT term,plain_explanation,watch_for,source FROM glossary_entries ORDER BY updated_at DESC LIMIT ?", (limit,)).fetchall()
+        return [dict(row) for row in rows]
 
     def record_glossary_lookup(self, term_key: str, term: str, context: str, found: bool) -> None:
         with self._connect() as connection:

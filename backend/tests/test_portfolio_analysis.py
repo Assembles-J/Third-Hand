@@ -60,3 +60,16 @@ def test_weak_technical_trigger_is_not_overwritten_by_observe():
     item = payload["items"][0]
     assert item["action"] == "risk_review"
     assert "中期趋势偏弱" in item["reason"]
+
+
+def test_missing_quote_keeps_the_review_in_data_insufficient_state():
+    payload = assess_holdings(
+        [{"symbol": "600519", "name": "test", "average_cost": 20.0}],
+        [],
+        FakeStore(),
+    )
+
+    item = payload["items"][0]
+    assert item["action"] == "data_insufficient"
+    assert item["evidence"] == []
+    assert item["analysis_trace"][0]["status"] == "missing"

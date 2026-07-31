@@ -123,7 +123,8 @@ data class SaleRecordDto(
     val realized_pnl: Double, val realized_pnl_percent: Double, val remaining_quantity: Double,
     val reason: String = "", val sold_at: String,
 )
-data class DailyPriceDto(val trading_date: String, val open: Double? = null, val close: Double, val high: Double? = null, val low: Double? = null, val volume: Double? = null, val amount: Double? = null, val adjustment: String = "qfq")
+data class DailyPriceDto(val trading_date: String, val open: Double? = null, val close: Double, val high: Double? = null, val low: Double? = null, val volume: Double? = null, val amount: Double? = null, val adjustment: String? = "qfq")
+data class IntradayPriceDto(val bar_time: String, val open: Double, val close: Double, val high: Double, val low: Double, val volume: Double? = null, val amount: Double? = null, val average_price: Double? = null, val source: String, val updated_at: String)
 data class RecommendationRequestDto(val symbols: List<String>)
 data class AvailableCashDto(val available_cash: Double, val updated_at: String = "")
 data class AvailableCashInputDto(val available_cash: Double)
@@ -297,6 +298,8 @@ interface ThirdHandApi {
 
     @GET("v1/market/history/{symbol}")
     suspend fun marketHistory(@Path("symbol") symbol: String, @Query("limit") limit: Int = 120): List<DailyPriceDto>
+    @GET("v1/market/intraday/{symbol}")
+    suspend fun marketIntraday(@Path("symbol") symbol: String, @Query("limit") limit: Int = 500): List<IntradayPriceDto>
     @GET("v1/account/cash")
     suspend fun availableCash(): AvailableCashDto
     @PUT("v1/account/cash")
@@ -375,6 +378,9 @@ interface ThirdHandApi {
 
     @GET("v1/glossary/{term}")
     suspend fun glossary(@Path("term") term: String): GlossaryCardDto
+
+    @GET("v1/glossary")
+    suspend fun glossaryEntries(): List<GlossaryCardDto>
 
     @POST("v1/glossary/lookup")
     suspend fun lookupGlossary(@Body request: GlossaryLookupInputDto): GlossaryCardDto

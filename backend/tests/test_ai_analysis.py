@@ -154,6 +154,11 @@ def test_analysis_output_rejects_unknown_enum():
         AiAnalysisOutput.model_validate({**VALID_ANALYSIS, "impact": "very_good"})
 
 
+def test_analysis_output_rejects_unknown_schema_fields():
+    with pytest.raises(ValueError):
+        AiAnalysisOutput.model_validate({**VALID_ANALYSIS, "suggested_quantity": 1000})
+
+
 def test_analysis_service_validates_metadata_and_reuses_versioned_cache():
     store = FakeStore()
     client = FakeClient([json.dumps(VALID_ANALYSIS)])
