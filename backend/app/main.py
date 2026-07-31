@@ -8,6 +8,7 @@ from __future__ import annotations
 import csv
 import hashlib
 import io
+import json
 import logging
 import os
 import time
@@ -28,6 +29,7 @@ from app.storage import PortfolioStore
 from app.time_utils import beijing_now
 from app.risk import RiskDataUnavailable, RiskService
 from app.ai_analysis import AiAnalysisService
+from app.llm_client import LlmClientError
 from app.portfolio_analysis import assess_holdings
 from app.technical_analysis import TechnicalAnalysisService
 from app.trading_calendar import TradingCalendarService
@@ -35,6 +37,9 @@ from app.trading_calendar import TradingCalendarService
 app = FastAPI(title="Third-Hand API", version="0.2.0")
 APP_STARTED_AT = time.monotonic()
 logger = logging.getLogger(__name__)
+# Uvicorn configures its own loggers but does not always enable application
+# loggers.  Explicitly set the app namespace so market diagnostics are emitted.
+logging.getLogger("app").setLevel(os.getenv("THIRD_HAND_LOG_LEVEL", "INFO").upper())
 
 
 def positive_environment_integer(name: str, default: int, minimum: int) -> int:
@@ -258,6 +263,14 @@ class LearningCaseInput(BaseModel):
     evidence_links: list[str] = Field(default_factory=list, max_length=8)
 class LearningCase(LearningCaseInput):
     id: str; created_at: datetime
+
+
+class LearningCaseAnalysis(BaseModel):
+    summary: str = Field(min_length=1, max_length=1200)
+    recurring_patterns: list[str] = Field(default_factory=list, max_length=5)
+    next_review_focus: list[str] = Field(default_factory=list, max_length=5)
+    confidence: str = Field(pattern="^(low|medium|high)$")
+    disclaimer: str = DISCLAIMER
 class ResearchRule(BaseModel):
     id: str; category: str; title: str; trigger_text: str; guidance: str; confidence_ceiling: float; source_url: str; version: str
 class PersonalRuleInput(BaseModel):
@@ -432,6 +445,11 @@ def fetch_and_store_quotes(
     trigger: str,
 ) -> list[dict[str, object]]:
     attempted_at = beijing_now()
+    started_at = time.monotonic()
+    logger.info(
+        "行情刷新开始 trigger=%s symbols=%s force_refresh=%s",
+        trigger, ",".join(symbols), force_refresh,
+    )
     with market_refresh_state_lock:
         market_refresh_state.update({
             "last_attempt_at": attempted_at,
@@ -442,6 +460,18 @@ def fetch_and_store_quotes(
         quotes = market_data.quotes(symbols, force_refresh=force_refresh)
         successful = [quote for quote in quotes if quote.get("price") is not None and not quote.get("error_code")]
         store.save_quotes(successful)
+        logger.info(
+            "行情刷新结果 trigger=%s quotes=%s",
+            trigger,
+            [
+                {
+                    "symbol": quote.get("symbol"), "price": quote.get("price"),
+                    "source": quote.get("source"), "as_of": quote.get("as_of"),
+                    "retrieved_at": str(quote.get("retrieved_at")), "error_code": quote.get("error_code"),
+                }
+                for quote in quotes
+            ],
+        )
     except Exception as error:
         with market_refresh_state_lock:
             market_refresh_state["last_error"] = f"{type(error).__name__}: {error}"
@@ -466,8 +496,9 @@ def fetch_and_store_quotes(
     with market_refresh_state_lock:
         market_refresh_state.update(state_update)
     logger.info(
-        "行情刷新完成 trigger=%s symbols=%s success=%s failed=%s",
+        "行情刷新完成 trigger=%s symbols=%s success=%s failed=%s elapsed_ms=%s",
         trigger, ",".join(symbols), len(successful), len(quotes) - len(successful),
+        round((time.monotonic() - started_at) * 1000),
     )
     return quotes
 
@@ -515,6 +546,12 @@ def scheduled_market_refresh_loop() -> None:
             )
 
             open_symbols_key = tuple(refreshable_symbols)
+
+            logger.info(
+                "行情定时任务轮询 now=%s holdings=%s refreshable=%s",
+                now.isoformat(), ",".join(all_symbols) or "none",
+                ",".join(refreshable_symbols) or "none",
+            )
 
             if refreshable_symbols:
                 refresh_quote_cache(
@@ -618,6 +655,10 @@ def resolve_market_quotes(
     cached_by_symbol = {str(item["symbol"]): item for item in cached}
     cached_symbols = set(cached_by_symbol)
     has_complete_cache = cached_symbols.issuperset(requested)
+    logger.info(
+        "行情接口请求 symbols=%s refresh=%s cached_symbols=%s complete_cache=%s",
+        ",".join(requested), refresh, ",".join(sorted(cached_symbols)) or "none", has_complete_cache,
+    )
     if refresh or not has_complete_cache:
         try:
             quotes = fetch_and_store_quotes(
@@ -659,6 +700,7 @@ def resolve_market_quotes(
                 }))
         return resolved
     if cached:
+        logger.info("行情接口返回缓存并安排后台刷新 symbols=%s", ",".join(requested))
         background_tasks.add_task(refresh_quote_cache, requested, False, "request-background")
         return [
             MarketQuote.model_validate({**cached_by_symbol[symbol], "refresh_status": "cached_refreshing"})
@@ -725,6 +767,44 @@ def list_learning_cases(symbol: str | None = None) -> list[LearningCase]:
 def create_learning_case(payload: LearningCaseInput) -> LearningCase:
     item = {"id": str(uuid4()), **payload.model_dump(), "created_at": beijing_now().isoformat()}
     return LearningCase.model_validate(store.add_learning_case(item))
+
+
+@app.post("/v1/learning-cases/analysis", response_model=LearningCaseAnalysis)
+def analyze_learning_cases() -> LearningCaseAnalysis:
+    """Summarize the user's own review records without producing trading advice."""
+    cases = store.learning_cases(None)
+    if not cases:
+        raise HTTPException(status_code=422, detail="请先至少保存一条复盘记录，再生成 AI 分析。")
+    if not ai_analysis_service.client.enabled:
+        raise HTTPException(status_code=503, detail="AI 服务尚未配置，请设置 DEEPSEEK_API_KEY 后重试。")
+
+    compact_cases = [{
+        "title": item.get("title"),
+        "symbol": item.get("symbol"),
+        "context": item.get("context"),
+        "lesson": item.get("lesson"),
+        "outcome": item.get("outcome"),
+        "confidence": item.get("confidence"),
+    } for item in cases[:20]]
+    messages = [
+        {
+            "role": "system",
+            "content": (
+                "你是投资复盘记录的学习辅助工具。仅基于用户提供的复盘记录，归纳可验证的重复模式和下一次复盘关注点。"
+                "不得预测价格、不得给出买卖建议、不得把推断写成事实。"
+                "只输出 JSON：summary、recurring_patterns、next_review_focus、confidence；confidence 只能是 low、medium、high。"
+            ),
+        },
+        {"role": "user", "content": json.dumps({"review_cases": compact_cases}, ensure_ascii=False)},
+    ]
+    try:
+        response = ai_analysis_service.client.chat_json(
+            messages, model=ai_analysis_service.model, max_tokens=700, thinking=False,
+        )
+        return LearningCaseAnalysis.model_validate_json(response.content.strip().removeprefix("```json").removesuffix("```").strip())
+    except (LlmClientError, ValueError, json.JSONDecodeError) as error:
+        logger.warning("复盘 AI 分析失败: %s", error)
+        raise HTTPException(status_code=503, detail="AI 分析暂时不可用，请稍后重试。") from error
 
 @app.get("/v1/research-rules", response_model=list[ResearchRule])
 def research_rules() -> list[ResearchRule]:

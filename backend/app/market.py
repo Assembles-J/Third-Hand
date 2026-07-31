@@ -82,6 +82,11 @@ class MarketDataService:
         normalized = list(dict.fromkeys(symbol.strip().upper() for symbol in symbols if symbol.strip()))
         if not normalized:
             return []
+        started_at = time.monotonic()
+        logger.info(
+            "行情源请求开始 symbols=%s force_refresh=%s provider=%s",
+            ",".join(normalized), force_refresh, self._provider,
+        )
         hk_symbols = [symbol.zfill(5) for symbol in normalized if self._is_hk(symbol)]
         a_symbols = [symbol for symbol in normalized if not self._is_hk(symbol) and len(symbol) == 6 and symbol.isdigit()]
         invalid_symbols = [symbol for symbol in normalized if symbol not in hk_symbols and symbol not in a_symbols]
@@ -125,7 +130,15 @@ class MarketDataService:
                     reason,
                 ))
         by_symbol = {str(quote["symbol"]): quote for quote in quotes}
-        return [by_symbol[symbol] for symbol in normalized]
+        result = [by_symbol[symbol] for symbol in normalized]
+        logger.info(
+            "行情源请求完成 symbols=%s result_count=%s priced_count=%s failed=%s elapsed_ms=%s",
+            ",".join(normalized), len(result),
+            sum(quote.get("price") is not None for quote in result),
+            ",".join(str(quote.get("symbol")) for quote in result if quote.get("error_code")) or "none",
+            round((time.monotonic() - started_at) * 1000),
+        )
+        return result
 
     def _auto_a_quotes(self, symbols: list[str], market: str, force_refresh: bool) -> list[dict[str, object]]:
         try:
@@ -329,7 +342,13 @@ class MarketDataService:
             cached = self._cache.get(market)
             cache_seconds = self.HK_CACHE_SECONDS if market == "hk" else self.CACHE_SECONDS
             if not force_refresh and cached and time.monotonic() - cached[0] < cache_seconds:
+                logger.debug(
+                    "行情内存缓存命中 market=%s age_ms=%s cache_ttl_seconds=%s",
+                    market, round((time.monotonic() - cached[0]) * 1000), cache_seconds,
+                )
                 return cached[1], cached[2], cached[3]
+        logger.debug("行情内存缓存未命中 market=%s force_refresh=%s", market, force_refresh)
+        upstream_started_at = time.monotonic()
         try:
             import akshare as ak
         except ImportError as error:
@@ -355,6 +374,10 @@ class MarketDataService:
         except Exception as error:
             raise MarketDataUnavailable("公开行情源暂时不可用，请稍后刷新。") from error
         retrieved_at = beijing_now()
+        logger.info(
+            "行情上游响应 market=%s source=%s rows=%s elapsed_ms=%s",
+            market, source, len(frame.index), round((time.monotonic() - upstream_started_at) * 1000),
+        )
         with self._lock:
             self._cache[market] = (time.monotonic(), frame, retrieved_at, source)
         return frame, retrieved_at, source
