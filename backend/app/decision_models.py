@@ -173,6 +173,23 @@ class ActionCandidate(DecisionModel):
     blocked_reasons: tuple[str, ...] = ()
 
 
+class ReasoningStep(DecisionModel):
+    stage: Literal["evidence", "conflict", "uncertainty"]
+    summary: str = Field(min_length=1, max_length=400)
+    evidence_ids: tuple[str, ...] = ()
+
+
+class AiResearchAssessment(DecisionModel):
+    thesis_status: Literal["strengthened", "unchanged", "weakened", "invalidated", "unknown"]
+    preferred_action: Literal["OPEN", "ADD", "HOLD", "WATCH", "REDUCE", "EXIT", "BLOCKED"]
+    supporting_evidence_ids: tuple[str, ...] = ()
+    opposing_evidence_ids: tuple[str, ...] = ()
+    missing_evidence: tuple[str, ...] = ()
+    reasoning_steps: tuple[ReasoningStep, ...] = ()
+    uncertainty: Literal["low", "medium", "high"]
+    summary: str = Field(min_length=1, max_length=800)
+
+
 class ShadowDecisionReport(DecisionModel):
     shadow_id: str
     context_id: str
@@ -182,6 +199,8 @@ class ShadowDecisionReport(DecisionModel):
     evidence: tuple[EvidenceItem, ...]
     action_candidates: tuple[ActionCandidate, ...]
     sizing: "PositionSizingResult | None" = None
+    ai_assessment: AiResearchAssessment | None = None
+    guarded_preferred_action: Literal["OPEN", "ADD", "HOLD", "WATCH", "REDUCE", "EXIT", "BLOCKED"] | None = None
     policy_version: str
     input_hash: str
     shadow_mode: Literal[True] = True
@@ -205,6 +224,26 @@ class PositionSizingResult(DecisionModel):
     risk_capital: float | None = None
     blocked_reasons: tuple[str, ...] = ()
     sizing_version: str
+
+
+class DecisionReport(DecisionModel):
+    decision_id: str
+    context_id: str
+    symbol: str
+    generated_at: datetime
+    status: Literal["READY", "BLOCKED", "DEGRADED"]
+    action: Literal["OPEN", "ADD", "HOLD", "WATCH", "REDUCE", "EXIT", "BLOCKED"]
+    summary: str
+    evidence: tuple[EvidenceItem, ...]
+    action_candidates: tuple[ActionCandidate, ...]
+    ai_assessment: AiResearchAssessment | None = None
+    sizing: PositionSizingResult | None = None
+    policy_version: str
+    prompt_version: str | None = None
+    schema_version: str = "context-v1"
+    model: str | None = None
+    input_hash: str
+    automatic_execution: Literal[False] = False
 
 
 class DecisionContext(DecisionModel):

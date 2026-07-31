@@ -54,11 +54,22 @@ def _add_trade_plan_invalidation_price(connection: sqlite3.Connection) -> None:
         connection.execute("ALTER TABLE trade_plans ADD COLUMN invalidation_price REAL")
 
 
+def _create_decision_ai_runs(connection: sqlite3.Connection) -> None:
+    connection.execute("CREATE TABLE IF NOT EXISTS decision_ai_runs (run_id TEXT PRIMARY KEY, context_id TEXT NOT NULL, input_hash TEXT NOT NULL, status TEXT NOT NULL, error_code TEXT, payload TEXT NOT NULL, metadata TEXT NOT NULL, created_at TEXT NOT NULL)")
+
+
+def _create_decision_reports_and_jobs(connection: sqlite3.Connection) -> None:
+    connection.execute("CREATE TABLE IF NOT EXISTS decision_reports (decision_id TEXT PRIMARY KEY, context_id TEXT NOT NULL, symbol TEXT NOT NULL, input_hash TEXT NOT NULL, payload TEXT NOT NULL, created_at TEXT NOT NULL)")
+    connection.execute("CREATE TABLE IF NOT EXISTS decision_jobs (job_id TEXT PRIMARY KEY, context_id TEXT NOT NULL, symbol TEXT NOT NULL, input_hash TEXT NOT NULL UNIQUE, status TEXT NOT NULL, attempts INTEGER NOT NULL, payload TEXT NOT NULL, error_message TEXT, created_at TEXT NOT NULL, updated_at TEXT NOT NULL)")
+
+
 MIGRATIONS = (
     Migration("0001_legacy_schema_baseline", _record_legacy_schema_baseline),
     Migration("0002_decision_contexts", _create_decision_contexts),
     Migration("0003_decision_shadow_reports", _create_decision_shadow_reports),
     Migration("0004_trade_plan_invalidation_price", _add_trade_plan_invalidation_price),
+    Migration("0005_decision_ai_runs", _create_decision_ai_runs),
+    Migration("0006_decision_reports_and_jobs", _create_decision_reports_and_jobs),
 )
 
 

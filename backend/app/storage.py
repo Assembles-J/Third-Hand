@@ -512,6 +512,9 @@ class PortfolioStore:
             connection.execute("DELETE FROM glossary_lookup_history")
             connection.execute("DELETE FROM decision_contexts")
             connection.execute("DELETE FROM decision_shadow_reports")
+            connection.execute("DELETE FROM decision_ai_runs")
+            connection.execute("DELETE FROM decision_reports")
+            connection.execute("DELETE FROM decision_jobs")
 
     def admin_summary(self) -> dict[str, int]:
         """Return only aggregate, non-sensitive operational counters for the admin console."""
@@ -686,6 +689,41 @@ class PortfolioStore:
                 (symbol.strip().upper(), max(1, limit)),
             ).fetchall()
         return [json.loads(str(row["payload"])) for row in rows]
+
+    def save_decision_ai_run(self, item: dict[str, object]) -> None:
+        with self._connect() as connection:
+            connection.execute("INSERT INTO decision_ai_runs (run_id,context_id,input_hash,status,error_code,payload,metadata,created_at) VALUES (?,?,?,?,?,?,?,?)", (str(item["run_id"]), str(item["context_id"]), str(item["input_hash"]), str(item["status"]), item.get("error_code"), json.dumps(item.get("payload", {}), ensure_ascii=False), json.dumps(item.get("metadata", {}), ensure_ascii=False), str(item["created_at"])))
+
+    def save_decision_report(self, item: dict[str, object]) -> None:
+        with self._connect() as connection:
+            connection.execute("INSERT INTO decision_reports VALUES (?,?,?,?,?,?)", (str(item["decision_id"]), str(item["context_id"]), str(item["symbol"]), str(item["input_hash"]), json.dumps(item, ensure_ascii=False, default=str), str(item["generated_at"])))
+
+    def decision_reports(self, symbol: str, limit: int = 50) -> list[dict[str, object]]:
+        with self._connect() as connection:
+            rows = connection.execute("SELECT payload FROM decision_reports WHERE symbol=? ORDER BY created_at DESC LIMIT ?", (symbol.strip().upper(), max(1, limit))).fetchall()
+        return [json.loads(str(row["payload"])) for row in rows]
+
+    def decision_report(self, decision_id: str) -> dict[str, object] | None:
+        with self._connect() as connection:
+            row = connection.execute("SELECT payload FROM decision_reports WHERE decision_id=?", (decision_id,)).fetchone()
+        return json.loads(str(row["payload"])) if row else None
+
+    def enqueue_decision_job(self, item: dict[str, object]) -> dict[str, object]:
+        now = beijing_now().isoformat()
+        with self._connect() as connection:
+            existing = connection.execute("SELECT * FROM decision_jobs WHERE input_hash=?", (item["input_hash"],)).fetchone()
+            if existing: return {**dict(existing), "is_new": False}
+            connection.execute("INSERT INTO decision_jobs VALUES (?,?,?,?,? ,0,?,NULL,?,?)", (item["job_id"], item["context_id"], item["symbol"], item["input_hash"], "pending", json.dumps(item, ensure_ascii=False), now, now))
+        return {**item, "status": "pending", "attempts": 0, "is_new": True}
+
+    def decision_job(self, job_id: str) -> dict[str, object] | None:
+        with self._connect() as connection:
+            row = connection.execute("SELECT * FROM decision_jobs WHERE job_id=?", (job_id,)).fetchone()
+        return dict(row) if row else None
+
+    def update_decision_job(self, job_id: str, status: str, error_message: str | None = None) -> None:
+        with self._connect() as connection:
+            connection.execute("UPDATE decision_jobs SET status=?, attempts=attempts+1, error_message=?, updated_at=? WHERE job_id=?", (status, error_message, beijing_now().isoformat(), job_id))
 
     def cached_risk(self, symbol: str) -> dict[str, object] | None:
         with self._connect() as connection:

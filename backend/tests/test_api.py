@@ -1,4 +1,5 @@
 import hashlib
+import time
 
 from fastapi.testclient import TestClient
 
@@ -142,6 +143,25 @@ def test_recommendation_evaluation_uses_only_future_bars_and_marks_legacy_or_unt
 
     assert response.json() == {"evaluated": 1, "untriggered": 1, "legacy_unverifiable": 1}
     assert statuses == {"current": "filled", "legacy": "legacy_unverifiable", "untriggered": "untriggered"}
+
+
+def test_decision_generation_is_async_idempotent_and_persists_a_report():
+    client.post("/v1/holdings", json={"symbol": "600519", "name": "test", "quantity": 100, "average_cost": 10})
+    store.save_quotes([{ "symbol": "600519", "price": 12, "currency": "CNY", "source": "test", "as_of": "2026-07-31", "retrieved_at": "2026-07-31T10:00:00+08:00"}])
+    store.save_daily_prices("600519", [{"trading_date": f"2026-07-{index + 1:02d}", "open": 10, "close": 12, "high": 13, "low": 9, "source": "test"} for index in range(60)])
+    store.save_trade_plan({"id": "plan-1", "symbol": "600519", "horizon": "swing", "thesis": "test", "market_expectation": "test", "catalysts": [], "entry_condition": "entry", "add_condition": "add", "reduce_condition": "reduce", "exit_condition": "exit", "max_position_percent": 15, "risk_budget_percent": 3, "enabled": True, "version": 1})
+
+    first = client.post("/v1/decisions/generate", json={"symbols": ["600519"]}).json()["jobs"][0]
+    second = client.post("/v1/decisions/generate", json={"symbols": ["600519"]}).json()["jobs"][0]
+    for _ in range(20):
+        job = client.get(f"/v1/decisions/jobs/{first['job_id']}").json()
+        if job["status"] in {"succeeded", "failed"}:
+            break
+        time.sleep(.02)
+
+    assert first["job_id"] == second["job_id"]
+    assert job["status"] == "succeeded"
+    assert client.get("/v1/decisions/latest", params={"symbol": "600519"}).json()["automatic_execution"] is False
 
 
 def test_learning_cases_can_be_created_and_listed():

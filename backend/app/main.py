@@ -48,6 +48,9 @@ from app import decision_config as config
 from app.action_policy import ActionPolicyEngine
 from app.decision_models import ShadowDecisionReport
 from app.position_sizing import PositionSizingEngine
+from app.decision_ai import DecisionAiService
+from app.decision_guard import DecisionGuard
+from app.decision_orchestrator import DecisionOrchestrator
 
 app = FastAPI(title="Third-Hand API", version="0.2.0")
 APP_STARTED_AT = time.monotonic()
@@ -210,6 +213,11 @@ class DailyPrice(BaseModel):
 
 class RecommendationRequest(BaseModel):
     symbols: list[str] = Field(min_length=1, max_length=50)
+
+
+class DecisionGenerateRequest(BaseModel):
+    symbols: list[str] = Field(min_length=1, max_length=50)
+    force: bool = False
 
 
 class AvailableCashInput(BaseModel):
@@ -462,6 +470,9 @@ decision_context_builder = DecisionContextBuilder(store, technical_analysis_serv
 evidence_engine = EvidenceEngine()
 action_policy_engine = ActionPolicyEngine()
 position_sizing_engine = PositionSizingEngine()
+decision_ai_service = DecisionAiService(store)
+decision_guard = DecisionGuard()
+decision_orchestrator = DecisionOrchestrator(evidence_engine, action_policy_engine, position_sizing_engine, decision_ai_service, decision_guard)
 
 GLOSSARY = {
     "历史下行概率": GlossaryCard(term="历史下行概率", plain_explanation="在历史日线样本中，未来 5 个交易日累计下跌至少 5% 的出现频率。它是历史统计，不是未来发生概率的保证。", watch_for="先看统计窗口、下跌阈值和样本数量；样本不足时不应据此操作。"),
@@ -1084,6 +1095,66 @@ def decision_context(symbol: str) -> DecisionContext:
     return context
 
 
+def run_decision_job(job_id: str) -> None:
+    job = store.decision_job(job_id)
+    if not job:
+        return
+    store.update_decision_job(job_id, "running")
+    try:
+        context_payload = store.decision_context(str(job["context_id"]))
+        if not context_payload:
+            raise ValueError("decision context missing")
+        report = decision_orchestrator.generate(DecisionContext.model_validate(context_payload))
+        store.save_decision_report(report.model_dump(mode="json"))
+        store.update_decision_job(job_id, "succeeded")
+    except Exception as error:
+        logger.exception("decision job failed job_id=%s", job_id)
+        store.update_decision_job(job_id, "failed", str(error)[:500])
+
+
+@app.post("/v1/decisions/generate")
+def generate_decisions(payload: DecisionGenerateRequest) -> dict[str, object]:
+    jobs = []
+    for symbol in dict.fromkeys(value.strip().upper() for value in payload.symbols):
+        context = decision_context_builder.build(symbol)
+        store.save_decision_context(context.model_dump(mode="json"))
+        input_hash = context.input_hash if not payload.force else f"{context.input_hash}:{uuid4()}"
+        job = store.enqueue_decision_job({"job_id": str(uuid4()), "context_id": context.context_id, "symbol": context.symbol, "input_hash": input_hash})
+        jobs.append({"symbol": context.symbol, "job_id": job["job_id"], "status": job["status"]})
+        if job["status"] == "pending" and job.get("is_new"):
+            Thread(target=run_decision_job, args=(str(job["job_id"]),), daemon=True).start()
+    return {"jobs": jobs}
+
+
+@app.get("/v1/decisions/latest")
+def latest_decision(symbol: str) -> dict[str, object]:
+    reports = store.decision_reports(symbol, 1)
+    if not reports:
+        raise HTTPException(status_code=404, detail="decision not found")
+    return reports[0]
+
+
+@app.get("/v1/decisions/jobs/{job_id}")
+def decision_job_status(job_id: str) -> dict[str, object]:
+    job = store.decision_job(job_id)
+    if not job:
+        raise HTTPException(status_code=404, detail="decision job not found")
+    return job
+
+
+@app.get("/v1/decisions")
+def decision_history(symbol: str, limit: int = Query(default=50, ge=1, le=100)) -> list[dict[str, object]]:
+    return store.decision_reports(symbol, limit)
+
+
+@app.get("/v1/decisions/{decision_id}")
+def decision_detail(decision_id: str) -> dict[str, object]:
+    report = store.decision_report(decision_id)
+    if not report:
+        raise HTTPException(status_code=404, detail="decision not found")
+    return report
+
+
 @app.get("/v1/decisions/evidence/{symbol}")
 def decision_evidence(symbol: str) -> list[dict[str, object]]:
     """Return deterministic evidence for a newly persisted input context."""
@@ -1106,12 +1177,16 @@ def decision_shadow_report(symbol: str) -> ShadowDecisionReport:
         raise HTTPException(status_code=422, detail=str(error)) from error
     evidence = evidence_engine.build(context)
     candidates = action_policy_engine.evaluate(context, evidence)
+    ai_assessment = decision_ai_service.assess(context, evidence, candidates) if config.DECISION_AI_ENABLED else None
+    guarded_assessment = decision_guard.guard(candidates, ai_assessment)
     report = ShadowDecisionReport(
         shadow_id=str(uuid4()), context_id=context.context_id, symbol=context.symbol,
         generated_at=beijing_now(),
         status="BLOCKED" if context.data_quality.status == "blocked" else "DEGRADED" if context.data_quality.status == "degraded" else "READY",
         evidence=evidence, action_candidates=candidates,
         sizing=position_sizing_engine.size(context, candidates[0].action) if config.DECISION_SIZING_ENABLED else None,
+        ai_assessment=guarded_assessment,
+        guarded_preferred_action=guarded_assessment.preferred_action if guarded_assessment else None,
         policy_version=action_policy_engine.version, input_hash=context.input_hash,
     )
     store.save_decision_context(context.model_dump(mode="json"))
