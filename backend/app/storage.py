@@ -210,6 +210,7 @@ class PortfolioStore:
                 """)
                 self._ensure_column(connection, "trade_plans", "benchmark_symbol", "TEXT")
                 self._ensure_column(connection, "trade_plans", "benchmark_name", "TEXT")
+                self._ensure_column(connection, "trade_plans", "structured_conditions_json", "TEXT NOT NULL DEFAULT '[]'")
                 connection.execute("CREATE TABLE IF NOT EXISTS analysis_runs (id TEXT PRIMARY KEY, payload TEXT NOT NULL, created_at TEXT NOT NULL)")
                 connection.execute("""
                     CREATE TABLE IF NOT EXISTS sale_records (
@@ -223,7 +224,11 @@ class PortfolioStore:
                 connection.execute("CREATE INDEX IF NOT EXISTS idx_sale_records_symbol_time ON sale_records(symbol, sold_at DESC)")
                 connection.execute("CREATE TABLE IF NOT EXISTS research_recommendations (id TEXT PRIMARY KEY, symbol TEXT NOT NULL, payload TEXT NOT NULL, created_at TEXT NOT NULL)")
                 connection.execute("CREATE TABLE IF NOT EXISTS recommendation_evaluations (recommendation_id TEXT NOT NULL, horizon INTEGER NOT NULL, payload TEXT NOT NULL, PRIMARY KEY(recommendation_id, horizon))")
+                connection.execute("CREATE TABLE IF NOT EXISTS recommendation_events (id INTEGER PRIMARY KEY AUTOINCREMENT, recommendation_id TEXT NOT NULL, event_type TEXT NOT NULL, trading_date TEXT, trigger_price REAL, payload TEXT NOT NULL)")
+                connection.execute("CREATE TABLE IF NOT EXISTS paper_positions (recommendation_id TEXT PRIMARY KEY, symbol TEXT NOT NULL, action TEXT NOT NULL, quantity REAL NOT NULL, fill_price REAL NOT NULL, fill_date TEXT NOT NULL, status TEXT NOT NULL, updated_at TEXT NOT NULL)")
+                connection.execute("CREATE TABLE IF NOT EXISTS paper_daily_pnl (recommendation_id TEXT NOT NULL, trading_date TEXT NOT NULL, close_price REAL NOT NULL, gross_pnl REAL NOT NULL, net_pnl REAL NOT NULL, quantity REAL NOT NULL, PRIMARY KEY(recommendation_id, trading_date))")
                 connection.execute("CREATE TABLE IF NOT EXISTS ai_jobs (id TEXT PRIMARY KEY, target_id TEXT NOT NULL, input_hash TEXT NOT NULL UNIQUE, status TEXT NOT NULL, attempts INTEGER NOT NULL, max_attempts INTEGER NOT NULL, payload TEXT NOT NULL, error_message TEXT, created_at TEXT NOT NULL, updated_at TEXT NOT NULL)")
+                connection.execute("CREATE TABLE IF NOT EXISTS account_cash (account_id TEXT PRIMARY KEY, available_cash REAL NOT NULL, updated_at TEXT NOT NULL)")
                 connection.execute("""
                     CREATE TABLE IF NOT EXISTS calibration_observations (
                         id TEXT PRIMARY KEY,
@@ -487,7 +492,11 @@ class PortfolioStore:
             connection.execute("DELETE FROM sale_records")
             connection.execute("DELETE FROM research_recommendations")
             connection.execute("DELETE FROM recommendation_evaluations")
+            connection.execute("DELETE FROM recommendation_events")
+            connection.execute("DELETE FROM paper_positions")
+            connection.execute("DELETE FROM paper_daily_pnl")
             connection.execute("DELETE FROM ai_jobs")
+            connection.execute("DELETE FROM account_cash")
             connection.execute("DELETE FROM calibration_observations")
             connection.execute("DELETE FROM ai_analysis_cache")
             connection.execute("DELETE FROM ai_analysis_cache_v2")
@@ -774,29 +783,30 @@ class PortfolioStore:
     def trade_plans(self) -> list[dict[str, object]]:
         with self._connect() as connection:
             rows = connection.execute("SELECT * FROM trade_plans ORDER BY updated_at DESC").fetchall()
-        return [{**dict(row), "catalysts": json.loads(str(row["catalysts_json"])), "enabled": bool(row["enabled"])} for row in rows]
+        return [{**dict(row), "catalysts": json.loads(str(row["catalysts_json"])), "structured_conditions": json.loads(str(row["structured_conditions_json"])), "enabled": bool(row["enabled"])} for row in rows]
 
     def trade_plan(self, symbol: str) -> dict[str, object] | None:
         with self._connect() as connection:
             row = connection.execute("SELECT * FROM trade_plans WHERE symbol=?", (symbol,)).fetchone()
-        return ({**dict(row), "catalysts": json.loads(str(row["catalysts_json"])), "enabled": bool(row["enabled"])} if row else None)
+        return ({**dict(row), "catalysts": json.loads(str(row["catalysts_json"])), "structured_conditions": json.loads(str(row["structured_conditions_json"])), "enabled": bool(row["enabled"])} if row else None)
 
     def save_trade_plan(self, item: dict[str, object]) -> dict[str, object]:
         now = beijing_now().isoformat()
-        item = {"benchmark_symbol": None, "benchmark_name": None, **item}
-        item = {**item, "catalysts_json": json.dumps(item.get("catalysts", []), ensure_ascii=False), "updated_at": now}
+        item = {"benchmark_symbol": None, "benchmark_name": None, "version": 1, **item}
+        item = {**item, "catalysts_json": json.dumps(item.get("catalysts", []), ensure_ascii=False), "structured_conditions_json": json.dumps(item.get("structured_conditions", []), ensure_ascii=False), "updated_at": now}
         with self._connect() as connection:
             existing = connection.execute("SELECT id, version FROM trade_plans WHERE symbol=?", (item["symbol"],)).fetchone()
             if existing:
                 item["id"], item["version"] = str(existing["id"]), int(existing["version"]) + 1
             connection.execute(
                 """INSERT INTO trade_plans
-                (id,symbol,horizon,thesis,market_expectation,benchmark_symbol,benchmark_name,catalysts_json,entry_condition,add_condition,reduce_condition,exit_condition,max_position_percent,risk_budget_percent,enabled,version,updated_at)
-                VALUES (:id,:symbol,:horizon,:thesis,:market_expectation,:benchmark_symbol,:benchmark_name,:catalysts_json,:entry_condition,:add_condition,:reduce_condition,:exit_condition,:max_position_percent,:risk_budget_percent,:enabled,:version,:updated_at)
-                ON CONFLICT(symbol) DO UPDATE SET horizon=excluded.horizon,thesis=excluded.thesis,market_expectation=excluded.market_expectation,benchmark_symbol=excluded.benchmark_symbol,benchmark_name=excluded.benchmark_name,catalysts_json=excluded.catalysts_json,entry_condition=excluded.entry_condition,add_condition=excluded.add_condition,reduce_condition=excluded.reduce_condition,exit_condition=excluded.exit_condition,max_position_percent=excluded.max_position_percent,risk_budget_percent=excluded.risk_budget_percent,enabled=excluded.enabled,version=excluded.version,updated_at=excluded.updated_at""",
+                (id,symbol,horizon,thesis,market_expectation,benchmark_symbol,benchmark_name,catalysts_json,structured_conditions_json,entry_condition,add_condition,reduce_condition,exit_condition,max_position_percent,risk_budget_percent,enabled,version,updated_at)
+                VALUES (:id,:symbol,:horizon,:thesis,:market_expectation,:benchmark_symbol,:benchmark_name,:catalysts_json,:structured_conditions_json,:entry_condition,:add_condition,:reduce_condition,:exit_condition,:max_position_percent,:risk_budget_percent,:enabled,:version,:updated_at)
+                ON CONFLICT(symbol) DO UPDATE SET horizon=excluded.horizon,thesis=excluded.thesis,market_expectation=excluded.market_expectation,benchmark_symbol=excluded.benchmark_symbol,benchmark_name=excluded.benchmark_name,catalysts_json=excluded.catalysts_json,structured_conditions_json=excluded.structured_conditions_json,entry_condition=excluded.entry_condition,add_condition=excluded.add_condition,reduce_condition=excluded.reduce_condition,exit_condition=excluded.exit_condition,max_position_percent=excluded.max_position_percent,risk_budget_percent=excluded.risk_budget_percent,enabled=excluded.enabled,version=excluded.version,updated_at=excluded.updated_at""",
                 item,
             )
-        return {**item, "catalysts": json.loads(str(item.pop("catalysts_json"))), "enabled": bool(item["enabled"])}
+        result = {**item, "catalysts": json.loads(str(item.pop("catalysts_json"))), "structured_conditions": json.loads(str(item.pop("structured_conditions_json"))), "enabled": bool(item["enabled"])}
+        return result
 
     def save_analysis_run(self, item: dict[str, object]) -> None:
         with self._connect() as connection:
@@ -839,6 +849,17 @@ class PortfolioStore:
         with self._connect() as connection:
             connection.execute("INSERT INTO research_recommendations VALUES (?, ?, ?, ?)", (item["id"], item["symbol"], json.dumps(item, ensure_ascii=False), beijing_now().isoformat()))
 
+    def available_cash(self) -> dict[str, object]:
+        with self._connect() as connection:
+            row = connection.execute("SELECT available_cash, updated_at FROM account_cash WHERE account_id='default'").fetchone()
+        return {"available_cash": float(row["available_cash"]) if row else 0.0, "updated_at": row["updated_at"] if row else beijing_now().isoformat()}
+
+    def save_available_cash(self, available_cash: float) -> dict[str, object]:
+        now = beijing_now().isoformat()
+        with self._connect() as connection:
+            connection.execute("INSERT INTO account_cash VALUES ('default', ?, ?) ON CONFLICT(account_id) DO UPDATE SET available_cash=excluded.available_cash, updated_at=excluded.updated_at", (available_cash, now))
+        return {"available_cash": available_cash, "updated_at": now}
+
     def recommendations(self, symbol: str | None = None) -> list[dict[str, object]]:
         query, args = ("SELECT payload FROM research_recommendations WHERE symbol=? ORDER BY created_at DESC", [symbol]) if symbol else ("SELECT payload FROM research_recommendations ORDER BY created_at DESC", [])
         with self._connect() as connection: rows = connection.execute(query, args).fetchall()
@@ -851,6 +872,32 @@ class PortfolioStore:
     def recommendation_evaluations(self, recommendation_id: str) -> list[dict[str, object]]:
         with self._connect() as connection: rows = connection.execute("SELECT payload FROM recommendation_evaluations WHERE recommendation_id=? ORDER BY horizon", (recommendation_id,)).fetchall()
         return [json.loads(str(row["payload"])) for row in rows]
+
+    def save_recommendation_events(self, recommendation_id: str, events: list[dict[str, object]]) -> None:
+        if not events:
+            return
+        with self._connect() as connection:
+            connection.executemany(
+                "INSERT INTO recommendation_events (recommendation_id,event_type,trading_date,trigger_price,payload) VALUES (?, ?, ?, ?, ?)",
+                [(recommendation_id, str(event.get("event_type", "condition_checked")), event.get("trading_date"), event.get("trigger_price"), json.dumps(event, ensure_ascii=False, default=str)) for event in events],
+            )
+
+    def save_paper_tracking(self, recommendation_id: str, symbol: str, fill: dict[str, object], quantity: float, action: str, bars: list[dict[str, object]]) -> None:
+        entry = float(fill["price"])
+        sign = -1 if action == "trim" else 1
+        now = beijing_now().isoformat()
+        rows = []
+        for bar in bars:
+            close = float(bar["close"])
+            gross = (close - entry) * quantity * sign
+            fees = (entry + close) * quantity * 0.0003
+            rows.append((recommendation_id, str(bar["trading_date"]), close, gross, gross - fees, quantity))
+        with self._connect() as connection:
+            connection.execute(
+                "INSERT OR REPLACE INTO paper_positions VALUES (?, ?, ?, ?, ?, ?, 'open', ?)",
+                (recommendation_id, symbol, action, quantity, entry, str(fill["date"]), now),
+            )
+            connection.executemany("INSERT OR REPLACE INTO paper_daily_pnl VALUES (?, ?, ?, ?, ?, ?)", rows)
 
     def enqueue_ai_job(self, job: dict[str, object]) -> dict[str, object]:
         now = beijing_now().isoformat()
@@ -865,6 +912,6 @@ class PortfolioStore:
         with self._connect() as connection: rows = connection.execute(query, params).fetchall()
         return [{**dict(row), "payload": json.loads(str(row["payload"]))} for row in rows]
 
-    def update_ai_job(self, job_id: str, status: str, error_message: str | None = None) -> None:
+    def update_ai_job(self, job_id: str, status: str, error_message: str | None = None, increment_attempt: bool = False) -> None:
         with self._connect() as connection:
-            connection.execute("UPDATE ai_jobs SET status=?, attempts=attempts+1, error_message=?, updated_at=? WHERE id=?", (status, error_message, beijing_now().isoformat(), job_id))
+            connection.execute("UPDATE ai_jobs SET status=?, attempts=attempts+?, error_message=?, updated_at=? WHERE id=?", (status, 1 if increment_attempt else 0, error_message, beijing_now().isoformat(), job_id))

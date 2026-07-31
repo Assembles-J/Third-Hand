@@ -7,7 +7,7 @@ FEE_RATE = 0.0003
 SLIPPAGE_RATE = 0.0005
 
 
-def candidate(symbol: str, holding: dict | None, quote: dict | None, bars: list[dict], plan: dict | None) -> dict:
+def candidate(symbol: str, holding: dict | None, quote: dict | None, bars: list[dict], plan: dict | None, available_cash: float = 0.0) -> dict:
     if not quote or quote.get("price") is None or len(bars) < 60 or not plan or not plan.get("enabled"):
         return {"symbol": symbol, "status": "blocked", "blocked_reasons": ["quote_or_daily_history_or_enabled_plan_missing"], "automatic_execution": False}
     closes = [float(x["close"]) for x in bars]
@@ -18,9 +18,17 @@ def candidate(symbol: str, holding: dict | None, quote: dict | None, bars: list[
     if low > high: low, high = high, low
     action = "trim" if holding and price >= high20 else "add"
     quantity = None
+    quantity_status = "cash_missing"
     if holding and action == "trim":
         quantity = max(1, floor(float(holding["quantity"]) * .25))
-    return {"symbol": symbol, "status": "ready", "action": action, "price_zone": {"low": low, "high": high}, "invalidation_price": round(low * .97, 2), "suggested_quantity": quantity, "quantity_status": "position_based" if quantity else "cash_missing", "conditions": [{"field": "close", "operator": "between", "value": [low, high]}, {"field": "plan_enabled", "operator": "equals", "value": True}], "automatic_execution": False, "evaluation_version": "daily_bar_assumption_v1"}
+        quantity_status = "position_based_25_percent"
+    elif available_cash > 0:
+        # Reserve 75% of cash and size the candidate in whole 100-share lots.
+        quantity = floor((available_cash * .25) / price / 100) * 100
+        quantity_status = "cash_based_25_percent_100_share_lot" if quantity > 0 else "cash_insufficient_for_one_lot"
+    structured = list(plan.get("structured_conditions") or [])
+    conditions = structured or [{"trigger": action, "field": "close", "operator": "between", "value": [low, high]}, {"field": "plan_enabled", "operator": "equals", "value": True}]
+    return {"symbol": symbol, "status": "ready", "action": action, "price_zone": {"low": low, "high": high}, "invalidation_price": round(low * .97, 2), "suggested_quantity": quantity, "quantity_status": quantity_status, "conditions": conditions, "trigger_events": [{"event_type": "condition_checked", "trading_date": bars[-1].get("trading_date"), "trigger_price": price, "conditions": conditions, "matched": low <= price <= high}], "automatic_execution": False, "evaluation_version": "daily_bar_assumption_v1"}
 
 
 def first_fill(recommendation: dict, bars: list[dict]) -> tuple[dict | None, int | None]:
@@ -34,7 +42,7 @@ def first_fill(recommendation: dict, bars: list[dict]) -> tuple[dict | None, int
     return None, None
 
 
-def evaluations(fill: dict, fill_index: int, bars: list[dict], quantity: float) -> list[dict]:
+def evaluations(fill: dict, fill_index: int, bars: list[dict], quantity: float, action: str = "add") -> list[dict]:
     result = []
     entry = float(fill["price"])
     for horizon in HORIZONS:
@@ -42,7 +50,9 @@ def evaluations(fill: dict, fill_index: int, bars: list[dict], quantity: float) 
             continue
         window = bars[fill_index:fill_index + horizon + 1]
         mark = float(window[-1]["close"])
-        gross = (mark - entry) * quantity
+        gross = (mark - entry) * quantity * (-1 if action == "trim" else 1)
         fees = (entry + mark) * quantity * FEE_RATE
-        result.append({"horizon": horizon, "evaluation_date": window[-1]["trading_date"], "fill_price": entry, "mark_price": mark, "gross_pnl": gross, "net_pnl": gross - fees, "return_percent": (gross - fees) / (entry * quantity) * 100, "mfe_percent": (max(float(x.get("high") or x["close"]) for x in window) / entry - 1) * 100, "mae_percent": (min(float(x.get("low") or x["close"]) for x in window) / entry - 1) * 100, "fee_rate": FEE_RATE, "slippage_rate": SLIPPAGE_RATE})
+        high, low = max(float(x.get("high") or x["close"]) for x in window), min(float(x.get("low") or x["close"]) for x in window)
+        favorable, adverse = ((entry - low) / entry * 100, (entry - high) / entry * 100) if action == "trim" else ((high / entry - 1) * 100, (low / entry - 1) * 100)
+        result.append({"horizon": horizon, "evaluation_date": window[-1]["trading_date"], "fill_price": entry, "mark_price": mark, "gross_pnl": gross, "net_pnl": gross - fees, "return_percent": (gross - fees) / (entry * quantity) * 100, "mfe_percent": favorable, "mae_percent": adverse, "fee_rate": FEE_RATE, "slippage_rate": SLIPPAGE_RATE})
     return result

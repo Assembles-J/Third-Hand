@@ -204,6 +204,14 @@ class RecommendationRequest(BaseModel):
     symbols: list[str] = Field(min_length=1, max_length=50)
 
 
+class AvailableCashInput(BaseModel):
+    available_cash: float = Field(ge=0, le=1_000_000_000)
+
+
+class AvailableCash(AvailableCashInput):
+    updated_at: datetime
+
+
 class ResearchRecommendation(BaseModel):
     id: str; symbol: str; status: str; action: str | None = None
     price_zone: dict[str, float] | None = None; invalidation_price: float | None = None
@@ -405,6 +413,9 @@ class TradePlanInput(BaseModel):
     max_position_percent: float = Field(gt=0, le=100)
     risk_budget_percent: float = Field(gt=0, le=100)
     enabled: bool = True
+    # These are machine-readable counterparts to the explanatory text above.
+    # A plan remains backward compatible while users gradually add conditions.
+    structured_conditions: list[dict[str, object]] = Field(default_factory=list, max_length=12)
 
     @field_validator("symbol")
     @classmethod
@@ -1129,6 +1140,16 @@ def list_holdings() -> list[Holding]:
     return [Holding.model_validate(item) for item in store.list()]
 
 
+@app.get("/v1/account/cash", response_model=AvailableCash)
+def get_available_cash() -> AvailableCash:
+    return AvailableCash.model_validate(store.available_cash())
+
+
+@app.put("/v1/account/cash", response_model=AvailableCash)
+def set_available_cash(payload: AvailableCashInput) -> AvailableCash:
+    return AvailableCash.model_validate(store.save_available_cash(payload.available_cash))
+
+
 @app.post("/v1/holdings", response_model=Holding, status_code=status.HTTP_201_CREATED)
 def create_holding(payload: HoldingInput, background_tasks: BackgroundTasks) -> Holding:
     item = store.add(str(uuid4()), **payload.model_dump())
@@ -1182,8 +1203,10 @@ def generate_recommendations(payload: RecommendationRequest) -> list[ResearchRec
     quotes = {str(item["symbol"]): item for item in store.cached_quotes(payload.symbols)}
     results = []
     for symbol in dict.fromkeys(item.strip().upper() for item in payload.symbols):
-        item = {"id": str(uuid4()), **build_candidate(symbol, holdings.get(symbol), quotes.get(symbol), store.daily_prices(symbol), store.trade_plan(symbol))}
-        store.save_recommendation(item); results.append(item)
+        item = {"id": str(uuid4()), **build_candidate(symbol, holdings.get(symbol), quotes.get(symbol), store.daily_prices(symbol), store.trade_plan(symbol), float(store.available_cash()["available_cash"]))}
+        store.save_recommendation(item)
+        store.save_recommendation_events(str(item["id"]), list(item.get("trigger_events", [])))
+        results.append(item)
     return [ResearchRecommendation.model_validate(item) for item in results]
 
 
@@ -1199,7 +1222,10 @@ def evaluate_recommendations() -> dict[str, int]:
         if item.get("status") != "ready" or item.get("suggested_quantity") is None: continue
         fill, index = first_fill(item, store.daily_prices(str(item["symbol"])))
         if fill is None: continue
-        store.save_evaluations(str(item["id"]), evaluations(fill, index, store.daily_prices(str(item["symbol"])), float(item["suggested_quantity"])))
+        bars = store.daily_prices(str(item["symbol"]))
+        items = evaluations(fill, index, bars, float(item["suggested_quantity"]), str(item.get("action")))
+        store.save_evaluations(str(item["id"]), items)
+        store.save_paper_tracking(str(item["id"]), str(item["symbol"]), fill, float(item["suggested_quantity"]), str(item.get("action")), bars[index:])
         evaluated += 1
     return {"evaluated": evaluated}
 
@@ -1212,7 +1238,7 @@ def recommendation_evaluations(recommendation_id: str) -> list[dict[str, object]
 def run_ai_job(job_id: str) -> None:
     job = next((item for item in store.ai_jobs() if item["id"] == job_id), None)
     if not job: return
-    store.update_ai_job(job_id, "running")
+    store.update_ai_job(job_id, "running", increment_attempt=True)
     content = job["payload"]
     try:
         result = ai_analysis_service.enrich(content)
@@ -1233,7 +1259,9 @@ def list_ai_jobs(target_id: str | None = None) -> list[AiJob]:
 def retry_ai_job(job_id: str) -> AiJob:
     job = next((item for item in store.ai_jobs() if item["id"] == job_id), None)
     if not job: raise HTTPException(status_code=404, detail="AI 任务不存在")
-    store.update_ai_job(job_id, "pending")
+    if int(job["attempts"]) >= int(job["max_attempts"]):
+        raise HTTPException(status_code=422, detail="AI task retry limit reached")
+    store.update_ai_job(job_id, "pending", None)
     queue_background(run_ai_job, job_id)
     return AiJob.model_validate(next(item for item in store.ai_jobs() if item["id"] == job_id))
 

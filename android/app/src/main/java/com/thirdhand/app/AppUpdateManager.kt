@@ -8,6 +8,8 @@ import android.content.Context
 import android.content.Intent
 import android.content.pm.PackageInfo
 import android.content.pm.PackageManager
+import android.net.ConnectivityManager
+import android.net.NetworkCapabilities
 import android.net.Uri
 import android.os.Build
 import android.os.Environment
@@ -74,6 +76,7 @@ object AppUpdateManager {
     private const val ExpectedVersionName = "expected_version_name"
     private const val DownloadFilename = "download_filename"
     private const val SignatureMatches = "signature_matches"
+    private const val AutomaticDownloadEnabled = "automatic_download_enabled"
     private const val DownloadDirectory = "Third-Hand"
     private const val StoragePermissionRequest = 9042
 
@@ -106,6 +109,24 @@ object AppUpdateManager {
 
     fun hasCompletedDownload(context: Context): Boolean = completedDownload(context) != null
 
+    fun automaticDownloadEnabled(context: Context): Boolean =
+        preferences(context).getBoolean(AutomaticDownloadEnabled, true)
+
+    fun setAutomaticDownloadEnabled(context: Context, enabled: Boolean) {
+        preferences(context).edit().putBoolean(AutomaticDownloadEnabled, enabled).apply()
+    }
+
+    /** Starts the default background download only on an unmetered Wi-Fi connection. */
+    fun downloadAutomaticallyOnWifi(context: Context, update: AppUpdate): UpdateLaunchResult? {
+        if (!automaticDownloadEnabled(context) || !isOnWifi(context) || completedDownload(context) != null) return null
+        if (downloadProgress(context)?.state?.isActive == true) return null
+        if (
+            Build.VERSION.SDK_INT <= Build.VERSION_CODES.P &&
+            context.checkSelfPermission(Manifest.permission.WRITE_EXTERNAL_STORAGE) != PackageManager.PERMISSION_GRANTED
+        ) return null
+        return startDownload(context, update, wifiOnly = true)
+    }
+
     /** Returns the system download's latest byte counts so Compose can show in-app progress. */
     fun downloadProgress(context: Context): UpdateDownloadProgress? {
         if (completedDownload(context) != null) return null
@@ -130,29 +151,10 @@ object AppUpdateManager {
         }
     }
 
-    /** Starts a download or reopens a verified download. Android still requires user confirmation. */
+    /** Starts a manual download or opens an already verified installer. Android still requires user confirmation. */
     fun downloadAndInstall(context: Context, update: AppUpdate): UpdateLaunchResult {
-        completedDownload(context)?.let { completed ->
-            if (!completed.signatureMatches) {
-                Toast.makeText(context, completedUpdateMessage(context), Toast.LENGTH_LONG).show()
-                openDownloads(context)
-                return UpdateLaunchResult.SIGNATURE_MISMATCH
-            }
-            if (!context.packageManager.canRequestPackageInstalls()) {
-                requestInstallPermission(context)
-                return UpdateLaunchResult.NEED_INSTALL_PERMISSION
-            }
-            return if (openInstaller(context, completed.uri)) {
-                UpdateLaunchResult.INSTALLER_OPENED
-            } else {
-                UpdateLaunchResult.DOWNLOAD_UNAVAILABLE
-            }
-        }
+        if (completedDownload(context) != null) return installDownloadedUpdate(context)
 
-        if (!context.packageManager.canRequestPackageInstalls()) {
-            requestInstallPermission(context)
-            return UpdateLaunchResult.NEED_INSTALL_PERMISSION
-        }
         if (
             Build.VERSION.SDK_INT <= Build.VERSION_CODES.P &&
             context.checkSelfPermission(Manifest.permission.WRITE_EXTERNAL_STORAGE) != PackageManager.PERMISSION_GRANTED
@@ -164,6 +166,28 @@ object AppUpdateManager {
             return UpdateLaunchResult.NEED_STORAGE_PERMISSION
         }
 
+        return startDownload(context, update, wifiOnly = false)
+    }
+
+    fun installDownloadedUpdate(context: Context): UpdateLaunchResult {
+        val completed = completedDownload(context) ?: return UpdateLaunchResult.DOWNLOAD_UNAVAILABLE
+        if (!completed.signatureMatches) {
+            Toast.makeText(context, completedUpdateMessage(context), Toast.LENGTH_LONG).show()
+            openDownloads(context)
+            return UpdateLaunchResult.SIGNATURE_MISMATCH
+        }
+        if (!context.packageManager.canRequestPackageInstalls()) {
+            requestInstallPermission(context)
+            return UpdateLaunchResult.NEED_INSTALL_PERMISSION
+        }
+        return if (openInstaller(context, completed.uri)) {
+            UpdateLaunchResult.INSTALLER_OPENED
+        } else {
+            UpdateLaunchResult.DOWNLOAD_UNAVAILABLE
+        }
+    }
+
+    private fun startDownload(context: Context, update: AppUpdate, wifiOnly: Boolean): UpdateLaunchResult {
         val manager = context.getSystemService(DownloadManager::class.java)
         clearPreviousDownload(context, manager)
         val filename = "third-hand-${update.versionCode}.apk"
@@ -175,9 +199,9 @@ object AppUpdateManager {
         destination.delete()
         val request = DownloadManager.Request(Uri.parse(update.apkUrl))
             .setTitle("Third-Hand ${update.versionName}")
-            .setDescription("正在下载更新，完成后将打开系统安装器")
+            .setDescription("正在下载更新，完成后可在管理页面安装")
             .setMimeType(ApkMimeType)
-            .setAllowedOverMetered(true)
+            .setAllowedOverMetered(!wifiOnly)
             .setAllowedOverRoaming(false)
             .setNotificationVisibility(DownloadManager.Request.VISIBILITY_VISIBLE_NOTIFY_COMPLETED)
             .setDestinationInExternalPublicDir(Environment.DIRECTORY_DOWNLOADS, "$DownloadDirectory/$filename")
@@ -194,10 +218,16 @@ object AppUpdateManager {
             .apply()
         Toast.makeText(
             context,
-            "正在下载到“下载/$DownloadDirectory/$filename”，完成后将自动打开安装器",
+            "正在下载到“下载/$DownloadDirectory/$filename”，完成后可在管理页面安装",
             Toast.LENGTH_LONG,
         ).show()
         return UpdateLaunchResult.DOWNLOAD_STARTED
+    }
+
+    private fun isOnWifi(context: Context): Boolean {
+        val manager = context.getSystemService(ConnectivityManager::class.java)
+        val network = manager.activeNetwork ?: return false
+        return manager.getNetworkCapabilities(network)?.hasTransport(NetworkCapabilities.TRANSPORT_WIFI) == true
     }
 
     fun matchesPendingDownload(context: Context, id: Long): Boolean =
@@ -419,16 +449,6 @@ class AppUpdateDownloadReceiver : BroadcastReceiver() {
 
         val signatureMatches = AppUpdateManager.signaturesMatchInstalledApp(context, uri)
         AppUpdateManager.markDownloadCompleted(context, id, signatureMatches)
-        withContext(Dispatchers.Main) {
-            if (signatureMatches) {
-                AppUpdateManager.openInstaller(context, uri)
-            } else {
-                Toast.makeText(
-                    context,
-                    AppUpdateManager.completedUpdateMessage(context),
-                    Toast.LENGTH_LONG,
-                ).show()
-            }
-        }
+        // Installation is deliberately user initiated from the management page.
     }
 }

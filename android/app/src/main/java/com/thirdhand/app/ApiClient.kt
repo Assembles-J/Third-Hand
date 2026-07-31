@@ -125,6 +125,8 @@ data class SaleRecordDto(
 )
 data class DailyPriceDto(val trading_date: String, val open: Double? = null, val close: Double, val high: Double? = null, val low: Double? = null, val volume: Double? = null, val amount: Double? = null, val adjustment: String = "qfq")
 data class RecommendationRequestDto(val symbols: List<String>)
+data class AvailableCashDto(val available_cash: Double, val updated_at: String = "")
+data class AvailableCashInputDto(val available_cash: Double)
 data class ResearchRecommendationDto(val id: String, val symbol: String, val status: String, val action: String? = null, val price_zone: Map<String, Double>? = null, val invalidation_price: Double? = null, val suggested_quantity: Double? = null, val quantity_status: String? = null, val blocked_reasons: List<String> = emptyList())
 data class RecommendationEvaluationDto(val horizon: Int, val evaluation_date: String, val net_pnl: Double, val return_percent: Double, val mfe_percent: Double, val mae_percent: Double)
 data class AiJobDto(val id: String, val target_id: String, val status: String, val attempts: Int, val max_attempts: Int, val error_message: String? = null, val updated_at: String)
@@ -295,6 +297,10 @@ interface ThirdHandApi {
 
     @GET("v1/market/history/{symbol}")
     suspend fun marketHistory(@Path("symbol") symbol: String, @Query("limit") limit: Int = 120): List<DailyPriceDto>
+    @GET("v1/account/cash")
+    suspend fun availableCash(): AvailableCashDto
+    @PUT("v1/account/cash")
+    suspend fun saveAvailableCash(@Body input: AvailableCashInputDto): AvailableCashDto
     @POST("v1/research-recommendations/generate")
     suspend fun generateRecommendations(@Body request: RecommendationRequestDto): List<ResearchRecommendationDto>
     @GET("v1/research-recommendations")
@@ -459,7 +465,8 @@ object ApiClient {
 object EndpointStore {
     private const val PREFS = "third_hand_settings"
     private const val BASE_URL = "base_url"
-    private const val DEFAULT_URL = "http://10.0.2.2:8000/"
+    private const val DEFAULT_URL = "https://groupim.cn/third-hand/"
+//    private const val DEFAULT_URL = "http://10.0.2.2:8000/"
 
     fun baseUrl(context: Context): String = context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
         .getString(BASE_URL, DEFAULT_URL).orEmpty().normalizeBaseUrl()

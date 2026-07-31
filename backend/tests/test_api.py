@@ -31,7 +31,7 @@ def test_app_update_exposes_download_integrity_metadata(monkeypatch, tmp_path):
 
     assert response.status_code == 200
     assert response.headers["cache-control"] == "no-store"
-    assert response.json()["apk_url"] == "https://download.example.com/third-hand/releases/third-hand-0.3.0.apk"
+    assert response.json()["apk_url"] == "https://groupim.cn/third-hand/releases/third-hand-0.3.0.apk"
     assert response.json()["size_bytes"] == len(content)
     assert response.json()["sha256"] == hashlib.sha256(content).hexdigest()
 
