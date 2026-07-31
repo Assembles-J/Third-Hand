@@ -511,6 +511,7 @@ class PortfolioStore:
             connection.execute("DELETE FROM glossary_entries")
             connection.execute("DELETE FROM glossary_lookup_history")
             connection.execute("DELETE FROM decision_contexts")
+            connection.execute("DELETE FROM decision_shadow_reports")
 
     def admin_summary(self) -> dict[str, int]:
         """Return only aggregate, non-sensitive operational counters for the admin console."""
@@ -668,6 +669,23 @@ class PortfolioStore:
                 "SELECT payload FROM decision_contexts WHERE context_id=?", (context_id,)
             ).fetchone()
         return json.loads(str(row["payload"])) if row else None
+
+    def save_shadow_report(self, item: dict[str, object]) -> None:
+        with self._connect() as connection:
+            connection.execute(
+                "INSERT INTO decision_shadow_reports (shadow_id, context_id, symbol, input_hash, payload, created_at) "
+                "VALUES (?, ?, ?, ?, ?, ?)",
+                (str(item["shadow_id"]), str(item["context_id"]), str(item["symbol"]), str(item["input_hash"]),
+                 json.dumps(item, ensure_ascii=False, default=str), str(item["generated_at"])),
+            )
+
+    def shadow_reports(self, symbol: str, limit: int = 20) -> list[dict[str, object]]:
+        with self._connect() as connection:
+            rows = connection.execute(
+                "SELECT payload FROM decision_shadow_reports WHERE symbol=? ORDER BY created_at DESC LIMIT ?",
+                (symbol.strip().upper(), max(1, limit)),
+            ).fetchall()
+        return [json.loads(str(row["payload"])) for row in rows]
 
     def cached_risk(self, symbol: str) -> dict[str, object] | None:
         with self._connect() as connection:
@@ -837,7 +855,7 @@ class PortfolioStore:
 
     def save_trade_plan(self, item: dict[str, object]) -> dict[str, object]:
         now = beijing_now().isoformat()
-        item = {"benchmark_symbol": None, "benchmark_name": None, "version": 1, **item}
+        item = {"benchmark_symbol": None, "benchmark_name": None, "invalidation_price": None, "version": 1, **item}
         item = {**item, "catalysts_json": json.dumps(item.get("catalysts", []), ensure_ascii=False), "structured_conditions_json": json.dumps(item.get("structured_conditions", []), ensure_ascii=False), "updated_at": now}
         with self._connect() as connection:
             existing = connection.execute("SELECT id, version FROM trade_plans WHERE symbol=?", (item["symbol"],)).fetchone()
@@ -845,9 +863,9 @@ class PortfolioStore:
                 item["id"], item["version"] = str(existing["id"]), int(existing["version"]) + 1
             connection.execute(
                 """INSERT INTO trade_plans
-                (id,symbol,horizon,thesis,market_expectation,benchmark_symbol,benchmark_name,catalysts_json,structured_conditions_json,entry_condition,add_condition,reduce_condition,exit_condition,max_position_percent,risk_budget_percent,enabled,version,updated_at)
-                VALUES (:id,:symbol,:horizon,:thesis,:market_expectation,:benchmark_symbol,:benchmark_name,:catalysts_json,:structured_conditions_json,:entry_condition,:add_condition,:reduce_condition,:exit_condition,:max_position_percent,:risk_budget_percent,:enabled,:version,:updated_at)
-                ON CONFLICT(symbol) DO UPDATE SET horizon=excluded.horizon,thesis=excluded.thesis,market_expectation=excluded.market_expectation,benchmark_symbol=excluded.benchmark_symbol,benchmark_name=excluded.benchmark_name,catalysts_json=excluded.catalysts_json,structured_conditions_json=excluded.structured_conditions_json,entry_condition=excluded.entry_condition,add_condition=excluded.add_condition,reduce_condition=excluded.reduce_condition,exit_condition=excluded.exit_condition,max_position_percent=excluded.max_position_percent,risk_budget_percent=excluded.risk_budget_percent,enabled=excluded.enabled,version=excluded.version,updated_at=excluded.updated_at""",
+                (id,symbol,horizon,thesis,market_expectation,benchmark_symbol,benchmark_name,catalysts_json,structured_conditions_json,entry_condition,add_condition,reduce_condition,exit_condition,max_position_percent,risk_budget_percent,invalidation_price,enabled,version,updated_at)
+                VALUES (:id,:symbol,:horizon,:thesis,:market_expectation,:benchmark_symbol,:benchmark_name,:catalysts_json,:structured_conditions_json,:entry_condition,:add_condition,:reduce_condition,:exit_condition,:max_position_percent,:risk_budget_percent,:invalidation_price,:enabled,:version,:updated_at)
+                ON CONFLICT(symbol) DO UPDATE SET horizon=excluded.horizon,thesis=excluded.thesis,market_expectation=excluded.market_expectation,benchmark_symbol=excluded.benchmark_symbol,benchmark_name=excluded.benchmark_name,catalysts_json=excluded.catalysts_json,structured_conditions_json=excluded.structured_conditions_json,entry_condition=excluded.entry_condition,add_condition=excluded.add_condition,reduce_condition=excluded.reduce_condition,exit_condition=excluded.exit_condition,max_position_percent=excluded.max_position_percent,risk_budget_percent=excluded.risk_budget_percent,invalidation_price=excluded.invalidation_price,enabled=excluded.enabled,version=excluded.version,updated_at=excluded.updated_at""",
                 item,
             )
         result = {**item, "catalysts": json.loads(str(item.pop("catalysts_json"))), "structured_conditions": json.loads(str(item.pop("structured_conditions_json"))), "enabled": bool(item["enabled"])}

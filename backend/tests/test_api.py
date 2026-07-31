@@ -110,6 +110,23 @@ def test_decision_evidence_endpoint_returns_evidence_but_no_action():
     assert all("action" not in item for item in response.json())
 
 
+def test_decision_shadow_endpoint_persists_policy_candidates_without_replacing_recommendations():
+    client.post("/v1/holdings", json={"symbol": "600519", "name": "test", "quantity": 100, "average_cost": 10})
+    store.save_quotes([{ "symbol": "600519", "price": 12, "currency": "CNY", "source": "test", "as_of": "2026-07-31", "retrieved_at": "2026-07-31T10:00:00+08:00"}])
+    store.save_daily_prices("600519", [{"trading_date": f"2026-07-{index + 1:02d}", "open": 10, "close": 12, "high": 13, "low": 9, "source": "test"} for index in range(60)])
+    store.save_trade_plan({"id": "plan-1", "symbol": "600519", "horizon": "swing", "thesis": "test", "market_expectation": "test", "catalysts": [], "entry_condition": "entry", "add_condition": "add", "reduce_condition": "reduce", "exit_condition": "exit", "max_position_percent": 15, "risk_budget_percent": 3, "enabled": True, "version": 1})
+
+    response = client.get("/v1/decisions/shadow/600519")
+
+    assert response.status_code == 200
+    assert response.json()["shadow_mode"] is True
+    assert response.json()["action_candidates"]
+    assert response.json()["sizing"] is None
+    assert response.json()["policy_version"] == "swing-policy-v1"
+    assert store.shadow_reports("600519")[0]["shadow_id"] == response.json()["shadow_id"]
+    assert client.get("/v1/research-recommendations").json() == []
+
+
 def test_learning_cases_can_be_created_and_listed():
     payload = {
         "title": "公告核验练习", "context": "阅读公告后记录需要核验的事实与数据来源。",

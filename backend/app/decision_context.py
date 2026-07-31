@@ -190,7 +190,7 @@ class DecisionContextBuilder:
     def _plan(item):
         if not item:
             return None
-        return TradePlanSnapshot(plan_id=str(item["id"]), horizon=str(item["horizon"]), thesis=str(item["thesis"]), entry_condition=str(item["entry_condition"]), add_condition=str(item["add_condition"]), reduce_condition=str(item["reduce_condition"]), exit_condition=str(item["exit_condition"]), max_position_percent=float(item["max_position_percent"]), risk_budget_percent=float(item["risk_budget_percent"]), enabled=bool(item["enabled"]), version=int(item["version"]), structured_conditions=tuple(item.get("structured_conditions") or ()))
+        return TradePlanSnapshot(plan_id=str(item["id"]), horizon=str(item["horizon"]), thesis=str(item["thesis"]), entry_condition=str(item["entry_condition"]), add_condition=str(item["add_condition"]), reduce_condition=str(item["reduce_condition"]), exit_condition=str(item["exit_condition"]), max_position_percent=float(item["max_position_percent"]), risk_budget_percent=float(item["risk_budget_percent"]), invalidation_price=item.get("invalidation_price"), enabled=bool(item["enabled"]), version=int(item["version"]), structured_conditions=tuple(item.get("structured_conditions") or ()))
 
     @staticmethod
     def _rule(item):

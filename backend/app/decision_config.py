@@ -1,6 +1,12 @@
 """Central, versioned thresholds for deterministic decision evidence."""
+import os
 
 EVIDENCE_VERSION = "evidence-v1"
+ACTION_POLICY_VERSION = "swing-policy-v1"
+DECISION_SHADOW_MODE = os.getenv("DECISION_SHADOW_MODE", "true").lower() not in {"0", "false", "no"}
+DECISION_SIZING_ENABLED = os.getenv("DECISION_SIZING_ENABLED", "false").lower() in {"1", "true", "yes"}
+SIZING_VERSION = "risk-sizing-v1"
+MAX_LIQUIDITY_VOLUME_FRACTION = 0.10
 NEAR_POSITION_CAP_RATIO = 0.90
 POSITION_CAP_EXCESS_MILD_PERCENT = 10.0
 POSITION_CAP_EXCESS_MEDIUM_PERCENT = 30.0

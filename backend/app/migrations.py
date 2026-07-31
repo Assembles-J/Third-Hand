@@ -36,9 +36,29 @@ def _create_decision_contexts(connection: sqlite3.Connection) -> None:
     )
 
 
+def _create_decision_shadow_reports(connection: sqlite3.Connection) -> None:
+    connection.execute(
+        "CREATE TABLE IF NOT EXISTS decision_shadow_reports ("
+        "shadow_id TEXT PRIMARY KEY, context_id TEXT NOT NULL, symbol TEXT NOT NULL, "
+        "input_hash TEXT NOT NULL, payload TEXT NOT NULL, created_at TEXT NOT NULL)"
+    )
+    connection.execute(
+        "CREATE INDEX IF NOT EXISTS idx_decision_shadow_reports_symbol_created "
+        "ON decision_shadow_reports(symbol, created_at DESC)"
+    )
+
+
+def _add_trade_plan_invalidation_price(connection: sqlite3.Connection) -> None:
+    columns = {str(row[1]) for row in connection.execute("PRAGMA table_info(trade_plans)")}
+    if "invalidation_price" not in columns:
+        connection.execute("ALTER TABLE trade_plans ADD COLUMN invalidation_price REAL")
+
+
 MIGRATIONS = (
     Migration("0001_legacy_schema_baseline", _record_legacy_schema_baseline),
     Migration("0002_decision_contexts", _create_decision_contexts),
+    Migration("0003_decision_shadow_reports", _create_decision_shadow_reports),
+    Migration("0004_trade_plan_invalidation_price", _add_trade_plan_invalidation_price),
 )
 
 

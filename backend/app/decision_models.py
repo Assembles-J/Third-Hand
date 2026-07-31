@@ -113,6 +113,7 @@ class TradePlanSnapshot(DecisionModel):
     exit_condition: str
     max_position_percent: float
     risk_budget_percent: float
+    invalidation_price: float | None = None
     enabled: bool
     version: int
     structured_conditions: tuple[dict[str, object], ...] = ()
@@ -160,6 +161,50 @@ class EvidenceItem(DecisionModel):
     fresh: bool
     rule_id: str | None = None
     source_reference: str | None = None
+
+
+class ActionCandidate(DecisionModel):
+    action: Literal["OPEN", "ADD", "HOLD", "WATCH", "REDUCE", "EXIT", "BLOCKED"]
+    priority: int = Field(ge=0, le=100)
+    policy_score: float = Field(ge=0, le=1)
+    supporting_evidence_ids: tuple[str, ...] = ()
+    opposing_evidence_ids: tuple[str, ...] = ()
+    triggered_rule_ids: tuple[str, ...] = ()
+    blocked_reasons: tuple[str, ...] = ()
+
+
+class ShadowDecisionReport(DecisionModel):
+    shadow_id: str
+    context_id: str
+    symbol: str
+    generated_at: datetime
+    status: Literal["READY", "BLOCKED", "DEGRADED"]
+    evidence: tuple[EvidenceItem, ...]
+    action_candidates: tuple[ActionCandidate, ...]
+    sizing: "PositionSizingResult | None" = None
+    policy_version: str
+    input_hash: str
+    shadow_mode: Literal[True] = True
+
+
+class PositionSizingResult(DecisionModel):
+    status: Literal["ready", "blocked", "not_applicable"]
+    current_quantity: float
+    suggested_quantity: float | None = None
+    target_quantity: float | None = None
+    current_position_percent: float | None = None
+    target_position_percent: float | None = None
+    quantity_by_risk: float | None = None
+    quantity_by_cash: float | None = None
+    quantity_by_position_cap: float | None = None
+    quantity_by_liquidity: float | None = None
+    lot_size: int | None = None
+    entry_price: float | None = None
+    invalidation_price: float | None = None
+    risk_per_share: float | None = None
+    risk_capital: float | None = None
+    blocked_reasons: tuple[str, ...] = ()
+    sizing_version: str
 
 
 class DecisionContext(DecisionModel):

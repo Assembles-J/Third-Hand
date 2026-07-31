@@ -15,7 +15,7 @@ def test_migration_runner_is_idempotent(tmp_path):
     assert run_migrations(database) == []
     with sqlite3.connect(database) as connection:
         assert connection.execute("SELECT migration_id FROM schema_migrations ORDER BY migration_id").fetchall() == [
-            ("0001_legacy_schema_baseline",), ("0002_decision_contexts",),
+            ("0001_legacy_schema_baseline",), ("0002_decision_contexts",), ("0003_decision_shadow_reports",), ("0004_trade_plan_invalidation_price",),
         ]
 
 

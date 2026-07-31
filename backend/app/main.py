@@ -44,6 +44,10 @@ from app.recommendations import candidate as build_candidate, first_fill, evalua
 from app.decision_context import DecisionContextBuilder
 from app.decision_models import DecisionContext
 from app.evidence_engine import EvidenceEngine
+from app import decision_config as config
+from app.action_policy import ActionPolicyEngine
+from app.decision_models import ShadowDecisionReport
+from app.position_sizing import PositionSizingEngine
 
 app = FastAPI(title="Third-Hand API", version="0.2.0")
 APP_STARTED_AT = time.monotonic()
@@ -422,6 +426,7 @@ class TradePlanInput(BaseModel):
     exit_condition: str = Field(min_length=5, max_length=800)
     max_position_percent: float = Field(gt=0, le=100)
     risk_budget_percent: float = Field(gt=0, le=100)
+    invalidation_price: float | None = Field(default=None, gt=0)
     enabled: bool = True
     # These are machine-readable counterparts to the explanatory text above.
     # A plan remains backward compatible while users gradually add conditions.
@@ -453,6 +458,8 @@ market_regime_service = MarketRegimeService()
 relative_strength_service = RelativeStrengthService()
 decision_context_builder = DecisionContextBuilder(store, technical_analysis_service)
 evidence_engine = EvidenceEngine()
+action_policy_engine = ActionPolicyEngine()
+position_sizing_engine = PositionSizingEngine()
 
 GLOSSARY = {
     "历史下行概率": GlossaryCard(term="历史下行概率", plain_explanation="在历史日线样本中，未来 5 个交易日累计下跌至少 5% 的出现频率。它是历史统计，不是未来发生概率的保证。", watch_for="先看统计窗口、下跌阈值和样本数量；样本不足时不应据此操作。"),
@@ -1084,6 +1091,30 @@ def decision_evidence(symbol: str) -> list[dict[str, object]]:
         raise HTTPException(status_code=422, detail=str(error)) from error
     store.save_decision_context(context.model_dump(mode="json"))
     return [item.model_dump(mode="json") for item in evidence_engine.build(context)]
+
+
+@app.get("/v1/decisions/shadow/{symbol}", response_model=ShadowDecisionReport)
+def decision_shadow_report(symbol: str) -> ShadowDecisionReport:
+    """Generate a policy-only shadow report; it never replaces existing recommendations."""
+    if not config.DECISION_SHADOW_MODE:
+        raise HTTPException(status_code=404, detail="decision shadow mode is disabled")
+    try:
+        context = decision_context_builder.build(symbol)
+    except ValueError as error:
+        raise HTTPException(status_code=422, detail=str(error)) from error
+    evidence = evidence_engine.build(context)
+    candidates = action_policy_engine.evaluate(context, evidence)
+    report = ShadowDecisionReport(
+        shadow_id=str(uuid4()), context_id=context.context_id, symbol=context.symbol,
+        generated_at=beijing_now(),
+        status="BLOCKED" if context.data_quality.status == "blocked" else "DEGRADED" if context.data_quality.status == "degraded" else "READY",
+        evidence=evidence, action_candidates=candidates,
+        sizing=position_sizing_engine.size(context, candidates[0].action) if config.DECISION_SIZING_ENABLED else None,
+        policy_version=action_policy_engine.version, input_hash=context.input_hash,
+    )
+    store.save_decision_context(context.model_dump(mode="json"))
+    store.save_shadow_report(report.model_dump(mode="json"))
+    return report
 
 
 @app.get("/v1/portfolio/impact-graph")
