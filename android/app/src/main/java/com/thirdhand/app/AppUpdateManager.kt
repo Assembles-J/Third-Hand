@@ -61,6 +61,9 @@ object AppUpdateManager {
     private const val StoragePermissionRequest = 9042
 
     suspend fun check(context: Context): AppUpdate? = withContext(Dispatchers.IO) {
+        // Debug builds are deliberately signed and versioned separately from
+        // production releases; they must never receive a production APK prompt.
+        if (BuildConfig.DEBUG) return@withContext null
         cleanupInstalledUpdate(context)
         val response = ApiClient.service(context).appUpdate()
         val update = response.body() ?: return@withContext null

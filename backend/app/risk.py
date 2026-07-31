@@ -9,7 +9,6 @@ from __future__ import annotations
 import math
 import statistics
 import time
-from datetime import date, timedelta
 from threading import Lock
 
 
@@ -26,14 +25,13 @@ class RiskService:
         self._cache: dict[str, tuple[float, dict[str, object]]] = {}
         self._lock = Lock()
 
-    def assess(self, symbol: str, name: str) -> dict[str, object]:
+    def assess(self, symbol: str, name: str, closes: list[float], as_of: str) -> dict[str, object]:
         symbol = symbol.strip().upper()
         with self._lock:
             cached = self._cache.get(symbol)
             if cached and time.monotonic() - cached[0] < self.CACHE_SECONDS:
                 return {**cached[1], "name": name}
 
-        closes, as_of = self._closes(symbol)
         if len(closes) < 65:
             raise RiskDataUnavailable("历史价格样本不足，暂无法生成风险评估。")
 
@@ -63,23 +61,3 @@ class RiskService:
         with self._lock:
             self._cache[symbol] = (time.monotonic(), item)
         return item
-
-    def _closes(self, symbol: str) -> tuple[list[float], str]:
-        try:
-            import akshare as ak
-        except ImportError as error:
-            raise RiskDataUnavailable("未安装历史行情依赖。") from error
-        try:
-            if len(symbol) == 5 and symbol.isdigit():
-                frame = ak.stock_hk_daily(symbol=symbol)
-                values = frame["close"].dropna().tolist()
-                as_of = str(frame["date"].iloc[-1])
-            else:
-                start = (date.today() - timedelta(days=730)).strftime("%Y%m%d")
-                end = date.today().strftime("%Y%m%d")
-                frame = ak.stock_zh_a_hist(symbol=symbol, period="daily", start_date=start, end_date=end, adjust="qfq")
-                values = frame["收盘"].dropna().tolist()
-                as_of = str(frame["日期"].iloc[-1])
-        except Exception as error:
-            raise RiskDataUnavailable("历史行情源暂时不可用，请稍后刷新。") from error
-        return [float(value) for value in values], as_of

@@ -26,12 +26,15 @@ import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
+import androidx.compose.material3.Switch
+import androidx.compose.material3.Button
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -39,6 +42,7 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
+import kotlinx.coroutines.launch
 
 private val CompactCanvas = Color(0xFF111614)
 private val CompactPanel = Color(0xFF171E1B)
@@ -56,13 +60,16 @@ fun CompactAdminDashboardScreen() {
     val api = remember(context) { ApiClient.service(context) }
     var refreshKey by remember { mutableIntStateOf(0) }
     var overview by remember { mutableStateOf<AdminOverviewDto?>(null) }
+    var config by remember { mutableStateOf<SystemConfigDto?>(null) }
     var error by remember { mutableStateOf<String?>(null) }
-    var interval by remember { mutableStateOf("30 秒") }
+    var savingConfig by remember { mutableStateOf(false) }
+    val scope = rememberCoroutineScope()
     LaunchedEffect(refreshKey) {
         error = null
         runCatching { api.adminOverview() }
             .onSuccess { overview = it }
             .onFailure { error = "无法读取系统状态，请检查服务连接。" }
+        runCatching { api.adminConfig() }.onSuccess { config = it }
     }
     Column(
         Modifier.fillMaxWidth().background(CompactCanvas).verticalScroll(rememberScrollState()).padding(16.dp),
@@ -77,6 +84,7 @@ fun CompactAdminDashboardScreen() {
         }
         error?.let { CompactConsoleCard { Text(it, color = CompactCoral, style = MaterialTheme.typography.bodySmall) } }
         CompactMetricGrid(overview)
+        MarketRefreshCard(overview)
         PendingReviewCard(overview)
         ApplicationDataGrid(overview)
         FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
@@ -88,16 +96,44 @@ fun CompactAdminDashboardScreen() {
             CompactConsoleCard(Modifier.weight(1f).widthIn(min = 150.dp)) {
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     Icon(Icons.Filled.Settings, null, tint = CompactMint)
-                    Text(" 快捷配置", color = CompactText, fontWeight = FontWeight.Bold)
+                    Text(" 系统配置", color = CompactText, fontWeight = FontWeight.Bold)
                 }
-                FlowRow(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
-                    listOf("30 秒", "1 分钟", "5 分钟").forEach { value ->
-                        FilterChip(selected = interval == value, onClick = { interval = value }, label = { Text(value) })
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Column(Modifier.weight(1f)) {
+                        Text("提示应用更新", color = CompactText, style = MaterialTheme.typography.bodySmall)
+                        Text("关闭后服务端不再下发新版本", color = CompactQuiet, style = MaterialTheme.typography.labelSmall)
                     }
+                    Switch(
+                        checked = config?.update_check_enabled ?: false,
+                        enabled = config != null && !savingConfig,
+                        onCheckedChange = { enabled -> scope.launch {
+                            savingConfig = true
+                            runCatching { api.saveAdminConfig(SystemConfigDto(enabled)) }
+                                .onSuccess { config = it }
+                                .onFailure { error = "保存系统配置失败：${it.message ?: "请稍后重试"}" }
+                            savingConfig = false
+                        } },
+                    )
                 }
+                Text("Debug 包始终不会提示安装正式版。", color = CompactTeal, style = MaterialTheme.typography.labelSmall)
             }
         }
     }
+}
+
+@Composable
+private fun MarketRefreshCard(overview: AdminOverviewDto?) = CompactConsoleCard {
+    Text("行情定时任务", color = CompactText, fontWeight = FontWeight.Bold)
+    val running = overview?.market_worker_running == true
+    Text(
+        if (running) "运行中 · 每 ${overview?.market_refresh_interval_seconds ?: "—"} 秒拉取并入库"
+        else "未运行 · 请检查 MARKET_REFRESH_ENABLED",
+        color = if (running) CompactMint else CompactCoral,
+        style = MaterialTheme.typography.bodySmall,
+    )
+    Text("最新入库：${overview?.latest_market_at ?: "暂无"}", color = CompactQuiet, style = MaterialTheme.typography.labelSmall)
+    Text("最新快照 ${overview?.cached_quotes_count ?: 0} 条 · 历史快照 ${overview?.market_history_count ?: 0} 条", color = CompactTeal, style = MaterialTheme.typography.labelSmall)
+    overview?.market_last_error?.let { Text("最近失败：$it", color = CompactCoral, style = MaterialTheme.typography.labelSmall) }
 }
 
 @OptIn(ExperimentalLayoutApi::class)

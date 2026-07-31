@@ -113,8 +113,8 @@ private fun ThirdHandApp(resumeSignal: Int) {
     var tab by remember { mutableIntStateOf(0) }
     var startupUpdate by remember { mutableStateOf<AppUpdate?>(null) }
     var updateMessage by remember { mutableStateOf<String?>(null) }
-    val labels = listOf("今日", "持仓", "消息", "我的与管理")
-    val icons = listOf(Icons.Filled.AutoGraph, Icons.Filled.Wallet, Icons.AutoMirrored.Filled.Article, Icons.Filled.AdminPanelSettings)
+    val labels = listOf("今日", "持仓", "消息", "影响", "我的与管理")
+    val icons = listOf(Icons.Filled.AutoGraph, Icons.Filled.Wallet, Icons.AutoMirrored.Filled.Article, Icons.Filled.AccountCircle, Icons.Filled.AdminPanelSettings)
     LaunchedEffect(resumeSignal) {
         try {
             startupUpdate = AppUpdateManager.check(context)
@@ -143,6 +143,7 @@ private fun ThirdHandApp(resumeSignal: Int) {
                     0 -> TodayScreen()
                     1 -> HoldingsScreen()
                     2 -> FeedScreen()
+                    3 -> ImpactGraphScreen()
                     else -> UnifiedCenterScreen(
                         themeMode = themeMode,
                         onThemeModeChange = { mode -> ThemeStore.save(context, mode); themeMode = mode },
@@ -266,6 +267,83 @@ private fun StatusCard(message: String, positive: Boolean = false, error: Boolea
 }
 
 @Composable
+private fun ImpactGraphScreen() {
+    val context = LocalContext.current
+    val api = ApiClient.service(context)
+    val uriHandler = LocalUriHandler.current
+    var graph by remember { mutableStateOf<ImpactGraphDto?>(null) }
+    var loading by remember { mutableStateOf(true) }
+    var error by remember { mutableStateOf<String?>(null) }
+    val scope = rememberCoroutineScope()
+    fun load() = scope.launch {
+        loading = true
+        error = null
+        try {
+            graph = api.impactGraph()
+        } catch (_: Exception) {
+            error = "暂时无法读取影响关系，请确认后端已升级并稍后重试。"
+        } finally {
+            loading = false
+        }
+    }
+    LaunchedEffect(Unit) { load() }
+    LazyColumn(
+        contentPadding = androidx.compose.foundation.layout.PaddingValues(bottom = 24.dp),
+        verticalArrangement = Arrangement.spacedBy(12.dp),
+    ) {
+        item { AppHero("持仓影响图", "证据关系 · 不是交易指令", action = { HeroRefreshAction(::load, !loading) }) }
+        item {
+            Text(
+                "从持仓出发查看现价、历史风险与来源事件。箭头表示关联，不表示已证明的因果。",
+                modifier = Modifier.padding(horizontal = 20.dp),
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+        }
+        if (loading) item { StatusCard("正在整理持仓影响关系…") }
+        error?.let { message -> item { StatusCard(message, error = true) } }
+        graph?.let { payload ->
+            if (payload.nodes.isEmpty()) item { StatusCard("还没有可展示的已确认持仓。先添加持仓并刷新行情或信息流。") }
+            val edgesByTarget = payload.edges.groupBy { it.target }
+            items(payload.nodes.filter { it.kind == "holding" }, key = { it.id }) { holding ->
+                Card(Modifier.padding(horizontal = 20.dp).fillMaxWidth()) {
+                    Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                        Text(holding.label, style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
+                        Text(holding.detail, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                        val linkedIds = edgesByTarget[holding.id].orEmpty().map { it.source }.toSet()
+                        payload.nodes.filter { it.id in linkedIds }.forEach { node ->
+                            val edge = payload.edges.firstOrNull { it.source == node.id && it.target == holding.id }
+                            HorizontalDivider()
+                            Text("${impactKindLabel(node.kind)}  →  ${edge?.relation ?: "关联"}", style = MaterialTheme.typography.labelMedium, color = impactColor(edge?.direction))
+                            Text(node.label, style = MaterialTheme.typography.bodyMedium, fontWeight = FontWeight.SemiBold)
+                            Text(node.detail, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                            node.source_url?.let { url ->
+                                TextButton(onClick = { uriHandler.openUri(url) }) { Text("查看来源") }
+                            }
+                        }
+                    }
+                }
+            }
+            item { Text(payload.disclaimer, modifier = Modifier.padding(horizontal = 20.dp), style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant) }
+        }
+    }
+}
+
+private fun impactKindLabel(kind: String): String = when (kind) {
+    "market" -> "行情快照"
+    "risk" -> "历史风险"
+    "event" -> "新闻 / 公告"
+    else -> "关联信息"
+}
+
+@Composable
+private fun impactColor(direction: String?): Color = when (direction) {
+    "positive" -> MaterialTheme.colorScheme.tertiary
+    "negative" -> MaterialTheme.colorScheme.error
+    else -> MaterialTheme.colorScheme.primary
+}
+
+@Composable
 private fun TodayScreen() {
     val context = LocalContext.current
     val api = ApiClient.service(context)
@@ -330,11 +408,18 @@ private fun TodayScreen() {
             refreshing = false
         }
     }
-    LaunchedEffect(Unit) { refresh(forceQuotes = true) }
+    // On entry prefer the server cache and let its background worker refresh.
+    // The hero refresh button remains the explicit forced-refresh path.
+    LaunchedEffect(Unit) { refresh() }
     LaunchedEffect(Unit) {
         while (true) {
             delay(2_000)
-            if (drafts.any { it.lookup_status == "pending" || it.lookup_status == "querying" }) refresh()
+            if (drafts.any { it.lookup_status == "pending" || it.lookup_status == "querying" }) {
+                try {
+                    // Draft resolution is independent of quotes, risk, and portfolio analysis.
+                    drafts = api.holdingDrafts()
+                } catch (_: Exception) { }
+            }
         }
     }
     LaunchedEffect(holdings.map { it.symbol }) {
@@ -473,9 +558,13 @@ private fun RiskAssessmentCard(assessment: RiskAssessmentDto) {
     Card(Modifier.padding(horizontal = 20.dp).fillMaxWidth(), colors = CardDefaults.cardColors(containerColor = containerColor)) {
         Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
             Text("${assessment.name} · 风险${assessment.risk_level}", style = MaterialTheme.typography.titleMedium)
-            Text("历史下行概率 ${assessment.historical_downside_probability}% · 年化波动 ${assessment.annualized_volatility_percent}%")
-            Text("口径：${assessment.horizon_trading_days} 个交易日累计跌幅 ≥ ${assessment.downside_threshold_percent}%；样本 ${assessment.sample_count} 个，置信度 ${assessment.confidence}。", style = MaterialTheme.typography.bodySmall)
-            Text(assessment.explanation, style = MaterialTheme.typography.bodySmall)
+            if (assessment.status == "data_insufficient") {
+                Text(assessment.message, style = MaterialTheme.typography.bodySmall)
+            } else {
+                Text("历史下行概率 ${assessment.historical_downside_probability}% · 年化波动 ${assessment.annualized_volatility_percent}%")
+                Text("口径：${assessment.horizon_trading_days} 个交易日累计跌幅 ≥ ${assessment.downside_threshold_percent}%；样本 ${assessment.sample_count} 个，置信度 ${assessment.confidence}。", style = MaterialTheme.typography.bodySmall)
+                Text(assessment.explanation, style = MaterialTheme.typography.bodySmall)
+            }
             Text(assessment.disclaimer, style = MaterialTheme.typography.bodySmall)
         }
     }
@@ -673,7 +762,9 @@ private fun HoldingsScreen() {
             quotesBySymbol = if (holdings.isEmpty()) emptyMap() else try {
                 val requestedSymbols = holdings.map { it.symbol }
                 Log.d("ThirdHandMarket", "HOLDINGS_REQUEST symbols=$requestedSymbols refresh=true")
-                val fetchedQuotes = ApiClient.marketQuotes(api, MarketQuoteBatchRequestDto(requestedSymbols, refresh = true))
+                // Do not block the holdings page on a full public-market snapshot.
+                // Cached results return immediately and the server refreshes them in the background.
+                val fetchedQuotes = ApiClient.marketQuotes(api, MarketQuoteBatchRequestDto(requestedSymbols))
                 val failures = fetchedQuotes.filter { it.price == null || !it.error_code.isNullOrBlank() }
                 if (failures.isNotEmpty()) {
                     quoteError = failures.joinToString("；") { quote ->
@@ -1000,6 +1091,7 @@ private fun AnalysisDetailDialog(
 
 @Composable
 private fun AnalysisDetailItem(item: PortfolioAnalysisItemDto, expanded: Boolean, onToggle: () -> Unit) {
+    val uriHandler = LocalUriHandler.current
     Column(Modifier.fillMaxWidth().clickable(onClick = onToggle).padding(vertical = 10.dp)) {
         Row(verticalAlignment = Alignment.CenterVertically) {
             Column(Modifier.weight(1f)) {
@@ -1011,6 +1103,32 @@ private fun AnalysisDetailItem(item: PortfolioAnalysisItemDto, expanded: Boolean
         }
         Text(item.reason, modifier = Modifier.padding(top = 4.dp), style = MaterialTheme.typography.bodySmall, maxLines = if (expanded) Int.MAX_VALUE else 2, overflow = TextOverflow.Ellipsis)
         if (expanded) {
+            item.decision_snapshot?.let { snapshot ->
+                Text("决策快照", modifier = Modifier.padding(top = 10.dp), color = MaterialTheme.colorScheme.primary, style = MaterialTheme.typography.labelSmall, fontWeight = FontWeight.Bold)
+                Text("证据完整度 ${snapshot.evidence_completeness_percent}%", style = MaterialTheme.typography.bodySmall, fontWeight = FontWeight.SemiBold)
+                Text(snapshot.candidate_action, style = MaterialTheme.typography.bodySmall)
+                snapshot.historical_calibration?.let { calibration ->
+                    Text("历史校准", modifier = Modifier.padding(top = 6.dp), style = MaterialTheme.typography.labelMedium, fontWeight = FontWeight.Bold)
+                    calibration.horizons.forEach { (days, result) ->
+                        val summary = if (result.sample_count == 0) {
+                            "样本尚未成熟"
+                        } else {
+                            "样本 ${result.sample_count} · 平均 ${result.average_return_percent}% · 规则一致 ${result.rule_alignment_rate_percent}%"
+                        }
+                        Text("${days} 日：$summary", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    }
+                    Text(calibration.definition, style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                }
+                if (snapshot.missing_evidence.isNotEmpty()) {
+                    Text("仍缺少：${snapshot.missing_evidence.joinToString("、")}", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                }
+                snapshot.event_evidence.forEach { event ->
+                    Text("${event.impact} · ${event.title}", modifier = Modifier.padding(top = 5.dp), style = MaterialTheme.typography.bodySmall, fontWeight = FontWeight.SemiBold)
+                    Text(event.summary, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    event.source_url?.let { url -> TextButton(onClick = { uriHandler.openUri(url) }) { Text("核验来源") } }
+                }
+                Text(snapshot.confidence_definition, style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            }
             item.technical_snapshot?.let {
                 Text("技术指标快照", modifier = Modifier.padding(top = 10.dp), color = MaterialTheme.colorScheme.primary, style = MaterialTheme.typography.labelSmall, fontWeight = FontWeight.Bold)
                 TechnicalSnapshotSummary(it, detailed = true)

@@ -72,6 +72,25 @@ class PortfolioStore:
                         updated_at TEXT NOT NULL
                     )
                 """)
+                connection.execute("""
+                    CREATE TABLE IF NOT EXISTS market_quote_history (
+                        id INTEGER PRIMARY KEY AUTOINCREMENT,
+                        symbol TEXT NOT NULL,
+                        payload TEXT NOT NULL,
+                        recorded_at TEXT NOT NULL
+                    )
+                """)
+                connection.execute(
+                    "CREATE INDEX IF NOT EXISTS idx_market_quote_history_symbol_time "
+                    "ON market_quote_history(symbol, recorded_at DESC)"
+                )
+                connection.execute("""
+                    CREATE TABLE IF NOT EXISTS system_settings (
+                        setting_key TEXT PRIMARY KEY,
+                        setting_value TEXT NOT NULL,
+                        updated_at TEXT NOT NULL
+                    )
+                """)
                 connection.execute("CREATE TABLE IF NOT EXISTS ai_analysis_cache (content_id TEXT PRIMARY KEY, payload TEXT NOT NULL)")
                 connection.execute("""
                     CREATE TABLE IF NOT EXISTS ai_analysis_cache_v2 (
@@ -102,11 +121,41 @@ class PortfolioStore:
                 )
                 connection.execute("CREATE TABLE IF NOT EXISTS content_cache (content_id TEXT PRIMARY KEY, payload TEXT NOT NULL, updated_at TEXT NOT NULL)")
                 connection.execute("CREATE TABLE IF NOT EXISTS risk_cache (symbol TEXT PRIMARY KEY, payload TEXT NOT NULL, updated_at TEXT NOT NULL)")
+                connection.execute("""
+                    CREATE TABLE IF NOT EXISTS daily_price_cache (
+                        symbol TEXT NOT NULL,
+                        trading_date TEXT NOT NULL,
+                        close REAL NOT NULL,
+                        high REAL,
+                        low REAL,
+                        source TEXT NOT NULL,
+                        updated_at TEXT NOT NULL,
+                        PRIMARY KEY (symbol, trading_date)
+                    )
+                """)
+                connection.execute(
+                    "CREATE INDEX IF NOT EXISTS idx_daily_price_cache_symbol_date "
+                    "ON daily_price_cache(symbol, trading_date DESC)"
+                )
                 connection.execute("CREATE TABLE IF NOT EXISTS portfolio_analysis_cache (analysis_key TEXT PRIMARY KEY, payload TEXT NOT NULL, updated_at TEXT NOT NULL)")
                 connection.execute("CREATE TABLE IF NOT EXISTS learning_cases (id TEXT PRIMARY KEY, symbol TEXT, title TEXT NOT NULL, context TEXT NOT NULL, lesson TEXT NOT NULL, outcome TEXT NOT NULL, position_band TEXT NOT NULL DEFAULT '', planned_action TEXT NOT NULL DEFAULT '', confidence REAL NOT NULL DEFAULT 0.5, evidence_links TEXT NOT NULL DEFAULT '[]', created_at TEXT NOT NULL)")
                 connection.execute("CREATE TABLE IF NOT EXISTS research_rules (id TEXT PRIMARY KEY, category TEXT NOT NULL, title TEXT NOT NULL, trigger_text TEXT NOT NULL, guidance TEXT NOT NULL, confidence_ceiling REAL NOT NULL, source_url TEXT NOT NULL, version TEXT NOT NULL)")
                 connection.execute("CREATE TABLE IF NOT EXISTS personal_rules (id TEXT PRIMARY KEY, scope TEXT NOT NULL, symbol TEXT, max_position_percent REAL NOT NULL, loss_review_percent REAL NOT NULL, volatility_review_percent REAL NOT NULL, enabled INTEGER NOT NULL DEFAULT 1, version INTEGER NOT NULL DEFAULT 1, updated_at TEXT NOT NULL)")
                 connection.execute("CREATE TABLE IF NOT EXISTS analysis_runs (id TEXT PRIMARY KEY, payload TEXT NOT NULL, created_at TEXT NOT NULL)")
+                connection.execute("""
+                    CREATE TABLE IF NOT EXISTS calibration_observations (
+                        id TEXT PRIMARY KEY,
+                        analysis_run_id TEXT NOT NULL,
+                        symbol TEXT NOT NULL,
+                        action TEXT NOT NULL,
+                        entry_date TEXT NOT NULL,
+                        entry_price REAL NOT NULL,
+                        payload TEXT NOT NULL,
+                        created_at TEXT NOT NULL,
+                        UNIQUE(symbol, action, entry_date)
+                    )
+                """)
+                connection.execute("CREATE INDEX IF NOT EXISTS idx_calibration_observations_symbol_date ON calibration_observations(symbol, entry_date DESC)")
                 self._ensure_column(connection, "learning_cases", "position_band", "TEXT NOT NULL DEFAULT ''")
                 self._ensure_column(connection, "learning_cases", "planned_action", "TEXT NOT NULL DEFAULT ''")
                 self._ensure_column(connection, "learning_cases", "confidence", "REAL NOT NULL DEFAULT 0.5")
@@ -349,8 +398,10 @@ class PortfolioStore:
             connection.execute("DELETE FROM personal_rules")
             connection.execute("DELETE FROM learning_cases")
             connection.execute("DELETE FROM risk_cache")
+            connection.execute("DELETE FROM daily_price_cache")
             connection.execute("DELETE FROM portfolio_analysis_cache")
             connection.execute("DELETE FROM analysis_runs")
+            connection.execute("DELETE FROM calibration_observations")
             connection.execute("DELETE FROM ai_analysis_cache")
             connection.execute("DELETE FROM ai_analysis_cache_v2")
             connection.execute("DELETE FROM content_cache")
@@ -365,10 +416,13 @@ class PortfolioStore:
                     "SELECT COUNT(*) FROM holding_drafts WHERE lookup_status IN ('pending', 'querying', 'needs_review')"
                 ).fetchone()[0],
                 "cached_quotes_count": connection.execute("SELECT COUNT(*) FROM market_quote_cache").fetchone()[0],
+                "market_history_count": connection.execute("SELECT COUNT(*) FROM market_quote_history").fetchone()[0],
                 "cached_content_count": connection.execute("SELECT COUNT(*) FROM content_cache").fetchone()[0],
             }
+            latest_market = connection.execute("SELECT MAX(recorded_at) FROM market_quote_history").fetchone()[0]
+            counts["latest_market_at"] = latest_market
         counts["database_bytes"] = self.database_path.stat().st_size if self.database_path.exists() else 0
-        return {key: int(value) for key, value in counts.items()}
+        return {key: int(value) for key, value in counts.items() if key != "latest_market_at"} | {"latest_market_at": counts["latest_market_at"]}
 
     def cached_quotes(self, symbols: list[str]) -> list[dict[str, object]]:
         if not symbols:
@@ -389,6 +443,27 @@ class PortfolioStore:
                 "ON CONFLICT(symbol) DO UPDATE SET payload=excluded.payload, updated_at=excluded.updated_at",
                 rows,
             )
+            connection.executemany(
+                "INSERT INTO market_quote_history (symbol, payload, recorded_at) VALUES (?, ?, ?)",
+                rows,
+            )
+
+    def system_settings(self) -> dict[str, bool]:
+        with self._connect() as connection:
+            rows = connection.execute("SELECT setting_key, setting_value FROM system_settings").fetchall()
+        stored = {str(row["setting_key"]): str(row["setting_value"]) for row in rows}
+        return {"update_check_enabled": stored.get("update_check_enabled", "true").lower() == "true"}
+
+    def save_system_settings(self, settings: dict[str, bool]) -> dict[str, bool]:
+        timestamp = beijing_now().isoformat()
+        rows = [(key, "true" if value else "false", timestamp) for key, value in settings.items()]
+        with self._connect() as connection:
+            connection.executemany(
+                "INSERT INTO system_settings (setting_key, setting_value, updated_at) VALUES (?, ?, ?) "
+                "ON CONFLICT(setting_key) DO UPDATE SET setting_value=excluded.setting_value, updated_at=excluded.updated_at",
+                rows,
+            )
+        return self.system_settings()
 
     def cached_analysis(self, cache_key: str) -> dict[str, object] | None:
         with self._connect() as connection:
@@ -445,6 +520,18 @@ class PortfolioStore:
         with self._connect() as connection:
             connection.executemany("INSERT INTO content_cache (content_id, payload, updated_at) VALUES (?, ?, ?) ON CONFLICT(content_id) DO UPDATE SET payload=excluded.payload, updated_at=excluded.updated_at", rows)
 
+    def cached_content(self, symbols: list[str] | None = None, limit: int = 80) -> list[dict[str, object]]:
+        """Return source-linked content retained locally for evidence assembly."""
+        with self._connect() as connection:
+            rows = connection.execute(
+                "SELECT payload FROM content_cache ORDER BY updated_at DESC LIMIT ?", (max(1, limit),)
+            ).fetchall()
+        requested = {str(symbol).strip().upper() for symbol in (symbols or [])}
+        items = [json.loads(str(row["payload"])) for row in rows]
+        if not requested:
+            return items
+        return [item for item in items if requested.intersection({str(value).strip().upper() for value in item.get("related_symbols", [])})]
+
     def save_risk(self, item: dict[str, object]) -> None:
         with self._connect() as connection:
             connection.execute("INSERT INTO risk_cache (symbol, payload, updated_at) VALUES (?, ?, ?) ON CONFLICT(symbol) DO UPDATE SET payload=excluded.payload, updated_at=excluded.updated_at", (str(item["symbol"]), json.dumps(item, ensure_ascii=False, default=str), beijing_now().isoformat()))
@@ -453,10 +540,46 @@ class PortfolioStore:
         with self._connect() as connection:
             connection.execute("INSERT INTO portfolio_analysis_cache (analysis_key, payload, updated_at) VALUES ('current', ?, ?) ON CONFLICT(analysis_key) DO UPDATE SET payload=excluded.payload, updated_at=excluded.updated_at", (json.dumps(payload, ensure_ascii=False, default=str), beijing_now().isoformat()))
 
+    def cached_portfolio_analysis(self) -> dict[str, object] | None:
+        with self._connect() as connection:
+            row = connection.execute(
+                "SELECT payload FROM portfolio_analysis_cache WHERE analysis_key='current'"
+            ).fetchone()
+        return json.loads(str(row["payload"])) if row else None
+
     def cached_risk(self, symbol: str) -> dict[str, object] | None:
         with self._connect() as connection:
             row = connection.execute("SELECT payload FROM risk_cache WHERE symbol = ?", (symbol,)).fetchone()
         return json.loads(str(row["payload"])) if row else None
+
+    def save_daily_prices(self, symbol: str, bars: list[dict[str, object]]) -> None:
+        """Upsert normalized end-of-day bars; raw provider payloads are deliberately not retained."""
+        if not bars:
+            return
+        now = beijing_now().isoformat()
+        rows = [
+            (symbol, str(bar["trading_date"]), float(bar["close"]), bar.get("high"), bar.get("low"),
+             str(bar.get("source", "public-market-data")), now)
+            for bar in bars
+        ]
+        with self._connect() as connection:
+            connection.executemany(
+                """INSERT INTO daily_price_cache
+                (symbol, trading_date, close, high, low, source, updated_at)
+                VALUES (?, ?, ?, ?, ?, ?, ?)
+                ON CONFLICT(symbol, trading_date) DO UPDATE SET
+                    close=excluded.close, high=excluded.high, low=excluded.low,
+                    source=excluded.source, updated_at=excluded.updated_at""",
+                rows,
+            )
+
+    def daily_prices(self, symbol: str, limit: int = 800) -> list[dict[str, object]]:
+        with self._connect() as connection:
+            rows = connection.execute(
+                "SELECT trading_date, close, high, low, source FROM daily_price_cache "
+                "WHERE symbol=? ORDER BY trading_date DESC LIMIT ?", (symbol, max(1, limit)),
+            ).fetchall()
+        return [dict(row) for row in reversed(rows)]
 
     def add_learning_case(self, item: dict[str, object]) -> dict[str, object]:
         with self._connect() as connection:
@@ -492,3 +615,36 @@ class PortfolioStore:
     def save_analysis_run(self, item: dict[str, object]) -> None:
         with self._connect() as connection:
             connection.execute("INSERT INTO analysis_runs (id, payload, created_at) VALUES (?, ?, ?)", (str(item["id"]), json.dumps(item, ensure_ascii=False, default=str), beijing_now().isoformat()))
+
+    def save_calibration_observations(self, analysis_run: dict[str, object]) -> None:
+        """Keep one source snapshot per symbol/action/trading date for later calibration."""
+        rows = []
+        for item in analysis_run.get("items", []):
+            snapshot = item.get("decision_snapshot") or {}
+            quote = snapshot.get("quote") or {}
+            price = quote.get("price")
+            entry_date = str(quote.get("as_of") or analysis_run.get("generated_at", ""))[:10]
+            if price is None or not entry_date:
+                continue
+            rows.append((
+                f"{item['symbol']}:{item['action']}:{entry_date}", str(analysis_run["id"]), str(item["symbol"]),
+                str(item["action"]), entry_date, float(price), json.dumps(snapshot, ensure_ascii=False, default=str),
+                beijing_now().isoformat(),
+            ))
+        if not rows:
+            return
+        with self._connect() as connection:
+            connection.executemany(
+                "INSERT OR IGNORE INTO calibration_observations "
+                "(id, analysis_run_id, symbol, action, entry_date, entry_price, payload, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+                rows,
+            )
+
+    def calibration_observations(self, symbol: str | None = None) -> list[dict[str, object]]:
+        query, params = (
+            ("SELECT symbol, action, entry_date, entry_price, payload FROM calibration_observations WHERE symbol=? ORDER BY entry_date", [symbol])
+            if symbol else ("SELECT symbol, action, entry_date, entry_price, payload FROM calibration_observations ORDER BY entry_date", [])
+        )
+        with self._connect() as connection:
+            rows = connection.execute(query, params).fetchall()
+        return [{**dict(row), "payload": json.loads(str(row["payload"]))} for row in rows]

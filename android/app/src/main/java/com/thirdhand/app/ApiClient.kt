@@ -8,6 +8,7 @@ import okio.Buffer
 import retrofit2.Retrofit
 import retrofit2.Response
 import retrofit2.HttpException
+import java.util.concurrent.TimeUnit
 import retrofit2.converter.gson.GsonConverterFactory
 import retrofit2.http.Body
 import retrofit2.http.DELETE
@@ -110,6 +111,8 @@ data class RiskAssessmentDto(
     val sample_count: Int,
     val as_of: String,
     val explanation: String,
+    val status: String = "ready",
+    val message: String = "",
     val disclaimer: String,
 )
 
@@ -140,9 +143,18 @@ data class AdminOverviewDto(
     val draft_count: Int,
     val pending_draft_count: Int,
     val cached_quotes_count: Int,
+    val market_history_count: Int = 0,
+    val latest_market_at: String? = null,
     val cached_content_count: Int,
     val database_bytes: Int,
+    val market_refresh_enabled: Boolean = false,
+    val market_refresh_interval_seconds: Int = 60,
+    val market_worker_running: Boolean = false,
+    val market_last_attempt_at: String? = null,
+    val market_last_success_at: String? = null,
+    val market_last_error: String? = null,
 )
+data class SystemConfigDto(val update_check_enabled: Boolean = true)
 data class AnalysisTraceStepDto(val stage: String, val status: String, val detail: String)
 data class TechnicalSnapshotDto(
     val as_of: String,
@@ -163,8 +175,26 @@ data class TechnicalSnapshotDto(
     val atr_percent: Double,
     val drawdown_60d_percent: Double,
 )
-data class PortfolioAnalysisItemDto(val symbol: String, val name: String, val action: String, val reason: String, val evidence: List<String>, val confidence_percent: Int, val rule_snapshot: Map<String, Any>? = null, val technical_snapshot: TechnicalSnapshotDto? = null, val analysis_trace: List<AnalysisTraceStepDto> = emptyList(), val disclaimer: String)
+data class DecisionEventDto(val id: String, val title: String, val impact: String, val summary: String, val source_url: String? = null, val published_at: String? = null)
+data class CalibrationHorizonDto(val sample_count: Int = 0, val average_return_percent: Double? = null, val rule_alignment_rate_percent: Double? = null)
+data class HistoricalCalibrationDto(val action: String = "", val definition: String = "", val horizons: Map<String, CalibrationHorizonDto> = emptyMap())
+data class DecisionSnapshotDto(
+    val event_evidence: List<DecisionEventDto> = emptyList(), val missing_evidence: List<String> = emptyList(),
+    val evidence_completeness_percent: Int = 0, val candidate_action: String = "", val confidence_definition: String = "", val historical_calibration: HistoricalCalibrationDto? = null,
+)
+data class PortfolioAnalysisItemDto(val symbol: String, val name: String, val action: String, val reason: String, val evidence: List<String>, val confidence_percent: Int, val rule_snapshot: Map<String, Any>? = null, val technical_snapshot: TechnicalSnapshotDto? = null, val decision_snapshot: DecisionSnapshotDto? = null, val analysis_trace: List<AnalysisTraceStepDto> = emptyList(), val disclaimer: String)
 data class PortfolioAnalysisDto(val id: String, val generated_at: String, val items: List<PortfolioAnalysisItemDto>)
+data class ImpactGraphNodeDto(
+    val id: String, val kind: String, val label: String, val detail: String,
+    val symbol: String? = null, val source_url: String? = null, val published_at: String? = null,
+)
+data class ImpactGraphEdgeDto(
+    val source: String, val target: String, val relation: String, val direction: String, val weight: Double,
+)
+data class ImpactGraphDto(
+    val generated_at: String, val focus_symbol: String? = null, val nodes: List<ImpactGraphNodeDto>,
+    val edges: List<ImpactGraphEdgeDto>, val disclaimer: String,
+)
 data class GlossaryCardDto(val term: String, val plain_explanation: String, val watch_for: String)
 data class LearningCaseDto(
     val id: String, val symbol: String?, val title: String, val context: String, val lesson: String,
@@ -206,6 +236,12 @@ interface ThirdHandApi {
 
     @GET("v1/admin/overview")
     suspend fun adminOverview(): AdminOverviewDto
+
+    @GET("v1/admin/config")
+    suspend fun adminConfig(): SystemConfigDto
+
+    @PUT("v1/admin/config")
+    suspend fun saveAdminConfig(@Body config: SystemConfigDto): SystemConfigDto
 
     @GET("v1/holdings")
     suspend fun holdings(): List<HoldingDto>
@@ -250,6 +286,8 @@ interface ThirdHandApi {
     suspend fun riskAssessments(): List<RiskAssessmentDto>
     @GET("v1/portfolio/analysis")
     suspend fun portfolioAnalysis(): PortfolioAnalysisDto
+    @GET("v1/portfolio/impact-graph")
+    suspend fun impactGraph(@Query("symbol") symbol: String? = null): ImpactGraphDto
 
     @GET("v1/learning-cases")
     suspend fun learningCases(@Query("symbol") symbol: String? = null): List<LearningCaseDto>
@@ -293,7 +331,11 @@ object ApiClient {
 
     private val marketDebugInterceptor = Interceptor { chain ->
         val request = chain.request()
-        if (!BuildConfig.DEBUG || !request.url.encodedPath.contains("/v1/market/")) {
+        val path = request.url.encodedPath
+        val shouldLog = path.contains("/v1/market/") ||
+            path.contains("/v1/holdings") ||
+            path.contains("/v1/holding-drafts")
+        if (!BuildConfig.DEBUG || !shouldLog) {
             return@Interceptor chain.proceed(request)
         }
         val startedAt = System.nanoTime()
@@ -332,7 +374,14 @@ object ApiClient {
             configuredBaseUrl = baseUrl
             configuredService = Retrofit.Builder()
             .baseUrl(baseUrl)
-            .client(OkHttpClient.Builder().addInterceptor(marketDebugInterceptor).build())
+            .client(
+                OkHttpClient.Builder()
+                    .addInterceptor(marketDebugInterceptor)
+                    // A forced refresh queries public data sources.  Their full-market
+                    // snapshots can legitimately take longer than OkHttp's 10s default.
+                    .callTimeout(45, TimeUnit.SECONDS)
+                    .build(),
+            )
             .addConverterFactory(GsonConverterFactory.create())
             .build()
             .create(ThirdHandApi::class.java)
@@ -347,12 +396,21 @@ object EndpointStore {
     private const val DEFAULT_URL = "http://10.0.2.2:8000/"
 
     fun baseUrl(context: Context): String = context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
-        .getString(BASE_URL, DEFAULT_URL).orEmpty().ensureTrailingSlash()
+        .getString(BASE_URL, DEFAULT_URL).orEmpty().normalizeBaseUrl()
 
     fun saveBaseUrl(context: Context, value: String) {
         context.getSharedPreferences(PREFS, Context.MODE_PRIVATE).edit()
-            .putString(BASE_URL, value.trim().ensureTrailingSlash()).apply()
+            .putString(BASE_URL, value.normalizeBaseUrl()).apply()
     }
 
-    private fun String.ensureTrailingSlash(): String = if (endsWith('/')) this else "$this/"
+    private fun String.normalizeBaseUrl(): String {
+        // Cloudflare redirects the production HTTP endpoint to HTTPS.  OkHttp
+        // changes redirected POST requests into GET requests, producing 405 on
+        // write endpoints.  Keep plain HTTP unchanged for LAN development URLs.
+        val httpsUrl = trim().replaceFirst(
+            Regex("^http://groupim\\.cn(?=[:/]|$)", RegexOption.IGNORE_CASE),
+            "https://groupim.cn",
+        )
+        return if (httpsUrl.endsWith('/')) httpsUrl else "$httpsUrl/"
+    }
 }

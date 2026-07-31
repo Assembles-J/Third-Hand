@@ -32,6 +32,10 @@ from app.ai_analysis import AiAnalysisService
 from app.llm_client import LlmClientError
 from app.portfolio_analysis import assess_holdings
 from app.technical_analysis import TechnicalAnalysisService
+from app.price_history import PriceHistoryService, PriceHistoryUnavailable
+from app.impact_graph import build_impact_graph
+from app.decision_snapshot import build_decision_snapshot
+from app.calibration import summarize_calibration
 from app.trading_calendar import TradingCalendarService
 
 app = FastAPI(title="Third-Hand API", version="0.2.0")
@@ -55,6 +59,9 @@ MARKET_REFRESH_INTERVAL_SECONDS = positive_environment_integer("MARKET_REFRESH_I
 market_refresh_stop = Event()
 market_refresh_thread: Thread | None = None
 market_refresh_state_lock = Lock()
+market_collection_lock = Lock()
+derived_refresh_lock = Lock()
+daily_history_refreshed_for: dict[str, str] = {}
 market_refresh_state: dict[str, object] = {
     "last_attempt_at": None,
     "last_success_at": None,
@@ -87,8 +94,20 @@ class AdminOverview(BaseModel):
     draft_count: int
     pending_draft_count: int
     cached_quotes_count: int
+    market_history_count: int
+    latest_market_at: datetime | None = None
     cached_content_count: int
     database_bytes: int
+    market_refresh_enabled: bool
+    market_refresh_interval_seconds: int
+    market_worker_running: bool
+    market_last_attempt_at: datetime | None = None
+    market_last_success_at: datetime | None = None
+    market_last_error: str | None = None
+
+
+class SystemConfig(BaseModel):
+    update_check_enabled: bool = True
 
 
 class AppUpdate(BaseModel):
@@ -245,10 +264,12 @@ class RiskAssessment(BaseModel):
     sample_count: int
     as_of: str
     explanation: str
+    status: str = "ready"
+    message: str = ""
     disclaimer: str = "基于历史价格的风险统计，不构成对未来价格的预测或任何投资建议。"
 
 class PortfolioAnalysisItem(BaseModel):
-    symbol: str; name: str; action: str; reason: str; evidence: list[str]; confidence_percent: int = Field(ge=0, le=100); rule_snapshot: dict[str, object] | None = None; technical_snapshot: dict[str, object] | None = None; analysis_trace: list[dict[str, str]] = Field(default_factory=list); disclaimer: str
+    symbol: str; name: str; action: str; reason: str; evidence: list[str]; confidence_percent: int = Field(ge=0, le=100); rule_snapshot: dict[str, object] | None = None; technical_snapshot: dict[str, object] | None = None; decision_snapshot: dict[str, object] = Field(default_factory=dict); analysis_trace: list[dict[str, str]] = Field(default_factory=list); disclaimer: str
 class PortfolioAnalysis(BaseModel):
     id: str; generated_at: datetime; items: list[PortfolioAnalysisItem]
 class LearningCaseInput(BaseModel):
@@ -293,6 +314,7 @@ announcement_service = AnnouncementService()
 risk_service = RiskService()
 ai_analysis_service = AiAnalysisService(store)
 technical_analysis_service = TechnicalAnalysisService()
+price_history_service = PriceHistoryService()
 
 GLOSSARY = {
     "pe": GlossaryCard(term="PE（市盈率）", plain_explanation="股价相对于每股盈利的倍数。它不是越低越好，要结合行业和盈利质量判断。", watch_for="亏损或一次性收益会使 PE 失真。"),
@@ -369,6 +391,8 @@ def configured_update_url(apk: Path) -> str | None:
 def app_update(response: Response) -> Response | AppUpdate:
     """Return fresh metadata; the versioned APK itself may be cached indefinitely."""
     response.headers["Cache-Control"] = "no-store"
+    if not store.system_settings()["update_check_enabled"]:
+        return Response(status_code=status.HTTP_204_NO_CONTENT, headers={"Cache-Control": "no-store"})
     apk = configured_release_apk()
     apk_url = configured_update_url(apk) if apk is not None else None
     if apk is None or apk_url is None:
@@ -386,12 +410,30 @@ def app_update(response: Response) -> Response | AppUpdate:
 @app.get("/v1/admin/overview", response_model=AdminOverview)
 def admin_overview() -> AdminOverview:
     """Read-only aggregate health data; no holdings, identities, or credentials are exposed."""
+    with market_refresh_state_lock:
+        refresh_state = dict(market_refresh_state)
     return AdminOverview(
         status="ok",
         generated_at=beijing_now(),
         uptime_seconds=int(time.monotonic() - APP_STARTED_AT),
+        market_refresh_enabled=MARKET_REFRESH_ENABLED,
+        market_refresh_interval_seconds=MARKET_REFRESH_INTERVAL_SECONDS,
+        market_worker_running=bool(market_refresh_thread and market_refresh_thread.is_alive()),
+        market_last_attempt_at=refresh_state["last_attempt_at"],
+        market_last_success_at=refresh_state["last_success_at"],
+        market_last_error=refresh_state["last_error"],
         **store.admin_summary(),
     )
+
+
+@app.get("/v1/admin/config", response_model=SystemConfig)
+def admin_config() -> SystemConfig:
+    return SystemConfig(**store.system_settings())
+
+
+@app.put("/v1/admin/config", response_model=SystemConfig)
+def save_admin_config(payload: SystemConfig) -> SystemConfig:
+    return SystemConfig(**store.save_system_settings(payload.model_dump()))
 
 
 @app.get("/v1/feed", response_model=list[NewsItem])
@@ -457,7 +499,19 @@ def fetch_and_store_quotes(
             "symbols": list(symbols),
         })
     try:
-        quotes = market_data.quotes(symbols, force_refresh=force_refresh)
+        # A market-wide provider request is serialized.  This prevents two API
+        # workers from independently downloading the same paginated universe.
+        with market_collection_lock:
+            quotes = market_data.quotes(symbols, force_refresh=force_refresh)
+            markets = {
+                "hk" if len(symbol) == 5 and symbol.isdigit()
+                else "etf" if len(symbol) == 6 and symbol.startswith(("15", "16", "51", "56", "58"))
+                else "a"
+                for symbol in symbols
+            }
+            # The upstream frame already contains the whole market.  Persist one
+            # normalized latest row per symbol, never the raw response/history.
+            store.save_quotes(market_data.latest_market_snapshot(markets))
         successful = [quote for quote in quotes if quote.get("price") is not None and not quote.get("error_code")]
         store.save_quotes(successful)
         logger.info(
@@ -515,6 +569,55 @@ def refresh_quote_cache(
         return
 
 
+def queue_background(target, *args) -> None:
+    """Do not let FastAPI's in-process BackgroundTasks hold the HTTP response open."""
+    Thread(target=target, args=args, daemon=True).start()
+
+
+def refresh_derived_cache(symbols: list[str], trigger: str, force_history: bool = False) -> None:
+    """Collect daily bars and compute risk/technical results outside HTTP handlers."""
+    if not symbols or not derived_refresh_lock.acquire(blocking=False):
+        return
+    try:
+        names = {str(item["symbol"]): str(item["name"]) for item in store.list()}
+        today = beijing_now().date().isoformat()
+        for symbol in symbols:
+            try:
+                if force_history or daily_history_refreshed_for.get(symbol) != today:
+                    price_history_service.refresh(store, symbol)
+                    daily_history_refreshed_for[symbol] = today
+                bars = store.daily_prices(symbol)
+                item = risk_service.assess(symbol, names.get(symbol, symbol), [float(bar["close"]) for bar in bars], str(bars[-1]["trading_date"]))
+                store.save_risk(item)
+            except (PriceHistoryUnavailable, RiskDataUnavailable) as error:
+                logger.warning("派生数据刷新失败 trigger=%s symbol=%s error=%s", trigger, symbol, error)
+        holdings = store.list()
+        symbols = [str(item["symbol"]) for item in holdings]
+        quotes = store.cached_quotes(symbols)
+        quote_by_symbol = {str(item["symbol"]): item for item in quotes}
+        payload = assess_holdings(holdings, quotes, store, technical_analysis_service)
+        content_items = store.cached_content(symbols)
+        holding_by_symbol = {str(item["symbol"]): item for item in holdings}
+        for review in payload["items"]:
+            symbol = str(review["symbol"])
+            review["decision_snapshot"] = build_decision_snapshot(
+                holding_by_symbol[symbol], quote_by_symbol.get(symbol), store.cached_risk(symbol),
+                review.get("rule_snapshot"), content_items, str(review["action"]),
+            )
+        payload["generated_at"] = beijing_now().isoformat()
+        store.save_calibration_observations(payload)
+        for review in payload["items"]:
+            symbol = str(review["symbol"])
+            review["decision_snapshot"]["historical_calibration"] = summarize_calibration(
+                [item for item in store.calibration_observations(symbol) if item["action"] == review["action"]],
+                store.daily_prices(symbol), str(review["action"]),
+            )
+        store.save_portfolio_analysis(payload)
+        store.save_analysis_run(payload)
+    finally:
+        derived_refresh_lock.release()
+
+
 def scheduled_market_refresh_loop() -> None:
     logger.info(
         "行情定时刷新已启动 interval_seconds=%s",
@@ -559,6 +662,13 @@ def scheduled_market_refresh_loop() -> None:
                     force_refresh=True,
                     trigger="scheduler-trading-session",
                 )
+                refresh_derived_cache(refreshable_symbols, "scheduler-trading-session")
+            elif all_symbols and previous_open_symbols:
+                # Capture one final close snapshot when the session ends.  This
+                # also refreshes that day's daily bar once, rather than fetching
+                # full history every scheduler minute.
+                refresh_quote_cache(all_symbols, force_refresh=True, trigger="scheduler-close-snapshot")
+                refresh_derived_cache(all_symbols, "scheduler-close-snapshot", force_history=True)
             elif all_symbols and previous_open_symbols != open_symbols_key:
                 # 只在状态发生变化时记录，避免休市期间每分钟刷日志。
                 logger.info(
@@ -617,6 +727,12 @@ def resume_background_work() -> None:
     draft_ids = store.draft_ids_needing_lookup()
     if draft_ids:
         Thread(target=resolve_holding_drafts, args=(draft_ids,), daemon=True).start()
+    symbols = [str(item["symbol"]).strip().upper() for item in store.list()]
+    if symbols:
+        # Startup pre-warms latest quotes and daily derived data even while the
+        # exchange is closed, so a restart never leaves the app blank.
+        Thread(target=refresh_quote_cache, args=(symbols, True, "startup-prewarm"), daemon=True).start()
+        Thread(target=refresh_derived_cache, args=(symbols, "startup-prewarm"), daemon=True).start()
     if MARKET_REFRESH_ENABLED and (market_refresh_thread is None or not market_refresh_thread.is_alive()):
         market_refresh_stop.clear()
         market_refresh_thread = Thread(target=scheduled_market_refresh_loop, daemon=True, name="market-refresh")
@@ -654,59 +770,25 @@ def resolve_market_quotes(
     cached = store.cached_quotes(requested)
     cached_by_symbol = {str(item["symbol"]): item for item in cached}
     cached_symbols = set(cached_by_symbol)
-    has_complete_cache = cached_symbols.issuperset(requested)
     logger.info(
-        "行情接口请求 symbols=%s refresh=%s cached_symbols=%s complete_cache=%s",
-        ",".join(requested), refresh, ",".join(sorted(cached_symbols)) or "none", has_complete_cache,
+        "行情接口只读数据库 symbols=%s requested_refresh=%s cached_symbols=%s",
+        ",".join(requested), refresh, ",".join(sorted(cached_symbols)) or "none",
     )
-    if refresh or not has_complete_cache:
-        try:
-            quotes = fetch_and_store_quotes(
-                requested,
-                force_refresh=refresh,
-                trigger="request-forced" if refresh else "request-cache-miss",
-            )
-        except Exception as error:
-            logger.exception("批量行情刷新发生未隔离异常 symbols=%s", ",".join(requested))
-            quotes = [{
-                **MarketDataService._failure_quote(
-                    symbol,
-                    "batch_refresh_failed",
-                    "批量行情刷新暂时不可用，请稍后重试。",
-                ),
-            } for symbol in requested]
-        fetched_by_symbol = {str(item["symbol"]): item for item in quotes}
-        resolved: list[MarketQuote] = []
-        for symbol in requested:
-            fetched = fetched_by_symbol.get(symbol)
-            if fetched and fetched.get("price") is not None and not fetched.get("error_code"):
-                resolved.append(MarketQuote.model_validate({**fetched, "refresh_status": "fresh"}))
-                continue
-            error_code = str((fetched or {}).get("error_code") or "symbol_not_found")
-            error_message = str((fetched or {}).get("error_message") or "未找到该代码的行情。")
-            cached_item = cached_by_symbol.get(symbol)
-            if cached_item:
-                resolved.append(MarketQuote.model_validate({
-                    **cached_item,
-                    "refresh_status": "stale_fallback",
-                    "error_code": error_code,
-                    "error_message": error_message,
-                    "freshness_note": f"{cached_item.get('freshness_note', '')} 本次刷新失败：{error_message}".strip(),
-                }))
-            else:
-                resolved.append(MarketQuote.model_validate({
-                    **(fetched or MarketDataService._failure_quote(symbol, error_code, error_message)),
-                    "refresh_status": "failed",
-                }))
-        return resolved
-    if cached:
-        logger.info("行情接口返回缓存并安排后台刷新 symbols=%s", ",".join(requested))
-        background_tasks.add_task(refresh_quote_cache, requested, False, "request-background")
-        return [
-            MarketQuote.model_validate({**cached_by_symbol[symbol], "refresh_status": "cached_refreshing"})
-            for symbol in requested if symbol in cached_by_symbol
-        ]
-    return []
+    if refresh and requested:
+        # Return the current SQLite snapshot immediately; the requested refresh
+        # is queued after the response rather than turning this read endpoint
+        # into a synchronous AKShare request.
+        queue_background(refresh_quote_cache, requested, True, "request-forced")
+    return [
+        MarketQuote.model_validate({**cached_by_symbol[symbol], "refresh_status": "stored"})
+        if symbol in cached_by_symbol else MarketQuote.model_validate({
+            **MarketDataService._failure_quote(
+                symbol, "awaiting_scheduler_refresh", "行情尚未入库，等待服务端定时任务拉取。",
+            ),
+            "refresh_status": "pending",
+        })
+        for symbol in requested
+    ]
 
 
 @app.get("/v1/market/refresh-status", response_model=MarketRefreshStatus)
@@ -742,22 +824,39 @@ def resolve_market_symbols(names: list[str]) -> list[SymbolLookupResult]:
 
 @app.get("/v1/risk/assessments", response_model=list[RiskAssessment])
 def risk_assessments() -> list[RiskAssessment]:
-    """Return historical risk statistics for holdings that have a confirmed symbol."""
-    try:
-        items = [risk_service.assess(str(holding["symbol"]), str(holding["name"])) for holding in store.list()]
-        for item in items: store.save_risk(item)
-        return [RiskAssessment.model_validate(item) for item in items]
-    except RiskDataUnavailable as error:
-        raise HTTPException(status_code=503, detail=str(error)) from error
+    """Read persisted risk results only; collection never happens in an HTTP request."""
+    items = []
+    for holding in store.list():
+        cached = store.cached_risk(str(holding["symbol"]))
+        if cached:
+            items.append({**cached, "name": str(holding["name"])})
+        else:
+            items.append({
+                "symbol": str(holding["symbol"]), "name": str(holding["name"]),
+                "horizon_trading_days": 5, "downside_threshold_percent": 5.0,
+                "historical_downside_probability": 0.0, "annualized_volatility_percent": 0.0,
+                "risk_level": "数据不足", "confidence": "低", "sample_count": 0,
+                "as_of": "", "explanation": "", "status": "data_insufficient",
+                "message": "历史日线正在后台准备，完成后会自动显示风险统计。",
+            })
+    return [RiskAssessment.model_validate(item) for item in items]
 
 @app.get("/v1/portfolio/analysis", response_model=PortfolioAnalysis)
 def portfolio_analysis() -> PortfolioAnalysis:
-    holdings = store.list()
-    payload = assess_holdings(holdings, store.cached_quotes([str(item["symbol"]) for item in holdings]), store, technical_analysis_service)
-    payload["generated_at"] = beijing_now().isoformat()
-    store.save_portfolio_analysis(payload)
-    store.save_analysis_run(payload)
+    payload = store.cached_portfolio_analysis()
+    if payload is None:
+        holdings = store.list()
+        payload = assess_holdings(holdings, store.cached_quotes([str(item["symbol"]) for item in holdings]), store)
+        payload["generated_at"] = beijing_now().isoformat()
     return PortfolioAnalysis.model_validate(payload)
+
+
+@app.get("/v1/portfolio/impact-graph")
+def portfolio_impact_graph(symbol: str | None = None) -> dict[str, object]:
+    """Return a source-linked topology of current holding influences."""
+    holdings = store.list()
+    symbols = [str(item["symbol"]) for item in holdings]
+    return build_impact_graph(holdings, store.cached_quotes(symbols), store, symbol=symbol)
 
 @app.get("/v1/learning-cases", response_model=list[LearningCase])
 def list_learning_cases(symbol: str | None = None) -> list[LearningCase]:
@@ -834,8 +933,11 @@ def list_holdings() -> list[Holding]:
 
 
 @app.post("/v1/holdings", response_model=Holding, status_code=status.HTTP_201_CREATED)
-def create_holding(payload: HoldingInput) -> Holding:
-    return Holding.model_validate(store.add(str(uuid4()), **payload.model_dump()))
+def create_holding(payload: HoldingInput, background_tasks: BackgroundTasks) -> Holding:
+    item = store.add(str(uuid4()), **payload.model_dump())
+    queue_background(refresh_quote_cache, [item["symbol"]], True, "holding-created")
+    queue_background(refresh_derived_cache, [item["symbol"]], "holding-created")
+    return Holding.model_validate(item)
 
 
 @app.delete("/v1/holdings/{holding_id}", status_code=status.HTTP_204_NO_CONTENT)
@@ -845,9 +947,11 @@ def delete_holding(holding_id: str) -> Response:
     return Response(status_code=status.HTTP_204_NO_CONTENT)
 
 @app.put("/v1/holdings/{holding_id}", response_model=Holding)
-def update_holding(holding_id: str, payload: HoldingInput) -> Holding:
+def update_holding(holding_id: str, payload: HoldingInput, background_tasks: BackgroundTasks) -> Holding:
     item = store.update(holding_id, **payload.model_dump())
     if not item: raise HTTPException(status_code=404, detail="未找到持仓")
+    queue_background(refresh_quote_cache, [item["symbol"]], True, "holding-updated")
+    queue_background(refresh_derived_cache, [item["symbol"]], "holding-updated")
     return Holding.model_validate(item)
 
 

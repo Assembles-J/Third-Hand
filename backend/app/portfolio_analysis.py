@@ -32,7 +32,13 @@ def assess_holdings(holdings, quotes, store, technical_service=None):
                 trace.append({"stage": "风险统计", "status": "ok", "detail": f"已使用历史下行概率 {risk['historical_downside_probability']}%，年化波动 {risk['annualized_volatility_percent']}%。"})
             if technical_service:
                 try:
-                    technical_snapshot = technical_service.assess(symbol)
+                    try:
+                        bars = store.daily_prices(symbol) if hasattr(store, "daily_prices") else []
+                        technical_snapshot = technical_service.assess(symbol, bars)
+                    except TypeError:
+                        # Keep custom/test adapters written against the original
+                        # one-argument protocol working during the migration.
+                        technical_snapshot = technical_service.assess(symbol)
                     evidence.append(
                         f"技术面：{technical_snapshot['trend_label']}；"
                         f"RSI(14) {technical_snapshot['rsi14']}（{technical_snapshot['rsi_state']}）；"

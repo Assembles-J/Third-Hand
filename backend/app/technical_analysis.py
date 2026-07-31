@@ -1,7 +1,6 @@
 """Explainable daily technical indicators for evidence, not trading orders."""
 from __future__ import annotations
 
-from datetime import date, timedelta
 
 
 class TechnicalDataUnavailable(RuntimeError):
@@ -9,23 +8,22 @@ class TechnicalDataUnavailable(RuntimeError):
 
 
 class TechnicalAnalysisService:
-    def assess(self, symbol: str) -> dict[str, object]:
+    def assess(self, symbol: str, bars: list[dict[str, object]]) -> dict[str, object]:
         try:
-            import akshare as ak
+            import pandas as pd
             from ta.momentum import RSIIndicator
             from ta.trend import MACD, SMAIndicator
             from ta.volatility import AverageTrueRange
         except ImportError as error:
             raise TechnicalDataUnavailable("技术分析依赖未安装。") from error
         try:
-            start = (date.today() - timedelta(days=420)).strftime("%Y%m%d")
-            frame = ak.stock_zh_a_hist(symbol=symbol, period="daily", start_date=start, end_date=date.today().strftime("%Y%m%d"), adjust="qfq")
-            if frame is None or len(frame.index) < 60:
+            frame = pd.DataFrame(bars)
+            if frame.empty or len(frame.index) < 60:
                 raise TechnicalDataUnavailable("至少需要 60 个交易日的历史行情。")
-            frame = frame.sort_values("日期")
-            close = frame["收盘"].astype(float)
-            high = frame["最高"].astype(float)
-            low = frame["最低"].astype(float)
+            frame = frame.sort_values("trading_date")
+            close = frame["close"].astype(float)
+            high = frame["high"].astype(float)
+            low = frame["low"].astype(float)
             sma20, sma60 = SMAIndicator(close, 20).sma_indicator().iloc[-1], SMAIndicator(close, 60).sma_indicator().iloc[-1]
             rsi = RSIIndicator(close, 14).rsi().iloc[-1]
             macd = MACD(close).macd_diff().iloc[-1]
@@ -49,7 +47,7 @@ class TechnicalAnalysisService:
                 f"均线结构为{trend_label}；RSI 处于{rsi_state}区，MACD {macd_state}。"
             )
             return {
-                "as_of": str(frame["日期"].iloc[-1]),
+                "as_of": str(frame["trading_date"].iloc[-1]),
                 "sample_count": len(frame.index),
                 "close": round(latest_close, 2),
                 "trend": trend,

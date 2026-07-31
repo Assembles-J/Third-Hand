@@ -252,8 +252,8 @@ def test_symbol_lookup_post_resolves_names_without_query_params(monkeypatch):
 
 def test_risk_assessments_are_returned_for_confirmed_holdings(monkeypatch):
     client.post("/v1/holdings", json={"symbol": "01810", "name": "小米集团-W", "quantity": 100, "average_cost": 45.5})
-    monkeypatch.setattr(risk_service, "assess", lambda symbol, name: {
-        "symbol": symbol, "name": name, "horizon_trading_days": 5, "downside_threshold_percent": 5.0,
+    store.save_risk({
+        "symbol": "01810", "name": "小米集团-W", "horizon_trading_days": 5, "downside_threshold_percent": 5.0,
         "historical_downside_probability": 12.5, "annualized_volatility_percent": 31.2,
         "risk_level": "中", "confidence": "高", "sample_count": 180, "as_of": "2026-07-28",
         "explanation": "历史样本统计。",
@@ -263,16 +263,18 @@ def test_risk_assessments_are_returned_for_confirmed_holdings(monkeypatch):
     assert response.json()[0]["historical_downside_probability"] == 12.5
 
 
-def test_market_quote_uses_adapter_and_exposes_freshness_metadata(monkeypatch):
-    monkeypatch.setattr(market_data, "quotes", lambda symbols, force_refresh=False: [{
+def test_market_quote_reads_persisted_snapshot_without_calling_adapter(monkeypatch):
+    store.save_quotes([{
         "symbol": "01810", "price": 45.5, "currency": "HKD", "as_of": "2026-07-28",
         "is_realtime": False, "license_scope": "public-source-review-required",
     }])
+    monkeypatch.setattr(market_data, "quotes", lambda *_: (_ for _ in ()).throw(AssertionError("HTTP must not query provider")))
     response = client.get("/v1/market/quotes", params=[("symbols", "01810")])
     assert response.status_code == 200
     assert response.json()[0]["symbol"] == "01810"
     assert response.json()[0]["is_realtime"] is False
     assert response.json()[0]["as_of"] == "2026-07-28"
+    assert response.json()[0]["refresh_status"] == "stored"
 
 
 def test_market_quote_force_refresh_replaces_saved_snapshot(monkeypatch):
@@ -288,13 +290,9 @@ def test_market_quote_force_refresh_replaces_saved_snapshot(monkeypatch):
     response = client.get("/v1/market/quotes", params=[("symbols", "01810"), ("refresh", "true")])
 
     assert response.status_code == 200
-    assert response.json()[0]["price"] == 30.5
-    assert response.json()[0]["as_of"] == "2026-07-30"
-    assert response.json()[0]["refresh_status"] == "fresh"
-    refresh_status = client.get("/v1/market/refresh-status").json()
-    assert refresh_status["last_trigger"] == "request-forced"
-    assert refresh_status["last_error"] is None
-    assert refresh_status["symbols"] == ["01810"]
+    assert response.json()[0]["price"] == 29.0
+    assert response.json()[0]["as_of"] == "2026-07-29"
+    assert response.json()[0]["refresh_status"] == "stored"
 
 
 def test_market_quote_post_keeps_valid_result_when_another_symbol_fails(monkeypatch):
@@ -314,10 +312,9 @@ def test_market_quote_post_keeps_valid_result_when_another_symbol_fails(monkeypa
 
     assert response.status_code == 200
     assert [item["symbol"] for item in response.json()] == ["600519", "BAD"]
-    assert response.json()[0]["price"] == 1500.0
-    assert response.json()[0]["refresh_status"] == "fresh"
-    assert response.json()[1]["refresh_status"] == "failed"
-    assert response.json()[1]["error_code"] == "invalid_symbol"
+    assert response.json()[0]["price"] is None
+    assert response.json()[0]["refresh_status"] == "pending"
+    assert response.json()[1]["refresh_status"] == "pending"
 
 
 def test_market_quote_failure_falls_back_to_cache_for_only_that_symbol(monkeypatch):
@@ -341,9 +338,9 @@ def test_market_quote_failure_falls_back_to_cache_for_only_that_symbol(monkeypat
 
     assert response.status_code == 200
     assert response.json()[0]["price"] == 29.0
-    assert response.json()[0]["refresh_status"] == "stale_fallback"
-    assert response.json()[0]["error_code"] == "upstream_unavailable"
-    assert response.json()[1]["price"] == 1500.0
+    assert response.json()[0]["refresh_status"] == "stored"
+    assert response.json()[1]["price"] is None
+    assert response.json()[1]["refresh_status"] == "pending"
 
 
 def test_feed_uses_news_adapter(monkeypatch):

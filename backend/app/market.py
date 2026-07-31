@@ -6,6 +6,7 @@ import re
 import os
 import logging
 from datetime import datetime, timedelta
+from concurrent.futures import ThreadPoolExecutor
 from threading import Lock
 
 from app.time_utils import beijing_now
@@ -90,36 +91,51 @@ class MarketDataService:
         hk_symbols = [symbol.zfill(5) for symbol in normalized if self._is_hk(symbol)]
         a_symbols = [symbol for symbol in normalized if not self._is_hk(symbol) and len(symbol) == 6 and symbol.isdigit()]
         invalid_symbols = [symbol for symbol in normalized if symbol not in hk_symbols and symbol not in a_symbols]
-        quotes: list[dict[str, object]] = []
-        if hk_symbols:
-            quotes.extend(self._safe_quotes(
+        def fetch_hk_quotes() -> list[dict[str, object]]:
+            return self._safe_quotes(
                 hk_symbols,
                 lambda: self._hk_quotes(hk_symbols, force_refresh=force_refresh),
-            ))
-        if a_symbols:
+            )
+
+        def fetch_a_quotes() -> list[dict[str, object]]:
+            a_quotes: list[dict[str, object]] = []
             etf_symbols = [symbol for symbol in a_symbols if symbol.startswith(("15", "16", "51", "56", "58"))]
             stock_symbols = [symbol for symbol in a_symbols if symbol not in etf_symbols]
             if self._provider == "tushare":
-                quotes.extend(self._safe_quotes(a_symbols, lambda: self._tushare_a_quotes(a_symbols)))
+                a_quotes.extend(self._safe_quotes(a_symbols, lambda: self._tushare_a_quotes(a_symbols)))
             elif self._provider == "auto":
                 for group, market in ((stock_symbols, "a"), (etf_symbols, "etf")):
                     if group:
-                        quotes.extend(self._auto_a_quotes(group, market, force_refresh))
+                        a_quotes.extend(self._auto_a_quotes(group, market, force_refresh))
             else:
                 if stock_symbols:
-                    quotes.extend(self._safe_quotes(
+                    a_quotes.extend(self._safe_quotes(
                         stock_symbols,
                         lambda: self._public_a_quotes(
                             stock_symbols, [], "公开实时快照，不应用于交易执行。", force_refresh
                         ),
                     ))
                 if etf_symbols:
-                    quotes.extend(self._safe_quotes(
+                    a_quotes.extend(self._safe_quotes(
                         etf_symbols,
                         lambda: self._public_a_quotes(
                             [], etf_symbols, "公开实时快照，不应用于交易执行。", force_refresh
                         ),
                     ))
+            return a_quotes
+
+        quotes: list[dict[str, object]] = []
+        if hk_symbols and a_symbols:
+            logger.info("行情源并发请求 hk_symbols=%s a_symbols=%s", ",".join(hk_symbols), ",".join(a_symbols))
+            with ThreadPoolExecutor(max_workers=2, thread_name_prefix="market-source") as executor:
+                hk_future = executor.submit(fetch_hk_quotes)
+                a_future = executor.submit(fetch_a_quotes)
+                quotes.extend(hk_future.result())
+                quotes.extend(a_future.result())
+        elif hk_symbols:
+            quotes.extend(fetch_hk_quotes())
+        elif a_symbols:
+            quotes.extend(fetch_a_quotes())
         returned = {str(quote["symbol"]) for quote in quotes}
         for symbol in normalized:
             if symbol not in returned:
@@ -139,6 +155,23 @@ class MarketDataService:
             round((time.monotonic() - started_at) * 1000),
         )
         return result
+
+    def latest_market_snapshot(self, markets: set[str]) -> list[dict[str, object]]:
+        """Normalize the already-downloaded market frames into one latest row per symbol.
+
+        This is intentionally a latest-state cache, not an unbounded archive of raw
+        provider responses.  It lets newly-added holdings read immediately after a
+        market refresh without making another full-market request.
+        """
+        records: list[dict[str, object]] = []
+        for market, currency in (("a", "CNY"), ("etf", "CNY"), ("hk", "HKD")):
+            if market not in markets:
+                continue
+            records.extend(self._from_frame(
+                self._frame(market), None, currency,
+                "服务端采集的公开行情快照，仅供参考，不用于交易执行。",
+            ))
+        return records
 
     def _auto_a_quotes(self, symbols: list[str], market: str, force_refresh: bool) -> list[dict[str, object]]:
         try:
@@ -512,7 +545,7 @@ class MarketDataService:
     def _from_frame(
             self,
             frame_and_time,
-            symbols: list[str],
+            symbols: list[str] | None,
             currency: str,
             freshness_note: str,
     ) -> list[dict[str, object]]:
@@ -533,9 +566,10 @@ class MarketDataService:
                 .str.zfill(code_width)
             )
 
-            records = data[
-                data["代码"].isin(symbols)
-            ].to_dict("records")
+            records = (
+                data.to_dict("records") if symbols is None
+                else data[data["代码"].isin(symbols)].to_dict("records")
+            )
 
         except (AttributeError, KeyError) as error:
             raise MarketDataUnavailable(
