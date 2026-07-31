@@ -9,6 +9,7 @@ class DecisionGuard:
         if assessment is None:
             return None
         allowed = {candidate.action for candidate in candidates}
+
         if assessment.preferred_action not in allowed:
             return None
         if candidates and candidates[0].action == "BLOCKED" and assessment.preferred_action != "BLOCKED":

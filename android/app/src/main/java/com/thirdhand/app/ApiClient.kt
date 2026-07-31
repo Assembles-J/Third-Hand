@@ -413,6 +413,8 @@ interface ThirdHandApi {
     suspend fun decisionJob(@Path("jobId") jobId: String): DecisionJobDto
     @GET("v1/decisions/latest")
     suspend fun latestDecision(@Query("symbol") symbol: String): DecisionReportDto
+    @GET("v1/decisions")
+    suspend fun decisionHistory(@Query("symbol") symbol: String, @Query("limit") limit: Int = 20): List<DecisionReportDto>
     @GET("v1/portfolio/impact-graph")
     suspend fun impactGraph(@Query("symbol") symbol: String? = null): ImpactGraphDto
 

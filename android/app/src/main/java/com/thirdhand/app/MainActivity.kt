@@ -569,6 +569,7 @@ private fun TodayScreen() {
     var holdings by remember { mutableStateOf<List<HoldingDto>>(emptyList()) }
     var portfolioAnalysis by remember { mutableStateOf<List<PortfolioAnalysisItemDto>>(emptyList()) }
     var decisionReport by remember { mutableStateOf<DecisionReportDto?>(null) }
+    var showDecisionHistory by remember { mutableStateOf(false) }
     var selectedSymbol by remember { mutableStateOf<String?>(null) }
     var error by remember { mutableStateOf<String?>(null) }
     var statusMessage by remember { mutableStateOf<String?>(null) }
@@ -658,10 +659,11 @@ private fun TodayScreen() {
                 Text("会生成可追溯报告：证据冲突、规则候选、仓位约束及可选 AI 研究结论；不会自动交易。", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
             }
         } }
-        decisionReport?.let { report -> item { DecisionReportRoute(report) } }
+        decisionReport?.let { report -> item { DecisionReportRoute(report, onViewHistory = { showDecisionHistory = true }) } }
         if (decisionReport == null) selectedAnalysis?.let { item { BaselineReviewRoute(it) } }
         if (selectedHolding != null && decisionReport == null) item { StatusCard("尚未生成新版决策报告。点击主动分析后将在这里展示可追溯的证据与仓位结果。") }
     }
+    if (showDecisionHistory && selectedSymbol != null) DecisionHistoryDialog(selectedSymbol!!, onDismiss = { showDecisionHistory = false })
 }
 
 @Composable
@@ -690,7 +692,7 @@ private fun BaselineReviewRoute(item: PortfolioAnalysisItemDto) {
 }
 
 @Composable
-private fun DecisionReportRoute(report: DecisionReportDto) {
+private fun DecisionReportRoute(report: DecisionReportDto, onViewHistory: (() -> Unit)? = null) {
     Card(Modifier.padding(horizontal = 20.dp).fillMaxWidth(), shape = RoundedCornerShape(18.dp)) {
         Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
             Text("本次决策报告", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
@@ -701,18 +703,20 @@ private fun DecisionReportRoute(report: DecisionReportDto) {
             Text(report.summary, style = MaterialTheme.typography.bodyMedium)
             Text("生成于 ${beijingTimestamp(report.generated_at)} · 策略 ${report.policy_version}", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
 
-            report.action_candidates.firstOrNull()?.let { candidate ->
+            report.action_candidates.forEachIndexed { index, candidate ->
                 HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
                 if (candidate.blocked_reasons.isNotEmpty()) {
-                    Text("解除阻断", style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.SemiBold)
+                    Text(if (index == 0) "解除阻断" else "备选动作：${decisionActionLabel(candidate.action)}", style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.SemiBold)
                     Text("本次未生成操作结论。请先完成以下项目，再重新分析。", style = MaterialTheme.typography.bodySmall)
                     candidate.blocked_reasons.map(::blockerGuidance).forEach { guidance ->
                         Text(guidance.title, color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.bodySmall, fontWeight = FontWeight.SemiBold)
                         Text(guidance.nextStep, style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
                     }
                 } else {
-                    Text("规则候选", style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.SemiBold)
+                    Text(if (index == 0) "首选规则候选" else "备选动作", style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.SemiBold)
                     Text("${decisionActionLabel(candidate.action)} · 优先级 ${candidate.priority} · 规则评分 ${(candidate.policy_score * 100).toInt()}%", style = MaterialTheme.typography.bodySmall)
+                    candidate.supporting_evidence_ids.mapNotNull { id -> report.evidence.firstOrNull { it.evidence_id == id }?.title }.takeIf { it.isNotEmpty() }?.let { Text("支持：${it.joinToString("、")}", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant) }
+                    candidate.opposing_evidence_ids.mapNotNull { id -> report.evidence.firstOrNull { it.evidence_id == id }?.title }.takeIf { it.isNotEmpty() }?.let { Text("反对：${it.joinToString("、")}", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant) }
                 }
             }
 
@@ -726,6 +730,11 @@ private fun DecisionReportRoute(report: DecisionReportDto) {
                     style = MaterialTheme.typography.bodySmall,
                 )
                 sizing.current_position_percent?.let { Text("当前仓位 ${formatPositionValue(it)}%${sizing.target_position_percent?.let { targetPercent -> " · 目标 ${formatPositionValue(targetPercent)}%" } ?: ""}", style = MaterialTheme.typography.bodySmall) }
+                listOfNotNull(
+                    sizing.quantity_by_risk?.let { "风险上限 ${formatPositionValue(it)} 股" },
+                    sizing.quantity_by_cash?.let { "资金上限 ${formatPositionValue(it)} 股" },
+                    sizing.quantity_by_position_cap?.let { "仓位上限 ${formatPositionValue(it)} 股" },
+                ).takeIf { it.isNotEmpty() }?.let { Text(it.joinToString(" · "), style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant) }
                 sizing.blocked_reasons.map(::blockerGuidance).forEach { guidance -> Text("需处理：${guidance.title}", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.error) }
             }
 
@@ -734,6 +743,7 @@ private fun DecisionReportRoute(report: DecisionReportDto) {
                 Text("AI 研究解读", style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.SemiBold)
                 Text("交易逻辑：${thesisStatusLabel(ai.thesis_status)} · 不确定性：${uncertaintyLabel(ai.uncertainty)}", style = MaterialTheme.typography.bodySmall, fontWeight = FontWeight.Medium)
                 Text(ai.summary, style = MaterialTheme.typography.bodySmall)
+                ai.reasoning_steps.forEach { step -> Text("${aiReasoningStageLabel(step.stage)}：${step.summary}", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant) }
                 ai.missing_evidence.forEach { missing -> Text("待核验：$missing", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant) }
             }
 
@@ -744,7 +754,45 @@ private fun DecisionReportRoute(report: DecisionReportDto) {
                 Text("${evidenceDirectionLabel(evidence.direction)} ${evidence.title}", color = evidenceDirectionColor(evidence.direction), style = MaterialTheme.typography.bodySmall, fontWeight = FontWeight.SemiBold)
                 Text(evidence.description, style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
             }
+            onViewHistory?.let { TextButton(onClick = it, modifier = Modifier.align(Alignment.End)) { Text("查看历史报告与回放") } }
             Text("报告仅用于研究与复核，不构成交易指令，也不会自动执行。", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+        }
+    }
+}
+
+@Composable
+private fun DecisionHistoryDialog(symbol: String, onDismiss: () -> Unit) {
+    val api = ApiClient.service(LocalContext.current)
+    var reports by remember(symbol) { mutableStateOf<List<DecisionReportDto>>(emptyList()) }
+    var loading by remember(symbol) { mutableStateOf(true) }
+    var error by remember(symbol) { mutableStateOf<String?>(null) }
+    var selectedId by remember(symbol) { mutableStateOf<String?>(null) }
+    LaunchedEffect(symbol) {
+        runCatching { api.decisionHistory(symbol) }
+            .onSuccess { reports = it; selectedId = it.firstOrNull()?.decision_id }
+            .onFailure { error = "无法读取历史报告：${it.message ?: "请稍后重试"}" }
+        loading = false
+    }
+    Dialog(onDismissRequest = onDismiss) {
+        Surface(Modifier.fillMaxWidth().heightIn(max = 760.dp), shape = RoundedCornerShape(18.dp)) {
+            Column(Modifier.padding(18.dp)) {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Column(Modifier.weight(1f)) { Text("决策历史 · $symbol", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold); Text("每次报告保留独立输入快照，不会覆盖旧记录。", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant) }
+                    IconButton(onClick = onDismiss) { Icon(Icons.Filled.Close, "关闭") }
+                }
+                if (loading) Text("正在读取历史报告…", Modifier.padding(vertical = 20.dp))
+                error?.let { Text(it, color = MaterialTheme.colorScheme.error, modifier = Modifier.padding(vertical = 20.dp)) }
+                if (!loading && error == null) LazyColumn(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                    items(reports, key = { it.decision_id }) { report ->
+                        val selected = report.decision_id == selectedId
+                        OutlinedButton(onClick = { selectedId = report.decision_id }, modifier = Modifier.fillMaxWidth(), colors = ButtonDefaults.outlinedButtonColors(containerColor = if (selected) MaterialTheme.colorScheme.primaryContainer else Color.Transparent)) {
+                            Column(Modifier.fillMaxWidth()) { Text("${decisionActionLabel(report.action)} · ${decisionStatusLabel(report.status)}", fontWeight = FontWeight.SemiBold); Text(beijingTimestamp(report.generated_at), style = MaterialTheme.typography.labelSmall) }
+                        }
+                        if (selected) DecisionReportRoute(report)
+                    }
+                    if (reports.isEmpty()) item { Text("尚无历史报告。请先在“今日”发起主动分析。", style = MaterialTheme.typography.bodySmall) }
+                }
+            }
         }
     }
 }
@@ -764,6 +812,7 @@ private fun decisionStatusLabel(status: String): String = when (status) { "READY
 private fun sizingStatusLabel(status: String): String = when (status) { "ready" -> "测算完成"; "blocked" -> "测算受阻"; "not_applicable" -> "当前不适用"; else -> status }
 private fun thesisStatusLabel(status: String): String = when (status) { "strengthened" -> "强化"; "unchanged" -> "维持"; "weakened" -> "削弱"; "invalidated" -> "失效"; else -> "待判断" }
 private fun uncertaintyLabel(level: String): String = when (level) { "low" -> "低"; "medium" -> "中"; "high" -> "高"; else -> level }
+private fun aiReasoningStageLabel(stage: String): String = when (stage) { "evidence" -> "证据权衡"; "conflict" -> "冲突识别"; "uncertainty" -> "不确定性"; else -> stage }
 private fun evidenceDirectionLabel(direction: String): String = when (direction) { "positive" -> "支持"; "negative" -> "反对"; "uncertain" -> "不确定"; else -> "中性" }
 @Composable
 private fun evidenceDirectionColor(direction: String): Color = when (direction) { "negative" -> MaterialTheme.colorScheme.error; "positive" -> MaterialTheme.colorScheme.tertiary; else -> MaterialTheme.colorScheme.onSurfaceVariant }
@@ -1389,6 +1438,7 @@ private fun HoldingDetailScreen(holding: HoldingDto, onBack: () -> Unit) {
     var risk by remember(holding.id) { mutableStateOf<RiskAssessmentDto?>(null) }
     var quote by remember(holding.id) { mutableStateOf<MarketQuoteDto?>(null) }
     var analysis by remember(holding.id) { mutableStateOf<PortfolioAnalysisItemDto?>(null) }
+    var decisionReport by remember(holding.id) { mutableStateOf<DecisionReportDto?>(null) }
     var tradePlan by remember(holding.id) { mutableStateOf<TradePlanDto?>(null) }
     var planEditorOpen by remember(holding.id) { mutableStateOf(false) }
     var recommendation by remember(holding.id) { mutableStateOf<ResearchRecommendationDto?>(null) }
@@ -1403,7 +1453,8 @@ private fun HoldingDetailScreen(holding: HoldingDto, onBack: () -> Unit) {
         quote = runCatching { ApiClient.marketQuotes(api, MarketQuoteBatchRequestDto(listOf(holding.symbol))).firstOrNull() }.getOrNull()
         analysis = runCatching { api.portfolioAnalysis().items.firstOrNull { it.symbol == holding.symbol } }.getOrNull()
         tradePlan = runCatching { api.tradePlans().firstOrNull { it.symbol == holding.symbol } }.getOrNull()
-        recommendation = runCatching { api.generateRecommendations(RecommendationRequestDto(listOf(holding.symbol))).firstOrNull() }.getOrNull()
+        decisionReport = runCatching { api.latestDecision(holding.symbol) }.getOrNull()
+        recommendation = runCatching { api.recommendations(holding.symbol).firstOrNull() }.getOrNull()
         recommendation?.let { item ->
             evaluations = runCatching { api.recommendationEvaluations(item.id) }.getOrDefault(emptyList())
         }
@@ -1426,18 +1477,19 @@ private fun HoldingDetailScreen(holding: HoldingDto, onBack: () -> Unit) {
             Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) { listOf("今日", "日线", "周线", "月线").forEach { label -> TextButton(onClick = { period = label }) { Text(label, color = if (period == label) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant) } } }
             if (chartBars.size >= 2) KLineChart(chartBars, quote.takeIf { period == "日线" || period == "今日" }) else Text(if (period == "今日") "今日分钟线正在后台同步；仅显示已缓存数据。" else "日线正在后台准备。", style = MaterialTheme.typography.bodySmall)
             } }
-            analysis?.let { review -> item { Column(Modifier.padding(horizontal = 20.dp)) {
+            decisionReport?.let { report -> item { DecisionReportRoute(report) } }
+            if (decisionReport == null) analysis?.let { review -> item { Column(Modifier.padding(horizontal = 20.dp)) {
                 Text("持仓分析 · ${analysisActionLabel(review.action)}", fontWeight = FontWeight.SemiBold)
                 Text(review.reason, style = MaterialTheme.typography.bodySmall)
                 review.technical_snapshot?.let { snapshot -> Text(snapshot.summary, style = MaterialTheme.typography.bodySmall) }
             } } }
             recommendation?.let { item -> item { Column(Modifier.padding(horizontal = 20.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
-                Text("研究候选方案", fontWeight = FontWeight.SemiBold)
+                Text("历史模拟记录（兼容）", fontWeight = FontWeight.SemiBold)
                 TextButton(onClick = { planEditorOpen = true }) { Text(if (tradePlan == null) "录入交易计划与条件" else "修改入场、加仓、减仓、退出条件") }
                 if (item.status != "ready") {
                     Text("暂不能生成：${item.blocked_reasons.joinToString("、")}", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
                 } else {
-                    val action = if (item.action == "trim") "建议减仓" else "候选加仓"
+                    val action = if (item.action == "trim") "历史减仓候选" else "历史加仓候选"
                     val zone = item.price_zone
                     Text("$action：候选区间 ${marketNumber(zone?.get("low"))} – ${marketNumber(zone?.get("high"))}；失效价 ${marketNumber(item.invalidation_price)}", style = MaterialTheme.typography.bodySmall)
                     Text(if (item.suggested_quantity != null) "建议数量 ${item.suggested_quantity.toInt()}（${item.quantity_status ?: "规则计算"}）" else "暂不建议计算买入数量：${item.quantity_status ?: "缺少账户可用资金"}", style = MaterialTheme.typography.bodySmall)
@@ -1471,7 +1523,8 @@ private fun HoldingDetailScreen(holding: HoldingDto, onBack: () -> Unit) {
             runCatching { api.saveTradePlan(input) }.onSuccess { saved ->
                 tradePlan = saved
                 planEditorOpen = false
-                recommendation = runCatching { api.generateRecommendations(RecommendationRequestDto(listOf(holding.symbol))).firstOrNull() }.getOrNull()
+                decisionReport = null
+                recommendation = runCatching { api.recommendations(holding.symbol).firstOrNull() }.getOrNull()
             }
         } },
     )
