@@ -39,6 +39,23 @@ enum class UpdateLaunchResult {
     DOWNLOAD_UNAVAILABLE,
 }
 
+enum class UpdateDownloadState(val label: String, val isActive: Boolean) {
+    PENDING("等待下载", true),
+    DOWNLOADING("正在下载", true),
+    PAUSED("下载已暂停，等待网络恢复", true),
+    VERIFYING("下载完成，正在校验安装包", false),
+    FAILED("下载失败，请重新检查更新", false),
+}
+
+data class UpdateDownloadProgress(
+    val state: UpdateDownloadState,
+    val downloadedBytes: Long,
+    val totalBytes: Long,
+) {
+    val fraction: Float? = totalBytes.takeIf { it > 0 }
+        ?.let { (downloadedBytes.toDouble() / it).coerceIn(0.0, 1.0).toFloat() }
+}
+
 private data class CompletedDownload(
     val id: Long,
     val uri: Uri,
@@ -88,6 +105,30 @@ object AppUpdateManager {
     }
 
     fun hasCompletedDownload(context: Context): Boolean = completedDownload(context) != null
+
+    /** Returns the system download's latest byte counts so Compose can show in-app progress. */
+    fun downloadProgress(context: Context): UpdateDownloadProgress? {
+        if (completedDownload(context) != null) return null
+        val id = preferences(context).getLong(DownloadId, -1L)
+        if (id < 0) return null
+        val manager = context.getSystemService(DownloadManager::class.java)
+        val cursor = manager.query(DownloadManager.Query().setFilterById(id)) ?: return null
+        cursor.use {
+            if (!it.moveToFirst()) return null
+            val state = when (it.getInt(it.getColumnIndexOrThrow(DownloadManager.COLUMN_STATUS))) {
+                DownloadManager.STATUS_PENDING -> UpdateDownloadState.PENDING
+                DownloadManager.STATUS_RUNNING -> UpdateDownloadState.DOWNLOADING
+                DownloadManager.STATUS_PAUSED -> UpdateDownloadState.PAUSED
+                DownloadManager.STATUS_SUCCESSFUL -> UpdateDownloadState.VERIFYING
+                else -> UpdateDownloadState.FAILED
+            }
+            return UpdateDownloadProgress(
+                state = state,
+                downloadedBytes = it.getLong(it.getColumnIndexOrThrow(DownloadManager.COLUMN_BYTES_DOWNLOADED_SO_FAR)).coerceAtLeast(0L),
+                totalBytes = it.getLong(it.getColumnIndexOrThrow(DownloadManager.COLUMN_TOTAL_SIZE_BYTES)).coerceAtLeast(0L),
+            )
+        }
+    }
 
     /** Starts a download or reopens a verified download. Android still requires user confirmation. */
     fun downloadAndInstall(context: Context, update: AppUpdate): UpdateLaunchResult {

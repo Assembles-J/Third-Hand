@@ -22,6 +22,8 @@ import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.gestures.detectHorizontalDragGestures
+import androidx.compose.foundation.gestures.detectTapGestures
+import androidx.compose.foundation.gestures.detectDragGestures
 import androidx.compose.foundation.background
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.rememberScrollState
@@ -31,6 +33,7 @@ import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.animation.core.animateDpAsState
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.AccountCircle
+import androidx.compose.material.icons.filled.ArrowBack
 import androidx.compose.material.icons.filled.AdminPanelSettings
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.AutoGraph
@@ -52,6 +55,7 @@ import androidx.compose.material3.FilledTonalButton
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
+import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.NavigationBar
 import androidx.compose.material3.NavigationBarItem
@@ -83,6 +87,8 @@ import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.TextStyle
+import androidx.compose.ui.text.style.TextDecoration
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
@@ -90,6 +96,7 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import java.time.OffsetDateTime
 import java.time.LocalDate
+import java.time.temporal.WeekFields
 import java.time.ZoneOffset
 import java.time.format.DateTimeFormatter
 import kotlinx.coroutines.delay
@@ -114,20 +121,44 @@ private fun ThirdHandApp(resumeSignal: Int) {
     val context = LocalContext.current
     var themeMode by remember { mutableStateOf(ThemeStore.load(context)) }
     var tab by remember { mutableIntStateOf(0) }
+    var detailHolding by remember { mutableStateOf<HoldingDto?>(null) }
     var startupUpdate by remember { mutableStateOf<AppUpdate?>(null) }
     var updateMessage by remember { mutableStateOf<String?>(null) }
+    var startupDownloadProgress by remember { mutableStateOf<UpdateDownloadProgress?>(null) }
+    var monitoringStartupDownload by remember { mutableStateOf(false) }
     LaunchedEffect(resumeSignal) {
         try {
             startupUpdate = AppUpdateManager.check(context)
             updateMessage = AppUpdateManager.completedUpdateMessage(context)
+            startupDownloadProgress = AppUpdateManager.downloadProgress(context)
+            monitoringStartupDownload = startupDownloadProgress?.state?.isActive == true
         } catch (_: Exception) {
             // A failed update check must never block the main application.
+        }
+    }
+    LaunchedEffect(monitoringStartupDownload) {
+        if (!monitoringStartupDownload) return@LaunchedEffect
+        while (true) {
+            val current = AppUpdateManager.downloadProgress(context)
+            startupDownloadProgress = current
+            if (current == null || !current.state.isActive) {
+                monitoringStartupDownload = false
+                updateMessage = if (current?.state == UpdateDownloadState.FAILED) {
+                    current.state.label
+                } else {
+                    AppUpdateManager.completedUpdateMessage(context) ?: current?.state?.label
+                }
+                break
+            }
+            delay(500)
         }
     }
     ThirdHandTheme(themeMode) {
         Scaffold { padding ->
             Surface(modifier = Modifier.fillMaxSize().padding(padding), color = MaterialTheme.colorScheme.background) {
-                Column {
+                if (detailHolding != null) {
+                    HoldingDetailScreen(detailHolding!!, onBack = { detailHolding = null })
+                } else Column {
                     Row(Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 6.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                         TextButton(onClick = { tab = 0 }) { Text("今日", color = if (tab == 0) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant) }
                         TextButton(onClick = { tab = 1 }) { Text("持仓", color = if (tab == 1) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant) }
@@ -135,7 +166,7 @@ private fun ThirdHandApp(resumeSignal: Int) {
                     }
                 when (tab) {
                     0 -> TodayScreen()
-                    1 -> HoldingsScreen()
+                    1 -> HoldingsScreen(onOpenDetail = { detailHolding = it })
                     2 -> UnifiedCenterScreen(ThemeMode.DARK, onThemeModeChange = {themeMode -> })
                     else -> TodayScreen()
                 }
@@ -149,7 +180,10 @@ private fun ThirdHandApp(resumeSignal: Int) {
                 text = {
                     Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                         Text(update.changelog.ifBlank { "已准备好新版本，建议更新后继续使用。" })
-                        updateMessage?.let { Text(it, color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.bodySmall) }
+                        startupDownloadProgress?.let { UpdateDownloadProgressCard(it) }
+                        updateMessage?.let {
+                            Text(it, color = if (isUpdateStatusError(it)) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.onSurfaceVariant, style = MaterialTheme.typography.bodySmall)
+                        }
                     }
                 },
                 dismissButton = { TextButton(onClick = { startupUpdate = null }) { Text("稍后") } },
@@ -157,6 +191,8 @@ private fun ThirdHandApp(resumeSignal: Int) {
                     TextButton(onClick = {
                         when (AppUpdateManager.downloadAndInstall(context, update)) {
                             UpdateLaunchResult.DOWNLOAD_STARTED -> {
+                                startupDownloadProgress = AppUpdateManager.downloadProgress(context)
+                                monitoringStartupDownload = true
                                 updateMessage = "正在下载，完成后会自动打开系统安装器"
                             }
                             UpdateLaunchResult.INSTALLER_OPENED -> {
@@ -175,7 +211,7 @@ private fun ThirdHandApp(resumeSignal: Int) {
                                 updateMessage = "安装包不可用，请重新检查更新"
                             }
                         }
-                    }) {
+                    }, enabled = startupDownloadProgress?.state?.isActive != true) {
                         Text(if (AppUpdateManager.hasCompletedDownload(context)) "继续安装" else "下载并安装")
                     }
                 },
@@ -670,15 +706,16 @@ private fun PortfolioAnalysisCard(item: PortfolioAnalysisItemDto) = Card(Modifie
     Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
         Text("${item.name} · ${analysisActionLabel(item.action)}", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
         Text("证据置信度 ${item.confidence_percent}%", color = MaterialTheme.colorScheme.primary, style = MaterialTheme.typography.bodySmall)
-        Text(item.reason)
+        ExplainableText(item.reason)
         item.technical_snapshot?.let { TechnicalSnapshotSummary(it) }
-        item.evidence.forEach { Text("• $it", style = MaterialTheme.typography.bodySmall) }
+        item.evidence.forEach { ExplainableText("• $it", style = MaterialTheme.typography.bodySmall) }
         Text(item.disclaimer, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
     }
 }
 
 @Composable
 private fun TechnicalSnapshotSummary(snapshot: TechnicalSnapshotDto, detailed: Boolean = false) {
+    var lookupTerm by remember { mutableStateOf<String?>(null) }
     Column(
         Modifier
             .fillMaxWidth()
@@ -691,17 +728,17 @@ private fun TechnicalSnapshotSummary(snapshot: TechnicalSnapshotDto, detailed: B
             Text("技术指标", modifier = Modifier.weight(1f), style = MaterialTheme.typography.labelLarge, fontWeight = FontWeight.Bold)
             Text("${snapshot.trend_label} · ${snapshot.as_of}", color = technicalTrendColor(snapshot.trend), style = MaterialTheme.typography.labelSmall, fontWeight = FontWeight.Bold)
         }
-        Text(snapshot.summary, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+        ExplainableText(snapshot.summary, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
         Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            TechnicalMetric("MA20", "${marketNumber(snapshot.sma20)}\n${signedPercent(snapshot.sma20_distance_percent)}", Modifier.weight(1f))
-            TechnicalMetric("MA60", "${marketNumber(snapshot.sma60)}\n${signedPercent(snapshot.sma60_distance_percent)}", Modifier.weight(1f))
-            TechnicalMetric("RSI(14)", "${snapshot.rsi14}\n${snapshot.rsi_state}", Modifier.weight(1f))
+            TechnicalMetric("MA20", "${marketNumber(snapshot.sma20)}\n${signedPercent(snapshot.sma20_distance_percent)}", Modifier.weight(1f)) { lookupTerm = "MA20" }
+            TechnicalMetric("MA60", "${marketNumber(snapshot.sma60)}\n${signedPercent(snapshot.sma60_distance_percent)}", Modifier.weight(1f)) { lookupTerm = "MA60" }
+            TechnicalMetric("RSI(14)", "${snapshot.rsi14}\n${snapshot.rsi_state}", Modifier.weight(1f)) { lookupTerm = "RSI" }
         }
         if (detailed) {
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                TechnicalMetric("MACD 柱", "${snapshot.macd_histogram}\n${snapshot.macd_state}", Modifier.weight(1f))
-                TechnicalMetric("ATR(14)", "${snapshot.atr14}\n占收盘 ${snapshot.atr_percent}%", Modifier.weight(1f))
-                TechnicalMetric("60日回撤", "${snapshot.drawdown_60d_percent}%\n${snapshot.sample_count} 日样本", Modifier.weight(1f))
+                TechnicalMetric("MACD 柱", "${snapshot.macd_histogram}\n${snapshot.macd_state}", Modifier.weight(1f)) { lookupTerm = "MACD" }
+                TechnicalMetric("ATR(14)", "${snapshot.atr14}\n占收盘 ${snapshot.atr_percent}%", Modifier.weight(1f)) { lookupTerm = "ATR" }
+                TechnicalMetric("60日回撤", "${snapshot.drawdown_60d_percent}%\n${snapshot.sample_count} 日样本", Modifier.weight(1f)) { lookupTerm = "回撤" }
             }
         }
         Text(
@@ -710,17 +747,101 @@ private fun TechnicalSnapshotSummary(snapshot: TechnicalSnapshotDto, detailed: B
             color = MaterialTheme.colorScheme.onSurfaceVariant,
         )
     }
+    lookupTerm?.let { term -> GlossaryLookupDialog(term = term, onDismiss = { lookupTerm = null }) }
 }
 
 @Composable
-private fun TechnicalMetric(label: String, value: String, modifier: Modifier = Modifier) {
+private fun UpdateDownloadProgressCard(progress: UpdateDownloadProgress, modifier: Modifier = Modifier) {
+    val progressText = progress.fraction?.let { " ${(it * 100).toInt()}%" }.orEmpty()
+    val sizeText = if (progress.totalBytes > 0) {
+        " · ${formatDownloadSize(progress.downloadedBytes)} / ${formatDownloadSize(progress.totalBytes)}"
+    } else if (progress.downloadedBytes > 0) {
+        " · 已下载 ${formatDownloadSize(progress.downloadedBytes)}"
+    } else {
+        ""
+    }
+    Card(modifier.fillMaxWidth(), colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.secondaryContainer)) {
+        Column(Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+            Text("${progress.state.label}$progressText$sizeText", style = MaterialTheme.typography.bodySmall, fontWeight = FontWeight.Medium)
+            if (progress.fraction != null) {
+                LinearProgressIndicator(progress = { progress.fraction }, modifier = Modifier.fillMaxWidth())
+            } else if (progress.state.isActive) {
+                LinearProgressIndicator(modifier = Modifier.fillMaxWidth())
+            }
+        }
+    }
+}
+
+private fun formatDownloadSize(bytes: Long): String = when {
+    bytes >= 1024 * 1024 -> "%.1f MB".format(bytes / 1024.0 / 1024.0)
+    bytes >= 1024 -> "%.0f KB".format(bytes / 1024.0)
+    else -> "$bytes B"
+}
+
+private fun isUpdateStatusError(status: String): Boolean =
+    status.contains("失败") || status.contains("不可用") || status.contains("无法")
+
+@Composable
+private fun TechnicalMetric(label: String, value: String, modifier: Modifier = Modifier, onLookup: (() -> Unit)? = null) {
     Column(modifier, verticalArrangement = Arrangement.spacedBy(2.dp)) {
-        Text(label, style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+        Text(
+            label,
+            modifier = if (onLookup != null) Modifier.clickable(onClick = onLookup) else Modifier,
+            style = MaterialTheme.typography.labelSmall,
+            color = if (onLookup != null) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant,
+            textDecoration = if (onLookup != null) TextDecoration.Underline else TextDecoration.None,
+        )
         Text(value, style = MaterialTheme.typography.bodySmall, fontWeight = FontWeight.SemiBold)
     }
 }
 
 private fun signedPercent(value: Double): String = "${if (value >= 0) "+" else ""}${"%.1f".format(value)}%"
+
+private val explainableTerms = listOf(
+    "空头排列", "多头排列", "量价背离", "市盈率", "波动率",
+    "MA20", "MA60", "RSI", "MACD", "ATR", "回撤", "减持", "回购", "PE",
+).sortedByDescending { it.length }
+
+private fun glossaryTermAt(text: String, offset: Int): String? = explainableTerms.firstOrNull { term ->
+    var start = text.indexOf(term, ignoreCase = true)
+    while (start >= 0) {
+        if (offset in start until (start + term.length)) return@firstOrNull true
+        start = text.indexOf(term, start + term.length, ignoreCase = true)
+    }
+    false
+}
+
+/** Long-press an indexed financial term to open its explanation without leaving the current page. */
+@Composable
+private fun ExplainableText(
+    text: String,
+    modifier: Modifier = Modifier,
+    style: TextStyle = MaterialTheme.typography.bodyMedium,
+    color: Color = MaterialTheme.colorScheme.onSurface,
+    fontWeight: FontWeight? = null,
+    maxLines: Int = Int.MAX_VALUE,
+    overflow: TextOverflow = TextOverflow.Clip,
+) {
+    var layoutResult by remember(text) { mutableStateOf<androidx.compose.ui.text.TextLayoutResult?>(null) }
+    var lookupTerm by remember { mutableStateOf<String?>(null) }
+    Text(
+        text = text,
+        modifier = modifier.pointerInput(text) {
+            detectTapGestures(onLongPress = { position ->
+                layoutResult?.getOffsetForPosition(position)?.let { offset ->
+                    glossaryTermAt(text, offset)?.let { lookupTerm = it }
+                }
+            })
+        },
+        style = style,
+        color = color,
+        fontWeight = fontWeight,
+        maxLines = maxLines,
+        overflow = overflow,
+        onTextLayout = { layoutResult = it },
+    )
+    lookupTerm?.let { term -> GlossaryLookupDialog(term = term, onDismiss = { lookupTerm = null }) }
+}
 
 @Composable
 private fun technicalTrendColor(trend: String): Color =
@@ -805,7 +926,7 @@ private fun DraftHoldingCard(draft: HoldingDraftDto, onComplete: () -> Unit, onD
 }
 
 @Composable
-private fun HoldingsScreen() {
+private fun HoldingsScreen(onOpenDetail: (HoldingDto) -> Unit) {
     val context = LocalContext.current
     val api = ApiClient.service(context)
     var holdings by remember { mutableStateOf<List<HoldingDto>>(emptyList()) }
@@ -819,7 +940,6 @@ private fun HoldingsScreen() {
     var showAdd by remember { mutableStateOf(false) }
     var editingDraft by remember { mutableStateOf<HoldingDraftDto?>(null) }
     var editingHolding by remember { mutableStateOf<HoldingDto?>(null) }
-    var selectedHolding by remember { mutableStateOf<HoldingDto?>(null) }
     var sellingHolding by remember { mutableStateOf<HoldingDto?>(null) }
     var revealedHoldingId by remember { mutableStateOf<String?>(null) }
     var deleteCandidate by remember { mutableStateOf<HoldingDto?>(null) }
@@ -936,7 +1056,7 @@ private fun HoldingsScreen() {
             HoldingTableRow(
                 holding = holding,
                 quote = quotesBySymbol[holding.symbol],
-                onEdit = { selectedHolding = holding },
+                onEdit = { onOpenDetail(holding) },
                 onSell = { sellingHolding = holding },
                 isDeleteRevealed = revealedHoldingId == holding.id,
                 onRevealDelete = { revealedHoldingId = holding.id },
@@ -966,14 +1086,6 @@ private fun HoldingsScreen() {
         initial = HoldingInputDto(holding.symbol, holding.name, holding.quantity, holding.average_cost),
         onDismiss = { editingHolding = null },
         onSave = { input -> scope.launch { try { api.updateHolding(holding.id, input); editingHolding = null; refresh() } catch (_: Exception) { error = "更新持仓失败，请稍后重试。" } } },
-    ) }
-    selectedHolding?.let { holding -> HoldingDetailDialog(
-        holding = holding,
-        quote = quotesBySymbol[holding.symbol],
-        analysis = analysisBySymbol[holding.symbol],
-        onDismiss = { selectedHolding = null },
-        onSell = { selectedHolding = null; sellingHolding = holding },
-        onEdit = { selectedHolding = null; editingHolding = holding },
     ) }
     sellingHolding?.let { holding -> SellHoldingDialog(
         holding = holding,
@@ -1027,62 +1139,110 @@ private fun formatPositionValue(value: Double): String = "%.2f".format(value)
 private fun signedPositionValue(value: Double): String = if (value >= 0) "+${formatPositionValue(value)}" else formatPositionValue(value)
 
 @Composable
-private fun HoldingDetailDialog(
-    holding: HoldingDto, quote: MarketQuoteDto?, analysis: PortfolioAnalysisItemDto?,
-    onDismiss: () -> Unit, onSell: () -> Unit, onEdit: () -> Unit,
-) {
+private fun HoldingDetailScreen(holding: HoldingDto, onBack: () -> Unit) {
     val api = ApiClient.service(LocalContext.current)
+    val scope = rememberCoroutineScope()
     var bars by remember(holding.id) { mutableStateOf<List<DailyPriceDto>>(emptyList()) }
     var sales by remember(holding.id) { mutableStateOf<List<SaleRecordDto>>(emptyList()) }
     var risk by remember(holding.id) { mutableStateOf<RiskAssessmentDto?>(null) }
+    var quote by remember(holding.id) { mutableStateOf<MarketQuoteDto?>(null) }
+    var analysis by remember(holding.id) { mutableStateOf<PortfolioAnalysisItemDto?>(null) }
+    var period by remember { mutableStateOf("日线") }
+    var sellOpen by remember { mutableStateOf(false) }
     LaunchedEffect(holding.id) {
         bars = runCatching { api.marketHistory(holding.symbol) }.getOrDefault(emptyList())
         sales = runCatching { api.sales(holding.symbol) }.getOrDefault(emptyList())
         risk = runCatching { api.riskAssessments().firstOrNull { it.symbol == holding.symbol } }.getOrNull()
+        quote = runCatching { ApiClient.marketQuotes(api, MarketQuoteBatchRequestDto(listOf(holding.symbol))).firstOrNull() }.getOrNull()
+        analysis = runCatching { api.portfolioAnalysis().items.firstOrNull { it.symbol == holding.symbol } }.getOrNull()
     }
-    AlertDialog(
-        onDismissRequest = onDismiss,
-        title = { Text("${holding.name} · ${holding.symbol}") },
-        text = { Column(Modifier.verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+    val chartBars = aggregateBars(bars, period)
+    Column(Modifier.fillMaxSize()) {
+        Row(Modifier.fillMaxWidth().padding(horizontal = 10.dp, vertical = 8.dp), verticalAlignment = Alignment.CenterVertically) {
+            IconButton(onClick = onBack) { Icon(Icons.Filled.ArrowBack, "返回持仓") }
+            Column(Modifier.weight(1f)) { Text(holding.name, fontWeight = FontWeight.Bold); Text(holding.symbol, style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant) }
+            TextButton(onClick = { sellOpen = true }) { Text("出售", color = MaterialTheme.colorScheme.error) }
+        }
+        LazyColumn(contentPadding = androidx.compose.foundation.layout.PaddingValues(bottom = 24.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+            item { Column(Modifier.padding(horizontal = 20.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
             Text("持有 ${holding.quantity} · 成本 ${holding.average_cost} · 现价 ${quote?.price ?: "--"}", style = MaterialTheme.typography.bodySmall)
-            Text("行情 K 线（最近 ${bars.size} 日）", fontWeight = FontWeight.SemiBold)
-            if (bars.size >= 2) KLineChart(bars) else Text("日线正在后台准备。", style = MaterialTheme.typography.bodySmall)
-            analysis?.let { Column {
-                Text("持仓分析 · ${analysisActionLabel(it.action)}", fontWeight = FontWeight.SemiBold)
-                Text(it.reason, style = MaterialTheme.typography.bodySmall)
-                it.technical_snapshot?.let { snapshot -> Text(snapshot.summary, style = MaterialTheme.typography.bodySmall) }
+            Text("行情 K 线", fontWeight = FontWeight.SemiBold)
+            Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) { listOf("日线", "周线", "月线").forEach { label -> TextButton(onClick = { period = label }) { Text(label, color = if (period == label) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant) } } }
+            if (chartBars.size >= 2) KLineChart(chartBars) else Text("日线正在后台准备。", style = MaterialTheme.typography.bodySmall)
             } }
-            risk?.let { assessment ->
+            analysis?.let { review -> item { Column(Modifier.padding(horizontal = 20.dp)) {
+                Text("持仓分析 · ${analysisActionLabel(review.action)}", fontWeight = FontWeight.SemiBold)
+                Text(review.reason, style = MaterialTheme.typography.bodySmall)
+                review.technical_snapshot?.let { snapshot -> Text(snapshot.summary, style = MaterialTheme.typography.bodySmall) }
+            } } }
+            risk?.let { assessment -> item { Column(Modifier.padding(horizontal = 20.dp)) {
                 Text("风险分析", fontWeight = FontWeight.SemiBold)
                 Text(if (assessment.status == "data_insufficient") assessment.message else "下行概率 ${assessment.historical_downside_probability}% · 年化波动 ${assessment.annualized_volatility_percent}% · ${assessment.risk_level}", style = MaterialTheme.typography.bodySmall)
-            }
-            Text("卖出记录", fontWeight = FontWeight.SemiBold)
-            if (sales.isEmpty()) Text("暂无出售记录。", style = MaterialTheme.typography.bodySmall)
-            sales.take(8).forEach { sale ->
-                Text("${sale.sold_at.take(10)} · ${sale.quantity} 股 @ ${sale.sale_price} · 已实现 ${signedPositionValue(sale.realized_pnl)}${if (sale.reason.isBlank()) "" else " · ${sale.reason}"}", style = MaterialTheme.typography.bodySmall)
-            }
-        } },
-        confirmButton = { Row { TextButton(onClick = onEdit) { Text("编辑") }; Button(onClick = onSell) { Text("出售") } } },
-        dismissButton = { TextButton(onClick = onDismiss) { Text("关闭") } },
-    )
+            } } }
+            item { Column(Modifier.padding(horizontal = 20.dp)) {
+                Text("卖出记录", fontWeight = FontWeight.SemiBold)
+                if (sales.isEmpty()) Text("暂无出售记录。", style = MaterialTheme.typography.bodySmall)
+                sales.take(20).forEach { sale -> Text("${sale.sold_at.take(10)} · ${sale.quantity} 股 @ ${sale.sale_price} · 已实现 ${signedPositionValue(sale.realized_pnl)}${if (sale.reason.isBlank()) "" else " · ${sale.reason}"}", style = MaterialTheme.typography.bodySmall) }
+            } }
+        }
+    }
+    if (sellOpen) SellHoldingDialog(holding, quote?.price, onDismiss = { sellOpen = false }, onConfirm = { sale ->
+        // The record is persisted first; returning to holdings reveals the updated remainder.
+        scope.launch { runCatching { api.sellHolding(holding.id, sale) }; sellOpen = false; onBack() }
+    })
+}
+
+private fun aggregateBars(bars: List<DailyPriceDto>, period: String): List<DailyPriceDto> {
+    if (period == "日线") return bars.takeLast(120)
+    return bars.groupBy { bar ->
+        val date = LocalDate.parse(bar.trading_date)
+        if (period == "周线") "${date.year}-${date.get(WeekFields.ISO.weekOfWeekBasedYear())}" else bar.trading_date.take(7)
+    }.values.map { group -> DailyPriceDto(trading_date = group.last().trading_date, open = group.first().open, close = group.last().close, high = group.maxOfOrNull { it.high ?: it.close }, low = group.minOfOrNull { it.low ?: it.close }, volume = group.sumOf { it.volume ?: 0.0 }, amount = group.sumOf { it.amount ?: 0.0 }, adjustment = group.last().adjustment) }.takeLast(120)
 }
 
 @Composable
-private fun KLineChart(bars: List<DailyPriceDto>) = Canvas(Modifier.fillMaxWidth().height(150.dp)) {
+private fun KLineChart(bars: List<DailyPriceDto>) = Column {
     val visible = bars.takeLast(60)
-    val values = visible.flatMap { listOfNotNull(it.high, it.low, it.close) }
-    val minimum = values.minOrNull() ?: return@Canvas
-    val maximum = values.maxOrNull() ?: return@Canvas
-    val span = (maximum - minimum).takeIf { it > 0 } ?: 1.0
-    val step = size.width / visible.size
-    visible.forEachIndexed { index, bar ->
-        val x = step * index + step / 2
-        fun y(value: Double) = size.height - ((value - minimum) / span * size.height).toFloat()
-        val high = y(bar.high ?: bar.close); val low = y(bar.low ?: bar.close); val close = y(bar.close)
-        drawLine(Color(0xFF5B7C99), Offset(x, high), Offset(x, low), strokeWidth = 1.5f)
-        drawCircle(if (index > 0 && bar.close >= visible[index - 1].close) Color(0xFFD32F2F) else Color(0xFF178A4B), radius = 3.5f, center = Offset(x, close))
+    var selectedIndex by remember(visible.lastOrNull()?.trading_date) { mutableIntStateOf(visible.lastIndex) }
+    val selected = visible[selectedIndex.coerceIn(0, visible.lastIndex)]
+    val values = visible.flatMap { listOfNotNull(it.high, it.low, it.close, it.open) }
+    val minimum = values.minOrNull() ?: return@Column
+    val maximum = values.maxOrNull() ?: return@Column
+    val crosshairColor = MaterialTheme.colorScheme.primary
+    val previousClose = visible.getOrNull((selectedIndex - 1).coerceAtLeast(0))?.close ?: selected.close
+    val change = if (previousClose == 0.0) 0.0 else (selected.close / previousClose - 1) * 100
+    Column(Modifier.fillMaxWidth().padding(top = 6.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+        Text(if (selectedIndex == visible.lastIndex) "最新交易日 K 线 · ${selected.trading_date}" else "十字线定位 · ${selected.trading_date}", style = MaterialTheme.typography.labelMedium, fontWeight = FontWeight.Bold)
+        Text("开 ${marketNumber(selected.open)}  高 ${marketNumber(selected.high)}  低 ${marketNumber(selected.low)}  收 ${marketNumber(selected.close)}  涨跌 ${"%.2f".format(change)}%  量 ${marketNumber(selected.volume)}", style = MaterialTheme.typography.labelSmall, color = if (change >= 0) Color(0xFFD32F2F) else Color(0xFF178A4B))
     }
-    drawLine(Color.LightGray, Offset(0f, size.height), Offset(size.width, size.height), strokeWidth = 1f)
+    Row(Modifier.fillMaxWidth().padding(top = 6.dp)) {
+        Column(Modifier.width(48.dp).height(230.dp), verticalArrangement = Arrangement.SpaceBetween) {
+            Text("%.2f".format(maximum), style = MaterialTheme.typography.labelSmall); Text("%.2f".format((maximum + minimum) / 2), style = MaterialTheme.typography.labelSmall); Text("%.2f".format(minimum), style = MaterialTheme.typography.labelSmall); Text("量", style = MaterialTheme.typography.labelSmall)
+        }
+        Canvas(Modifier.weight(1f).height(230.dp).pointerInput(visible) {
+            fun selectAt(x: Float) { selectedIndex = (x / size.width * visible.size).toInt().coerceIn(0, visible.lastIndex) }
+            detectDragGestures(onDragStart = { selectAt(it.x) }, onDrag = { changeEvent, _ -> selectAt(changeEvent.position.x) })
+        }) {
+            val priceHeight = size.height * .74f
+            val volumeTop = priceHeight + 8f
+            val span = (maximum - minimum).takeIf { it > 0 } ?: 1.0
+            val step = size.width / visible.size
+            val maxVolume = visible.maxOfOrNull { it.volume ?: 0.0 }?.takeIf { it > 0 } ?: 1.0
+            fun y(value: Double) = priceHeight - ((value - minimum) / span * priceHeight).toFloat()
+            visible.forEachIndexed { index, bar ->
+                val x = step * index + step / 2; val open = bar.open ?: bar.close
+                val color = if (bar.close >= open) Color(0xFFD32F2F) else Color(0xFF178A4B)
+                drawLine(color, Offset(x, y(bar.high ?: bar.close)), Offset(x, y(bar.low ?: bar.close)), strokeWidth = 1.4f)
+                drawLine(color, Offset(x, y(open)), Offset(x, y(bar.close)), strokeWidth = (step * .55f).coerceAtLeast(2f))
+                val volumeHeight = ((bar.volume ?: 0.0) / maxVolume * (size.height - volumeTop)).toFloat()
+                drawLine(color.copy(alpha = .7f), Offset(x, size.height), Offset(x, size.height - volumeHeight), strokeWidth = (step * .55f).coerceAtLeast(2f))
+            }
+            val crossX = step * selectedIndex + step / 2
+            drawLine(crosshairColor.copy(alpha = .75f), Offset(crossX, 0f), Offset(crossX, size.height), strokeWidth = 1.5f)
+            drawLine(crosshairColor.copy(alpha = .45f), Offset(0f, y(selected.close)), Offset(size.width, y(selected.close)), strokeWidth = 1f)
+        }
+    }
+    Row(Modifier.fillMaxWidth().padding(start = 48.dp), horizontalArrangement = Arrangement.SpaceBetween) { Text(visible.first().trading_date, style = MaterialTheme.typography.labelSmall); Text(visible[visible.size / 2].trading_date, style = MaterialTheme.typography.labelSmall); Text(visible.last().trading_date, style = MaterialTheme.typography.labelSmall) }
 }
 
 @Composable
@@ -1321,7 +1481,7 @@ private fun AnalysisDetailItem(item: PortfolioAnalysisItemDto, expanded: Boolean
             Text("证据 ${item.confidence_percent}%", color = MaterialTheme.colorScheme.onSurfaceVariant, style = MaterialTheme.typography.labelSmall)
             Icon(if (expanded) Icons.Filled.Close else Icons.Filled.ChevronRight, if (expanded) "收起详情" else "展开详情", tint = MaterialTheme.colorScheme.onSurfaceVariant)
         }
-        Text(item.reason, modifier = Modifier.padding(top = 4.dp), style = MaterialTheme.typography.bodySmall, maxLines = if (expanded) Int.MAX_VALUE else 2, overflow = TextOverflow.Ellipsis)
+        ExplainableText(item.reason, modifier = Modifier.padding(top = 4.dp), style = MaterialTheme.typography.bodySmall, maxLines = if (expanded) Int.MAX_VALUE else 2, overflow = TextOverflow.Ellipsis)
         if (expanded) {
             item.decision_snapshot?.let { snapshot ->
                 Text("决策快照", modifier = Modifier.padding(top = 10.dp), color = MaterialTheme.colorScheme.primary, style = MaterialTheme.typography.labelSmall, fontWeight = FontWeight.Bold)
@@ -1363,7 +1523,7 @@ private fun AnalysisDetailItem(item: PortfolioAnalysisItemDto, expanded: Boolean
             }
             Text("触发证据", modifier = Modifier.padding(top = 10.dp), color = MaterialTheme.colorScheme.primary, style = MaterialTheme.typography.labelSmall, fontWeight = FontWeight.Bold)
             if (item.evidence.isEmpty()) Text("本次没有可用的量化证据。", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
-            item.evidence.forEach { Text("• $it", style = MaterialTheme.typography.bodySmall) }
+            item.evidence.forEach { ExplainableText("• $it", style = MaterialTheme.typography.bodySmall) }
             item.rule_snapshot?.let { rule ->
                 Text("命中规则", modifier = Modifier.padding(top = 10.dp), color = MaterialTheme.colorScheme.primary, style = MaterialTheme.typography.labelSmall, fontWeight = FontWeight.Bold)
                 Text(
@@ -1503,6 +1663,75 @@ private fun AddHoldingDialog(
 }
 
 @Composable
+private fun GlossaryLookupDialog(term: String, onDismiss: () -> Unit) {
+    val context = LocalContext.current
+    val api = remember { ApiClient.service(context) }
+    val scope = rememberCoroutineScope()
+    var card by remember(term) { mutableStateOf<GlossaryCardDto?>(null) }
+    var explanation by remember(term) { mutableStateOf("") }
+    var watchFor by remember(term) { mutableStateOf("") }
+    var loading by remember(term) { mutableStateOf(true) }
+    var saving by remember { mutableStateOf(false) }
+    var error by remember(term) { mutableStateOf<String?>(null) }
+
+    LaunchedEffect(term) {
+        loading = true
+        error = null
+        try {
+            card = api.lookupGlossary(GlossaryLookupInputDto(term))
+        } catch (_: Exception) {
+            error = "词条查询暂时不可用，请检查网络后重试。"
+        } finally {
+            loading = false
+        }
+    }
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text("术语解释") },
+        text = {
+            Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                Text(term, style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
+                when {
+                    loading -> Text("正在查询词条…", style = MaterialTheme.typography.bodySmall)
+                    card != null && card!!.found -> {
+                        Text(card!!.plain_explanation)
+                        Text("需要留意：${card!!.watch_for}", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                        Text(if (card!!.source == "user") "来自你的词库" else "内置基础词库", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.primary)
+                    }
+                    else -> {
+                        Text(card?.plain_explanation ?: "暂未收录这个词。")
+                        OutlinedTextField(explanation, { explanation = it }, label = { Text("用自己的话解释") }, minLines = 2, modifier = Modifier.fillMaxWidth())
+                        OutlinedTextField(watchFor, { watchFor = it }, label = { Text("需要留意（可选）") }, minLines = 2, modifier = Modifier.fillMaxWidth())
+                        Text("保存后会写入个人词库，下次检索直接复用。", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    }
+                }
+                error?.let { Text(it, color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.bodySmall) }
+            }
+        },
+        confirmButton = {
+            if (card?.found == false) {
+                Button(
+                    onClick = {
+                        saving = true
+                        scope.launch {
+                            try {
+                                card = api.saveGlossary(GlossaryEntryInputDto(term, explanation.trim(), watchFor.trim()))
+                            } catch (_: Exception) {
+                                error = "保存失败，请稍后重试。"
+                            } finally {
+                                saving = false
+                            }
+                        }
+                    },
+                    enabled = explanation.trim().length >= 2 && !saving,
+                ) { Text(if (saving) "保存中…" else "保存到词库") }
+            } else TextButton(onClick = onDismiss) { Text("知道了") }
+        },
+        dismissButton = { TextButton(onClick = onDismiss) { Text("关闭") } },
+    )
+}
+
+@Composable
 private fun FeedScreen() {
     val context = LocalContext.current
     val uriHandler = LocalUriHandler.current
@@ -1511,6 +1740,8 @@ private fun FeedScreen() {
     var announcements by remember { mutableStateOf<List<NewsItemDto>>(emptyList()) }
     var researchRules by remember { mutableStateOf<List<ResearchRuleDto>>(emptyList()) }
     var glossaryCards by remember { mutableStateOf<List<GlossaryCardDto>>(emptyList()) }
+    var glossarySearch by remember { mutableStateOf("") }
+    var glossaryTerm by remember { mutableStateOf<String?>(null) }
     var error by remember { mutableStateOf<String?>(null) }
     var refreshing by remember { mutableStateOf(false) }
     val scope = rememberCoroutineScope()
@@ -1538,6 +1769,20 @@ private fun FeedScreen() {
     LazyColumn(contentPadding = androidx.compose.foundation.layout.PaddingValues(bottom = 24.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
         item { AppHero("关联消息", "消息枝叶 · 捕捉与你有关的变化", action = { HeroRefreshAction(onClick = { refresh() }, enabled = !refreshing) }) }
         item { Text("正式公告优先展示；新闻用于补充背景，均请以原文为准。", modifier = Modifier.padding(horizontal = 20.dp), color = MaterialTheme.colorScheme.onSurfaceVariant) }
+        item {
+            Card(Modifier.padding(horizontal = 20.dp).fillMaxWidth(), colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.secondaryContainer)) {
+                Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Text("查术语", style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.Bold)
+                    Text("看到不理解的技术词，输入或从页面中复制后查询；查询记录和你补充的解释会保存。", style = MaterialTheme.typography.bodySmall)
+                    Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        OutlinedTextField(glossarySearch, { glossarySearch = it }, label = { Text("例如：量价背离") }, singleLine = true, modifier = Modifier.weight(1f))
+                        IconButton(onClick = { glossaryTerm = glossarySearch.trim() }, enabled = glossarySearch.isNotBlank()) {
+                            Icon(Icons.Filled.Search, contentDescription = "查询术语")
+                        }
+                    }
+                }
+            }
+        }
         error?.let { item { StatusCard(it ?: "消息暂时不可用", error = true) } }
         if (researchRules.isNotEmpty()) item { Text("研究核验框架", modifier = Modifier.padding(horizontal = 20.dp), style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold) }
         items(researchRules, key = { it.id }) { rule -> ResearchRuleCard(rule, uriHandler) }
@@ -1548,14 +1793,15 @@ private fun FeedScreen() {
         if (feed.isNotEmpty()) item { Text("相关新闻", modifier = Modifier.padding(horizontal = 20.dp), style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold) }
         items(feed) { item -> FeedCard(item, uriHandler, "新闻") }
     }
+    glossaryTerm?.let { term -> GlossaryLookupDialog(term = term, onDismiss = { glossaryTerm = null }) }
 }
 
 @Composable
 private fun FeedCard(item: NewsItemDto, uriHandler: androidx.compose.ui.platform.UriHandler, label: String) = Card(Modifier.padding(horizontal = 20.dp).fillMaxWidth()) {
     Column(Modifier.padding(18.dp), verticalArrangement = Arrangement.spacedBy(5.dp)) {
         Text(label, color = MaterialTheme.colorScheme.primary, style = MaterialTheme.typography.labelMedium)
-        Text(item.title, style = MaterialTheme.typography.titleMedium)
-        Text(item.explanation)
+        ExplainableText(item.title, style = MaterialTheme.typography.titleMedium)
+        ExplainableText(item.explanation)
         item.ai_analysis?.let { analysis ->
             Text("AI 解读：${analysis["summary"] ?: "已生成，建议结合原文核验。"}", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.primary)
             Text("影响：${analysis["impact"] ?: "uncertain"}｜置信度：${analysis["confidence"] ?: "low"}", style = MaterialTheme.typography.bodySmall)
@@ -1607,6 +1853,8 @@ fun ProfileScreen(themeMode: ThemeMode, onThemeModeChange: (ThemeMode) -> Unit) 
     var availableUpdate by remember { mutableStateOf<AppUpdate?>(null) }
     var updateStatus by remember { mutableStateOf<String?>(null) }
     var checkingUpdate by remember { mutableStateOf(false) }
+    var downloadProgress by remember { mutableStateOf<UpdateDownloadProgress?>(null) }
+    var monitoringDownload by remember { mutableStateOf(false) }
     var personalRules by remember { mutableStateOf<List<PersonalRuleDto>>(emptyList()) }
     var learningCases by remember { mutableStateOf<List<LearningCaseDto>>(emptyList()) }
     var learningAnalysis by remember { mutableStateOf<LearningCaseAnalysisDto?>(null) }
@@ -1629,6 +1877,8 @@ fun ProfileScreen(themeMode: ThemeMode, onThemeModeChange: (ThemeMode) -> Unit) 
         scope.launch {
             checkingUpdate = true
             updateStatus = AppUpdateManager.completedUpdateMessage(context)
+            downloadProgress = AppUpdateManager.downloadProgress(context)
+            monitoringDownload = downloadProgress?.state?.isActive == true
             try {
                 availableUpdate = AppUpdateManager.check(context)
                 if (availableUpdate == null && updateStatus == null) updateStatus = "已是最新版本"
@@ -1656,6 +1906,23 @@ fun ProfileScreen(themeMode: ThemeMode, onThemeModeChange: (ThemeMode) -> Unit) 
         checkForUpdate()
         refreshResearchData()
     }
+    LaunchedEffect(monitoringDownload) {
+        if (!monitoringDownload) return@LaunchedEffect
+        while (true) {
+            val current = AppUpdateManager.downloadProgress(context)
+            downloadProgress = current
+            if (current == null || !current.state.isActive) {
+                monitoringDownload = false
+                updateStatus = if (current?.state == UpdateDownloadState.FAILED) {
+                    current.state.label
+                } else {
+                    AppUpdateManager.completedUpdateMessage(context) ?: current?.state?.label
+                }
+                break
+            }
+            delay(500)
+        }
+    }
     availableUpdate?.let { update ->
         AlertDialog(
             onDismissRequest = { availableUpdate = null },
@@ -1663,21 +1930,28 @@ fun ProfileScreen(themeMode: ThemeMode, onThemeModeChange: (ThemeMode) -> Unit) 
             text = {
                 Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                     Text(update.changelog.ifBlank { "已准备好新版本，建议更新后继续使用。" })
-                    updateStatus?.let { Text(it, color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.bodySmall) }
+                    downloadProgress?.let { UpdateDownloadProgressCard(it) }
+                    updateStatus?.let {
+                        Text(it, color = if (isUpdateStatusError(it)) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.onSurfaceVariant, style = MaterialTheme.typography.bodySmall)
+                    }
                 }
             },
             dismissButton = { TextButton(onClick = { availableUpdate = null }) { Text("稍后") } },
             confirmButton = {
                 TextButton(onClick = {
                     updateStatus = when (AppUpdateManager.downloadAndInstall(context, update)) {
-                        UpdateLaunchResult.DOWNLOAD_STARTED -> "正在下载，完成后会自动打开系统安装器"
+                        UpdateLaunchResult.DOWNLOAD_STARTED -> {
+                            downloadProgress = AppUpdateManager.downloadProgress(context)
+                            monitoringDownload = true
+                            "正在下载，完成后会自动打开系统安装器"
+                        }
                         UpdateLaunchResult.INSTALLER_OPENED -> "已重新打开系统安装器"
                         UpdateLaunchResult.NEED_INSTALL_PERMISSION -> "请允许“安装未知应用”后返回，再次点击"
                         UpdateLaunchResult.NEED_STORAGE_PERMISSION -> "请允许保存安装包后返回，再次点击"
                         UpdateLaunchResult.SIGNATURE_MISMATCH -> AppUpdateManager.completedUpdateMessage(context)
                         UpdateLaunchResult.DOWNLOAD_UNAVAILABLE -> "安装包不可用，请重新检查更新"
                     }
-                }) { Text(if (AppUpdateManager.hasCompletedDownload(context)) "继续安装" else "下载并安装") }
+                }, enabled = downloadProgress?.state?.isActive != true) { Text(if (AppUpdateManager.hasCompletedDownload(context)) "继续安装" else "下载并安装") }
             },
         )
     }
@@ -1707,8 +1981,10 @@ fun ProfileScreen(themeMode: ThemeMode, onThemeModeChange: (ThemeMode) -> Unit) 
         connectionStatus?.let { item { StatusCard(it, positive = it == "连接成功", error = it != "连接成功") } }
         item { Text("应用更新", modifier = Modifier.padding(horizontal = 20.dp), style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold) }
         item { Column(Modifier.padding(horizontal = 20.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+            Text("当前版本 v${BuildConfig.VERSION_NAME}（构建 ${BuildConfig.VERSION_CODE}）", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
             SecondaryAction(if (checkingUpdate) "正在检查…" else "检查更新", Icons.Filled.Refresh, { checkForUpdate() }, Modifier.fillMaxWidth())
-            updateStatus?.let { StatusCard(it, positive = it == "已是最新版本", error = it != "已是最新版本") }
+            downloadProgress?.let { UpdateDownloadProgressCard(it) }
+            updateStatus?.let { StatusCard(it, positive = it == "已是最新版本", error = isUpdateStatusError(it)) }
         } }
         item { Text("个人复核规则", modifier = Modifier.padding(horizontal = 20.dp), style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold) }
         item {

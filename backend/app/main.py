@@ -10,6 +10,7 @@ import hashlib
 import io
 import json
 import logging
+from datetime import timezone, timedelta
 import os
 import time
 from datetime import datetime
@@ -39,10 +40,24 @@ from app.calibration import summarize_calibration
 from app.market_regime import MarketRegimeService
 from app.relative_strength import RelativeStrengthService
 from app.trading_calendar import TradingCalendarService
+from app.recommendations import candidate as build_candidate, first_fill, evaluations
 
 app = FastAPI(title="Third-Hand API", version="0.2.0")
 APP_STARTED_AT = time.monotonic()
 logger = logging.getLogger(__name__)
+BEIJING_TIMEZONE = timezone(timedelta(hours=8))
+
+
+class BeijingLogFormatter(logging.Formatter):
+    """Make application and Uvicorn logs directly usable in China operations."""
+    def formatTime(self, record, datefmt=None):  # noqa: N802 - logging API name
+        return datetime.fromtimestamp(record.created, BEIJING_TIMEZONE).strftime(datefmt or "%Y-%m-%d %H:%M:%S%z")
+
+
+_log_formatter = BeijingLogFormatter("%(asctime)s [%(levelname)s] %(name)s: %(message)s")
+for _logger_name in ("", "uvicorn", "uvicorn.error", "uvicorn.access"):
+    for _handler in logging.getLogger(_logger_name).handlers:
+        _handler.setFormatter(_log_formatter)
 # Uvicorn configures its own loggers but does not always enable application
 # loggers.  Explicitly set the app namespace so market diagnostics are emitted.
 logging.getLogger("app").setLevel(os.getenv("THIRD_HAND_LOG_LEVEL", "INFO").upper())
@@ -64,6 +79,7 @@ market_refresh_state_lock = Lock()
 market_collection_lock = Lock()
 derived_refresh_lock = Lock()
 daily_history_refreshed_for: dict[str, str] = {}
+daily_history_attempted_for: dict[str, str] = {}
 market_refresh_state: dict[str, object] = {
     "last_attempt_at": None,
     "last_success_at": None,
@@ -86,6 +102,19 @@ class GlossaryCard(BaseModel):
     term: str
     plain_explanation: str
     watch_for: str
+    found: bool = True
+    source: str = "built_in"
+
+
+class GlossaryLookupInput(BaseModel):
+    term: str = Field(min_length=1, max_length=64)
+    context: str = Field(default="", max_length=240)
+
+
+class GlossaryEntryInput(BaseModel):
+    term: str = Field(min_length=1, max_length=64)
+    plain_explanation: str = Field(min_length=2, max_length=800)
+    watch_for: str = Field(default="", max_length=400)
 
 
 class AdminOverview(BaseModel):
@@ -165,9 +194,44 @@ class SaleRecord(BaseModel):
 
 class DailyPrice(BaseModel):
     trading_date: str
+    open: float | None = None
     close: float
     high: float | None = None
     low: float | None = None
+
+
+class RecommendationRequest(BaseModel):
+    symbols: list[str] = Field(min_length=1, max_length=50)
+
+
+class ResearchRecommendation(BaseModel):
+    id: str; symbol: str; status: str; action: str | None = None
+    price_zone: dict[str, float] | None = None; invalidation_price: float | None = None
+    suggested_quantity: float | None = None; quantity_status: str | None = None
+    conditions: list[dict[str, object]] = Field(default_factory=list); blocked_reasons: list[str] = Field(default_factory=list)
+    automatic_execution: bool = False; evaluation_version: str | None = None
+
+
+class AiJob(BaseModel):
+    id: str; target_id: str; input_hash: str; status: str; attempts: int; max_attempts: int
+    payload: dict[str, object]; error_message: str | None = None; created_at: datetime; updated_at: datetime
+    volume: float | None = None
+    amount: float | None = None
+    adjustment: str = "qfq"
+
+
+class InstrumentMetadataInput(BaseModel):
+    market: str = Field(min_length=1, max_length=16)
+    currency: str = Field(min_length=1, max_length=8)
+    lot_size: int | None = Field(default=None, gt=0)
+    price_tick: str | None = None
+    source: str = Field(min_length=1, max_length=200)
+    as_of: str = Field(min_length=1, max_length=64)
+
+
+class InstrumentMetadata(InstrumentMetadataInput):
+    symbol: str
+    updated_at: datetime
 
 
 class HoldingDraftInput(BaseModel):
@@ -371,7 +435,42 @@ GLOSSARY = {
     "pe": GlossaryCard(term="PE（市盈率）", plain_explanation="股价相对于每股盈利的倍数。它不是越低越好，要结合行业和盈利质量判断。", watch_for="亏损或一次性收益会使 PE 失真。"),
     "减持": GlossaryCard(term="减持", plain_explanation="股东卖出持有的公司股份。原因可能很多，单则消息不能证明基本面变差。", watch_for="看减持主体、比例、期限与公告全文。"),
     "回购": GlossaryCard(term="回购", plain_explanation="公司用资金买回自身股份，可能用于注销、激励或库存股。", watch_for="区分回购计划和实际完成金额。"),
+    "ma20": GlossaryCard(term="MA20（20日均线）", plain_explanation="最近 20 个交易日收盘价的平均值，用来观察短中期价格趋势。", watch_for="均线只描述历史价格，不能单独预测涨跌。"),
+    "ma60": GlossaryCard(term="MA60（60日均线）", plain_explanation="最近 60 个交易日收盘价的平均值，常用于观察中期趋势。", watch_for="需要结合成交量、基本面和市场环境判断。"),
+    "rsi": GlossaryCard(term="RSI（相对强弱指标）", plain_explanation="衡量一段时间内上涨与下跌力度的指标，数值通常在 0 到 100 之间。", watch_for="超买或超卖不等于会立刻反转。"),
+    "macd": GlossaryCard(term="MACD", plain_explanation="用快慢均线差异观察动能变化的指标；柱状图反映两者差距的变化。", watch_for="信号可能滞后，震荡行情中容易反复。"),
+    "atr": GlossaryCard(term="ATR（平均真实波幅）", plain_explanation="衡量一段时间内价格日常波动幅度的指标，数值越大通常代表波动越明显。", watch_for="ATR 不判断涨跌方向，只描述波动程度。"),
+    "回撤": GlossaryCard(term="回撤", plain_explanation="价格从一段时间高点回落的幅度，用来观察阶段性下跌压力。", watch_for="先确认统计区间，避免把短期波动当成长期风险。"),
+    "空头排列": GlossaryCard(term="空头排列", plain_explanation="短期均线低于中期均线，且中期均线低于长期均线，表示价格趋势偏弱的历史状态。", watch_for="它是趋势描述，不是自动卖出指令。"),
+    "多头排列": GlossaryCard(term="多头排列", plain_explanation="短期均线高于中期均线，且中期均线高于长期均线，表示价格趋势偏强的历史状态。", watch_for="仍需留意估值、成交量与市场整体风险。"),
 }
+
+
+def glossary_key(term: str) -> str:
+    return "".join(term.strip().lower().split())
+
+
+def lookup_glossary(term: str, context: str = "") -> GlossaryCard:
+    cleaned = term.strip()
+    key = glossary_key(cleaned)
+    saved = store.glossary_entry(key)
+    if saved:
+        card = GlossaryCard(
+            term=str(saved["term"]), plain_explanation=str(saved["plain_explanation"]),
+            watch_for=str(saved["watch_for"]), source=str(saved["source"]),
+        )
+    elif key in GLOSSARY:
+        card = GLOSSARY[key]
+    else:
+        card = GlossaryCard(
+            term=cleaned,
+            plain_explanation="暂未收录这个词。你可以在下方补充自己的理解，保存后下次会优先显示。",
+            watch_for="建议保留它出现的原句，并核验指标口径、时间区间和数据来源。",
+            found=False,
+            source="unresolved",
+        )
+    store.record_glossary_lookup(key, cleaned, context, card.found)
+    return card
 
 
 def seed_news(symbols: list[str]) -> list[NewsItem]:
@@ -501,7 +600,9 @@ def feed(background_tasks: BackgroundTasks, symbols: Annotated[list[str], Query(
         for item in items:
             cached = ai_analysis_service.cached(item)
             if cached: item["ai_analysis"] = cached
-            else: background_tasks.add_task(ai_analysis_service.enrich, item)
+            else:
+                job = store.enqueue_ai_job({"id": str(uuid4()), "target_id": str(item["id"]), "input_hash": hashlib.sha256(json.dumps(item, ensure_ascii=False, default=str, sort_keys=True).encode()).hexdigest(), "payload": item})
+                if job["status"] in {"pending", "retrying"}: queue_background(run_ai_job, str(job["id"]))
         store.save_content(items)
         return [NewsItem.model_validate(item) for item in items]
     except NewsDataUnavailable as error:
@@ -524,7 +625,9 @@ def announcements(
         for item in items:
             cached = ai_analysis_service.cached(item)
             if cached: item["ai_analysis"] = cached
-            else: background_tasks.add_task(ai_analysis_service.enrich, item)
+            else:
+                job = store.enqueue_ai_job({"id": str(uuid4()), "target_id": str(item["id"]), "input_hash": hashlib.sha256(json.dumps(item, ensure_ascii=False, default=str, sort_keys=True).encode()).hexdigest(), "payload": item})
+                if job["status"] in {"pending", "retrying"}: queue_background(run_ai_job, str(job["id"]))
         store.save_content(items)
         return [NewsItem.model_validate(item) for item in items]
     except AnnouncementDataUnavailable as error:
@@ -562,7 +665,13 @@ def fetch_and_store_quotes(
             }
             # The upstream frame already contains the whole market.  Persist one
             # normalized latest row per symbol, never the raw response/history.
-            store.save_quotes(market_data.latest_market_snapshot(markets))
+            try:
+                store.save_quotes(market_data.latest_market_snapshot(markets))
+            except MarketDataUnavailable as error:
+                # Quote collection may have succeeded through Tushare or a
+                # previous in-memory frame.  A fresh full-universe snapshot is
+                # an optimization, never a reason to discard those results.
+                logger.warning("全市场快照入库跳过，不影响已获取持仓行情 markets=%s error=%s", ",".join(sorted(markets)), error)
         successful = [quote for quote in quotes if quote.get("price") is not None and not quote.get("error_code")]
         store.save_quotes(successful)
         logger.info(
@@ -634,7 +743,8 @@ def refresh_derived_cache(symbols: list[str], trigger: str, force_history: bool 
         today = beijing_now().date().isoformat()
         for symbol in symbols:
             try:
-                if force_history or daily_history_refreshed_for.get(symbol) != today:
+                if force_history or daily_history_attempted_for.get(symbol) != today:
+                    daily_history_attempted_for[symbol] = today
                     price_history_service.refresh(store, symbol)
                     daily_history_refreshed_for[symbol] = today
                 bars = store.daily_prices(symbol)
@@ -781,6 +891,10 @@ def resume_background_work() -> None:
     draft_ids = store.draft_ids_needing_lookup()
     if draft_ids:
         Thread(target=resolve_holding_drafts, args=(draft_ids,), daemon=True).start()
+    for job in store.ai_jobs():
+        if job["status"] in {"pending", "retrying", "running"} and int(job["attempts"]) < int(job["max_attempts"]):
+            store.update_ai_job(str(job["id"]), "pending")
+            queue_background(run_ai_job, str(job["id"]))
     symbols = [str(item["symbol"]).strip().upper() for item in store.list()]
     if symbols:
         # Startup pre-warms latest quotes and daily derived data even while the
@@ -984,12 +1098,30 @@ def save_trade_plan(payload: TradePlanInput) -> TradePlan:
     return TradePlan.model_validate(store.save_trade_plan(item))
 
 
+@app.post("/v1/glossary/lookup", response_model=GlossaryCard)
+def glossary_lookup(payload: GlossaryLookupInput) -> GlossaryCard:
+    """Look up a highlighted or user-selected term and retain the query for reuse."""
+    return lookup_glossary(payload.term, payload.context)
+
+
+@app.post("/v1/glossary", response_model=GlossaryCard)
+def save_glossary_entry(payload: GlossaryEntryInput) -> GlossaryCard:
+    term = payload.term.strip()
+    item = store.save_glossary_entry({
+        "term_key": glossary_key(term), "term": term,
+        "plain_explanation": payload.plain_explanation.strip(), "watch_for": payload.watch_for.strip(),
+        "source": "user", "updated_at": beijing_now().isoformat(),
+    })
+    return GlossaryCard(
+        term=str(item["term"]), plain_explanation=str(item["plain_explanation"]),
+        watch_for=str(item["watch_for"]), source="user",
+    )
+
+
 @app.get("/v1/glossary/{term}", response_model=GlossaryCard)
 def glossary(term: str) -> GlossaryCard:
-    item = GLOSSARY.get(term.strip().lower())
-    if not item:
-        raise HTTPException(status_code=404, detail="词条尚未收录")
-    return item
+    """Compatibility endpoint; unlike the old version it also logs and finds saved terms."""
+    return lookup_glossary(term)
 
 
 @app.get("/v1/holdings", response_model=list[Holding])
@@ -1042,6 +1174,81 @@ def list_sales(symbol: str | None = None) -> list[SaleRecord]:
 def market_history(symbol: str, limit: int = Query(default=120, ge=20, le=800)) -> list[DailyPrice]:
     """Persisted daily bars only; chart rendering never queries an upstream source."""
     return [DailyPrice.model_validate(item) for item in store.daily_prices(symbol.strip().upper(), limit)]
+
+
+@app.post("/v1/research-recommendations/generate", response_model=list[ResearchRecommendation])
+def generate_recommendations(payload: RecommendationRequest) -> list[ResearchRecommendation]:
+    holdings = {str(item["symbol"]): item for item in store.list()}
+    quotes = {str(item["symbol"]): item for item in store.cached_quotes(payload.symbols)}
+    results = []
+    for symbol in dict.fromkeys(item.strip().upper() for item in payload.symbols):
+        item = {"id": str(uuid4()), **build_candidate(symbol, holdings.get(symbol), quotes.get(symbol), store.daily_prices(symbol), store.trade_plan(symbol))}
+        store.save_recommendation(item); results.append(item)
+    return [ResearchRecommendation.model_validate(item) for item in results]
+
+
+@app.get("/v1/research-recommendations", response_model=list[ResearchRecommendation])
+def list_recommendations(symbol: str | None = None) -> list[ResearchRecommendation]:
+    return [ResearchRecommendation.model_validate(item) for item in store.recommendations(symbol)]
+
+
+@app.post("/v1/research-recommendations/evaluate")
+def evaluate_recommendations() -> dict[str, int]:
+    evaluated = 0
+    for item in store.recommendations():
+        if item.get("status") != "ready" or item.get("suggested_quantity") is None: continue
+        fill, index = first_fill(item, store.daily_prices(str(item["symbol"])))
+        if fill is None: continue
+        store.save_evaluations(str(item["id"]), evaluations(fill, index, store.daily_prices(str(item["symbol"])), float(item["suggested_quantity"])))
+        evaluated += 1
+    return {"evaluated": evaluated}
+
+
+@app.get("/v1/research-recommendations/{recommendation_id}/evaluations")
+def recommendation_evaluations(recommendation_id: str) -> list[dict[str, object]]:
+    return store.recommendation_evaluations(recommendation_id)
+
+
+def run_ai_job(job_id: str) -> None:
+    job = next((item for item in store.ai_jobs() if item["id"] == job_id), None)
+    if not job: return
+    store.update_ai_job(job_id, "running")
+    content = job["payload"]
+    try:
+        result = ai_analysis_service.enrich(content)
+        if result.get("ai_analysis"):
+            store.update_ai_job(job_id, "succeeded")
+        else:
+            store.update_ai_job(job_id, "failed", "AI output unavailable or invalid")
+    except Exception as error:
+        store.update_ai_job(job_id, "failed", type(error).__name__)
+
+
+@app.get("/v1/ai-jobs", response_model=list[AiJob])
+def list_ai_jobs(target_id: str | None = None) -> list[AiJob]:
+    return [AiJob.model_validate(item) for item in store.ai_jobs(target_id)]
+
+
+@app.post("/v1/ai-jobs/{job_id}/retry", response_model=AiJob)
+def retry_ai_job(job_id: str) -> AiJob:
+    job = next((item for item in store.ai_jobs() if item["id"] == job_id), None)
+    if not job: raise HTTPException(status_code=404, detail="AI 任务不存在")
+    store.update_ai_job(job_id, "pending")
+    queue_background(run_ai_job, job_id)
+    return AiJob.model_validate(next(item for item in store.ai_jobs() if item["id"] == job_id))
+
+
+@app.get("/v1/instruments/{symbol}/metadata", response_model=InstrumentMetadata)
+def get_instrument_metadata(symbol: str) -> InstrumentMetadata:
+    item = store.instrument_metadata(symbol)
+    if not item:
+        raise HTTPException(status_code=404, detail="Instrument metadata not found")
+    return InstrumentMetadata.model_validate(item)
+
+
+@app.put("/v1/instruments/{symbol}/metadata", response_model=InstrumentMetadata)
+def put_instrument_metadata(symbol: str, payload: InstrumentMetadataInput) -> InstrumentMetadata:
+    return InstrumentMetadata.model_validate(store.save_instrument_metadata({"symbol": symbol, **payload.model_dump()}))
 
 
 @app.get("/v1/holding-drafts", response_model=list[HoldingDraft])

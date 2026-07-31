@@ -126,6 +126,24 @@ def test_glossary():
     assert response.json()["term"] == "回购"
 
 
+def test_glossary_lookup_saves_custom_explanation_for_later_queries():
+    missing = client.post("/v1/glossary/lookup", json={"term": "量价背离", "context": "MACD 出现量价背离"})
+    assert missing.status_code == 200
+    assert missing.json()["found"] is False
+
+    saved = client.post("/v1/glossary", json={
+        "term": "量价背离", "plain_explanation": "价格和成交量的变化方向不一致，需要回看具体区间。",
+        "watch_for": "不要只用一个指标下结论。",
+    })
+    assert saved.status_code == 200
+    assert saved.json()["source"] == "user"
+
+    found = client.post("/v1/glossary/lookup", json={"term": "量价背离"})
+    assert found.status_code == 200
+    assert found.json()["found"] is True
+    assert found.json()["plain_explanation"].startswith("价格和成交量")
+
+
 def test_holding_lifecycle_and_feed():
     created = client.post("/v1/holdings", json={"symbol": "01810", "name": "小米集团-W", "quantity": 100, "average_cost": 45.5})
     assert created.status_code == 201

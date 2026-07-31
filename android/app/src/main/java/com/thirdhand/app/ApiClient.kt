@@ -123,7 +123,11 @@ data class SaleRecordDto(
     val realized_pnl: Double, val realized_pnl_percent: Double, val remaining_quantity: Double,
     val reason: String = "", val sold_at: String,
 )
-data class DailyPriceDto(val trading_date: String, val close: Double, val high: Double? = null, val low: Double? = null)
+data class DailyPriceDto(val trading_date: String, val open: Double? = null, val close: Double, val high: Double? = null, val low: Double? = null, val volume: Double? = null, val amount: Double? = null, val adjustment: String = "qfq")
+data class RecommendationRequestDto(val symbols: List<String>)
+data class ResearchRecommendationDto(val id: String, val symbol: String, val status: String, val action: String? = null, val price_zone: Map<String, Double>? = null, val invalidation_price: Double? = null, val suggested_quantity: Double? = null, val quantity_status: String? = null, val blocked_reasons: List<String> = emptyList())
+data class RecommendationEvaluationDto(val horizon: Int, val evaluation_date: String, val net_pnl: Double, val return_percent: Double, val mfe_percent: Double, val mae_percent: Double)
+data class AiJobDto(val id: String, val target_id: String, val status: String, val attempts: Int, val max_attempts: Int, val error_message: String? = null, val updated_at: String)
 
 data class NewsItemDto(
     val id: String,
@@ -208,7 +212,15 @@ data class ImpactGraphDto(
     val generated_at: String, val focus_symbol: String? = null, val nodes: List<ImpactGraphNodeDto>,
     val edges: List<ImpactGraphEdgeDto>, val disclaimer: String,
 )
-data class GlossaryCardDto(val term: String, val plain_explanation: String, val watch_for: String)
+data class GlossaryCardDto(
+    val term: String,
+    val plain_explanation: String,
+    val watch_for: String,
+    val found: Boolean = true,
+    val source: String = "built_in",
+)
+data class GlossaryLookupInputDto(val term: String, val context: String = "")
+data class GlossaryEntryInputDto(val term: String, val plain_explanation: String, val watch_for: String = "")
 data class LearningCaseDto(
     val id: String, val symbol: String?, val title: String, val context: String, val lesson: String,
     val outcome: String, val position_band: String, val planned_action: String, val confidence: Double,
@@ -283,6 +295,16 @@ interface ThirdHandApi {
 
     @GET("v1/market/history/{symbol}")
     suspend fun marketHistory(@Path("symbol") symbol: String, @Query("limit") limit: Int = 120): List<DailyPriceDto>
+    @POST("v1/research-recommendations/generate")
+    suspend fun generateRecommendations(@Body request: RecommendationRequestDto): List<ResearchRecommendationDto>
+    @GET("v1/research-recommendations")
+    suspend fun recommendations(@Query("symbol") symbol: String? = null): List<ResearchRecommendationDto>
+    @GET("v1/research-recommendations/{id}/evaluations")
+    suspend fun recommendationEvaluations(@Path("id") id: String): List<RecommendationEvaluationDto>
+    @GET("v1/ai-jobs")
+    suspend fun aiJobs(@Query("target_id") targetId: String? = null): List<AiJobDto>
+    @POST("v1/ai-jobs/{id}/retry")
+    suspend fun retryAiJob(@Path("id") id: String): AiJobDto
 
     @DELETE("v1/holdings/{id}")
     suspend fun deleteHolding(@Path("id") id: String)
@@ -347,6 +369,12 @@ interface ThirdHandApi {
 
     @GET("v1/glossary/{term}")
     suspend fun glossary(@Path("term") term: String): GlossaryCardDto
+
+    @POST("v1/glossary/lookup")
+    suspend fun lookupGlossary(@Body request: GlossaryLookupInputDto): GlossaryCardDto
+
+    @POST("v1/glossary")
+    suspend fun saveGlossary(@Body request: GlossaryEntryInputDto): GlossaryCardDto
 
     @GET("v1/feed")
     suspend fun feed(@Query("symbols") symbols: List<String>): List<NewsItemDto>
