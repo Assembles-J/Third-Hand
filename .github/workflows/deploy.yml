@@ -42,7 +42,9 @@ jobs:
       ANDROID_KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
       ANDROID_KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
       APP_PUBLIC_BASE_URL: ${{ secrets.APP_PUBLIC_BASE_URL }}
-      APP_UPDATE_PUBLIC_BASE_URL: ${{ secrets.APP_UPDATE_PUBLIC_BASE_URL }}
+      # This is a public, non-sensitive URL. Prefer the repository/environment
+      # variable and keep the former secret as a backwards-compatible fallback.
+      APP_UPDATE_PUBLIC_BASE_URL: ${{ vars.APP_UPDATE_PUBLIC_BASE_URL || secrets.APP_UPDATE_PUBLIC_BASE_URL }}
     steps:
       - uses: actions/checkout@v4
         with:

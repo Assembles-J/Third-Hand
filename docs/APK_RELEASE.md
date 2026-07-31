@@ -64,7 +64,7 @@ chmod 600 /root/third-hand-signing/third-hand-release.p12
 | `ANDROID_KEY_ALIAS` | 默认是 `third-hand` |
 | `ANDROID_KEY_PASSWORD` | 私钥密码 |
 | `APP_PUBLIC_BASE_URL` | `https://groupim.cn/third-hand`，不带结尾 `/` |
-| `APP_UPDATE_PUBLIC_BASE_URL` | 可选；推荐 `https://download.groupim.cn/third-hand/releases`，不带结尾 `/` |
+| `APP_UPDATE_PUBLIC_BASE_URL` | 可选；推荐 `https://groupim.cn/third-hand/releases`，不带结尾 `/` |
 | `SERVER_IP` | 部署服务器地址 |
 | `SERVER_USER` | SSH 用户 |
 | `SERVER_SSH_KEY` | SSH 私钥 |
@@ -83,9 +83,10 @@ gh secret set ANDROID_KEYSTORE_PASSWORD --env production --repo pengpengno/Third
 gh secret set ANDROID_KEY_PASSWORD --env production --repo pengpengno/Third-Hand
 gh secret set ANDROID_KEY_ALIAS --env production --repo pengpengno/Third-Hand --body "third-hand"
 gh secret set APP_PUBLIC_BASE_URL --env production --repo pengpengno/Third-Hand --body "https://groupim.cn/third-hand"
-gh secret set APP_UPDATE_PUBLIC_BASE_URL --env production --repo pengpengno/Third-Hand --body "https://download.groupim.cn/third-hand/releases"
+gh variable set APP_UPDATE_PUBLIC_BASE_URL --repo pengpengno/Third-Hand --body "https://groupim.cn/third-hand/releases"
 
 gh secret list --env production --repo pengpengno/Third-Hand
+gh variable list --repo pengpengno/Third-Hand
 ```
 
 密码类命令会交互读取输入，不要把密码写进命令行历史、Git 仓库或聊天记录。
@@ -197,10 +198,10 @@ location ^~ /third-hand/releases/ {
 }
 ```
 
-文件名带版本号，因此长期缓存不会把新版本误认为旧版本；Nginx 静态文件也原生支持 `Content-Length` 和 Range 断点续传。随后把 production 环境 Secret 设置为：
+文件名带版本号，因此长期缓存不会把新版本误认为旧版本；Nginx 静态文件也原生支持 `Content-Length` 和 Range 断点续传。随后设置 Repository variable：
 
 ```text
-APP_UPDATE_PUBLIC_BASE_URL=https://download.groupim.cn/third-hand/releases
+APP_UPDATE_PUBLIC_BASE_URL=https://groupim.cn/third-hand/releases
 ```
 
 如果该变量留空，后端会自动回退到原来的
@@ -213,7 +214,7 @@ docker network inspect app_gateway
 docker exec nginx getent hosts third-hand-api
 curl -fsS http://127.0.0.1:8000/health
 curl -fsS https://groupim.cn/third-hand/health
-curl -I https://download.groupim.cn/third-hand/releases/third-hand-<version>.apk
+curl -I https://groupim.cn/third-hand/releases/third-hand-<version>.apk
 ```
 
 健康接口预期返回：
