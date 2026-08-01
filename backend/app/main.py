@@ -488,6 +488,8 @@ position_sizing_engine = PositionSizingEngine()
 decision_ai_service = DecisionAiService(store)
 decision_guard = DecisionGuard()
 decision_orchestrator = DecisionOrchestrator(evidence_engine, action_policy_engine, position_sizing_engine, decision_ai_service, decision_guard)
+from app.research_chat.routes import build_router
+app.include_router(build_router(store, decision_context_builder, decision_orchestrator))
 
 GLOSSARY = {
     "历史下行概率": GlossaryCard(term="历史下行概率", plain_explanation="在历史日线样本中，未来 5 个交易日累计下跌至少 5% 的出现频率。它是历史统计，不是未来发生概率的保证。", watch_for="先看统计窗口、下跌阈值和样本数量；样本不足时不应据此操作。"),

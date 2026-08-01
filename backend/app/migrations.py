@@ -63,6 +63,38 @@ def _create_decision_reports_and_jobs(connection: sqlite3.Connection) -> None:
     connection.execute("CREATE TABLE IF NOT EXISTS decision_jobs (job_id TEXT PRIMARY KEY, context_id TEXT NOT NULL, symbol TEXT NOT NULL, input_hash TEXT NOT NULL UNIQUE, status TEXT NOT NULL, attempts INTEGER NOT NULL, payload TEXT NOT NULL, error_message TEXT, created_at TEXT NOT NULL, updated_at TEXT NOT NULL)")
 
 
+def _create_research_chat_tables(connection: sqlite3.Connection) -> None:
+    connection.executescript("""
+    CREATE TABLE IF NOT EXISTS research_chat_sessions (
+        id TEXT PRIMARY KEY, title TEXT NOT NULL, primary_symbol TEXT, status TEXT NOT NULL,
+        created_at TEXT NOT NULL, updated_at TEXT NOT NULL
+    );
+    CREATE TABLE IF NOT EXISTS research_chat_turns (
+        id TEXT PRIMARY KEY, session_id TEXT NOT NULL, client_request_id TEXT NOT NULL UNIQUE,
+        status TEXT NOT NULL, model TEXT NOT NULL, prompt_version TEXT NOT NULL,
+        context_id TEXT, context_hash TEXT, answer_text TEXT NOT NULL DEFAULT '',
+        decision_report_id TEXT, error_code TEXT, error_message TEXT,
+        prompt_tokens INTEGER NOT NULL DEFAULT 0, completion_tokens INTEGER NOT NULL DEFAULT 0,
+        reasoning_tokens INTEGER NOT NULL DEFAULT 0, latency_ms INTEGER NOT NULL DEFAULT 0,
+        created_at TEXT NOT NULL, started_at TEXT, completed_at TEXT
+    );
+    CREATE INDEX IF NOT EXISTS idx_research_chat_turns_session_time ON research_chat_turns(session_id, created_at DESC);
+    CREATE TABLE IF NOT EXISTS research_chat_messages (
+        id TEXT PRIMARY KEY, session_id TEXT NOT NULL, turn_id TEXT NOT NULL, role TEXT NOT NULL,
+        content_type TEXT NOT NULL, content TEXT NOT NULL, metadata_json TEXT NOT NULL DEFAULT '{}', created_at TEXT NOT NULL
+    );
+    CREATE TABLE IF NOT EXISTS research_tool_calls (
+        id TEXT PRIMARY KEY, turn_id TEXT NOT NULL, tool_name TEXT NOT NULL, tool_version TEXT NOT NULL,
+        arguments_json TEXT NOT NULL, result_summary_json TEXT, status TEXT NOT NULL, duration_ms INTEGER NOT NULL DEFAULT 0,
+        error_code TEXT, created_at TEXT NOT NULL, completed_at TEXT
+    );
+    CREATE TABLE IF NOT EXISTS research_clarifications (
+        id TEXT PRIMARY KEY, turn_id TEXT NOT NULL, status TEXT NOT NULL, reason TEXT NOT NULL,
+        questions_json TEXT NOT NULL, answers_json TEXT, expires_at TEXT NOT NULL, created_at TEXT NOT NULL, answered_at TEXT
+    );
+    """)
+
+
 MIGRATIONS = (
     Migration("0001_legacy_schema_baseline", _record_legacy_schema_baseline),
     Migration("0002_decision_contexts", _create_decision_contexts),
@@ -70,6 +102,7 @@ MIGRATIONS = (
     Migration("0004_trade_plan_invalidation_price", _add_trade_plan_invalidation_price),
     Migration("0005_decision_ai_runs", _create_decision_ai_runs),
     Migration("0006_decision_reports_and_jobs", _create_decision_reports_and_jobs),
+    Migration("0007_research_chat_sessions", _create_research_chat_tables),
 )
 
 

@@ -121,6 +121,35 @@ def test_deepseek_client_retries_rate_limit_and_records_usage():
     assert result.usage.total_tokens == 30
 
 
+def test_deepseek_client_keeps_news_json_contract_when_thinking_is_requested():
+    requests = []
+
+    def handler(request):
+        requests.append(json.loads(request.content))
+        return httpx.Response(200, json={
+            "id": "chat-thinking-1",
+            "model": "deepseek-v4-pro",
+            "choices": [{"finish_reason": "stop", "message": {"content": json.dumps(VALID_ANALYSIS)}}],
+            "usage": {"prompt_tokens": 4, "completion_tokens": 2, "total_tokens": 6},
+        })
+
+    client = DeepSeekClient(
+        DeepSeekSettings(api_key="test-key"),
+        http_client=httpx.Client(transport=httpx.MockTransport(handler)),
+    )
+
+    response = client.chat_json([{"role": "user", "content": "固定新闻 Schema"}], model="deepseek-v4-pro", thinking=True)
+
+    assert requests == [{
+        "model": "deepseek-v4-pro",
+        "max_tokens": 900,
+        "response_format": {"type": "json_object"},
+        "thinking": {"type": "enabled"},
+        "messages": [{"role": "user", "content": "固定新闻 Schema"}],
+    }]
+    assert response.content == json.dumps(VALID_ANALYSIS)
+
+
 def test_deepseek_client_opens_circuit_after_consecutive_failures():
     calls = 0
 

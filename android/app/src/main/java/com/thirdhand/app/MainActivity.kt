@@ -111,6 +111,7 @@ import java.time.LocalDate
 import java.time.temporal.WeekFields
 import java.time.ZoneOffset
 import java.time.format.DateTimeFormatter
+import com.thirdhand.app.researchchat.ResearchChatScreen
 import kotlinx.coroutines.delay
 
 class MainActivity : ComponentActivity() {
@@ -193,6 +194,7 @@ private fun ThirdHandApp(resumeSignal: Int) {
                             Triple("今日", Icons.Filled.AutoGraph, 0),
                             Triple("持仓", Icons.Filled.Wallet, 1),
                             Triple("管理", Icons.Filled.AdminPanelSettings, 2),
+                            Triple("研究", Icons.AutoMirrored.Filled.Article, 4),
                         ).forEach { (label, icon, targetTab) ->
                             NavigationBarItem(
                                 selected = tab == targetTab || (targetTab == 2 && tab == 3),
@@ -214,7 +216,7 @@ private fun ThirdHandApp(resumeSignal: Int) {
                         onDragStart = { horizontalDrag = 0f },
                         onHorizontalDrag = { _, amount -> horizontalDrag += amount },
                         onDragEnd = {
-                            if (horizontalDrag <= -56f) tab = (tab + 1).coerceAtMost(2)
+                            if (horizontalDrag <= -56f) tab = (tab + 1).coerceAtMost(4)
                             if (horizontalDrag >= 56f) tab = (tab - 1).coerceAtLeast(0)
                         },
                     )
@@ -233,6 +235,7 @@ private fun ThirdHandApp(resumeSignal: Int) {
                             1 -> HoldingsScreen(onOpenDetail = { detailHolding = it })
                             2 -> UnifiedCenterScreen(ThemeMode.DARK, onThemeModeChange = { themeMode -> })
                             3 -> TradePlanScreen()
+                            4 -> ResearchChatScreen()
                             else -> TodayScreen()
                         }
                     }
