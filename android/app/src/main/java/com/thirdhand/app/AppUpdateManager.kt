@@ -1,7 +1,5 @@
 package com.thirdhand.app
 
-import android.Manifest
-import android.app.Activity
 import android.app.DownloadManager
 import android.content.BroadcastReceiver
 import android.content.Context
@@ -15,6 +13,7 @@ import android.os.Build
 import android.os.Environment
 import android.provider.Settings
 import android.widget.Toast
+import androidx.core.content.FileProvider
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
@@ -45,7 +44,7 @@ enum class UpdateDownloadState(val label: String, val isActive: Boolean) {
     PENDING("等待下载", true),
     DOWNLOADING("正在下载", true),
     PAUSED("下载已暂停，等待网络恢复", true),
-    VERIFYING("下载完成，正在校验安装包", false),
+    VERIFYING("下载完成，正在校验安装包", true),
     FAILED("下载失败，请重新检查更新", false),
 }
 
@@ -77,10 +76,10 @@ object AppUpdateManager {
     private const val ExpectedVersionCode = "expected_version_code"
     private const val ExpectedVersionName = "expected_version_name"
     private const val DownloadFilename = "download_filename"
+    private const val DownloadFilePath = "download_file_path"
     private const val SignatureMatches = "signature_matches"
     private const val AutomaticDownloadEnabled = "automatic_download_enabled"
-    private const val DownloadDirectory = "Third-Hand"
-    private const val StoragePermissionRequest = 9042
+    private const val DownloadDirectory = "updates"
 
     suspend fun check(context: Context): AppUpdate? = withContext(Dispatchers.IO) {
         // Debug builds are deliberately signed and versioned separately from
@@ -96,20 +95,28 @@ object AppUpdateManager {
             update.sha256.matches(Regex("^[a-f0-9]{64}$")) &&
             update.size_bytes > 0
         ) {
-            AppUpdate(update.version_code, update.version_name, update.apk_url, update.changelog, update.sha256, update.size_bytes)
+            AppUpdate(update.version_code, update.version_name, update.apk_url, update.changelog, update.sha256, update.size_bytes).also {
+                reconcileStoredUpdate(context, it)
+            }
         } else null
     }
 
     fun completedUpdateMessage(context: Context): String? {
         val completed = completedDownload(context) ?: return null
         return if (completed.signatureMatches) {
-            "安装包已下载到“下载/$DownloadDirectory/${completed.filename}”。点击“继续安装”可重新打开系统安装器。"
+            "新版本已下载到应用专属更新目录。点击“安装更新”即可打开系统安装器。"
         } else {
-            "检测到当前应用与正式版签名不同。安装包已保留在“下载/$DownloadDirectory/${completed.filename}”。请先卸载当前旧版，再从该目录安装正式版；以后即可直接覆盖升级。"
+            "检测到当前应用与安装包签名不同，无法直接覆盖安装。"
         }
     }
 
     fun hasCompletedDownload(context: Context): Boolean = completedDownload(context) != null
+
+    fun hasCompletedDownload(context: Context, update: AppUpdate): Boolean =
+        storedUpdateMatches(context, update) && completedDownload(context) != null
+
+    fun hasActiveDownload(context: Context, update: AppUpdate): Boolean =
+        storedUpdateMatches(context, update) && downloadProgress(context)?.state?.isActive == true
 
     fun automaticDownloadEnabled(context: Context): Boolean =
         preferences(context).getBoolean(AutomaticDownloadEnabled, true)
@@ -118,22 +125,11 @@ object AppUpdateManager {
         preferences(context).edit().putBoolean(AutomaticDownloadEnabled, enabled).apply()
     }
 
-    /** Starts the default background download on Wi-Fi, including Wi-Fi marked as metered. */
+    /** Enqueues once when the current connection is Wi-Fi; the task survives UI dismissal. */
     fun downloadAutomaticallyOnWifi(context: Context, update: AppUpdate): UpdateLaunchResult? {
-        if (!automaticDownloadEnabled(context) || !isOnWifi(context) || completedDownload(context) != null) return null
+        if (!automaticDownloadEnabled(context) || !isOnWifi(context) || hasCompletedDownload(context, update)) return null
         val existing = downloadProgress(context)
-        if (existing?.state?.isActive == true) {
-            // Older builds used setAllowedOverMetered(false), which leaves a metered Wi-Fi
-            // download permanently queued. Recreate that task with the corrected Wi-Fi rule.
-            if (
-                existing.state != UpdateDownloadState.PAUSED ||
-                existing.reasonCode != DownloadManager.PAUSED_QUEUED_FOR_WIFI
-            ) return null
-        }
-        if (
-            Build.VERSION.SDK_INT <= Build.VERSION_CODES.P &&
-            context.checkSelfPermission(Manifest.permission.WRITE_EXTERNAL_STORAGE) != PackageManager.PERMISSION_GRANTED
-        ) return null
+        if (storedUpdateMatches(context, update) && existing?.state?.isActive == true) return null
         return startDownload(context, update, wifiOnly = true)
     }
 
@@ -175,19 +171,8 @@ object AppUpdateManager {
 
     /** Starts a manual download or opens an already verified installer. Android still requires user confirmation. */
     fun downloadAndInstall(context: Context, update: AppUpdate): UpdateLaunchResult {
-        if (completedDownload(context) != null) return installDownloadedUpdate(context)
-
-        if (
-            Build.VERSION.SDK_INT <= Build.VERSION_CODES.P &&
-            context.checkSelfPermission(Manifest.permission.WRITE_EXTERNAL_STORAGE) != PackageManager.PERMISSION_GRANTED
-        ) {
-            (context as? Activity)?.requestPermissions(
-                arrayOf(Manifest.permission.WRITE_EXTERNAL_STORAGE),
-                StoragePermissionRequest,
-            )
-            return UpdateLaunchResult.NEED_STORAGE_PERMISSION
-        }
-
+        if (hasCompletedDownload(context, update)) return installDownloadedUpdate(context)
+        if (hasActiveDownload(context, update)) return UpdateLaunchResult.DOWNLOAD_STARTED
         return startDownload(context, update, wifiOnly = false)
     }
 
@@ -195,7 +180,6 @@ object AppUpdateManager {
         val completed = completedDownload(context) ?: return UpdateLaunchResult.DOWNLOAD_UNAVAILABLE
         if (!completed.signatureMatches) {
             Toast.makeText(context, completedUpdateMessage(context), Toast.LENGTH_LONG).show()
-            openDownloads(context)
             return UpdateLaunchResult.SIGNATURE_MISMATCH
         }
         if (!context.packageManager.canRequestPackageInstalls()) {
@@ -212,24 +196,20 @@ object AppUpdateManager {
     private fun startDownload(context: Context, update: AppUpdate, wifiOnly: Boolean): UpdateLaunchResult {
         val manager = context.getSystemService(DownloadManager::class.java)
         clearPreviousDownload(context, manager)
-        val filename = "third-hand-${update.versionCode}.apk"
-        val destination = File(
-            Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DOWNLOADS),
-            "$DownloadDirectory/$filename",
-        )
+        val filename = "third-hand-${update.versionName}-${update.versionCode}.apk"
+        val destination = updateFile(context, filename)
         destination.parentFile?.mkdirs()
         destination.delete()
         val request = DownloadManager.Request(Uri.parse(update.apkUrl))
             .setTitle("Third-Hand ${update.versionName}")
             .setDescription("正在下载更新，完成后可在管理页面安装")
             .setMimeType(ApkMimeType)
-            // Some devices mark ordinary Wi-Fi as metered. Network type still limits
-            // automatic downloads to Wi-Fi, while allowing those Wi-Fi connections.
+            // isOnWifi() gates automatic enqueueing. Avoid OEM-specific post-enqueue
+            // Wi-Fi constraints that can leave a valid task permanently paused.
             .setAllowedOverMetered(true)
             .setAllowedOverRoaming(false)
             .setNotificationVisibility(DownloadManager.Request.VISIBILITY_VISIBLE_NOTIFY_COMPLETED)
-            .setDestinationInExternalPublicDir(Environment.DIRECTORY_DOWNLOADS, "$DownloadDirectory/$filename")
-        if (wifiOnly) request.setAllowedNetworkTypes(DownloadManager.Request.NETWORK_WIFI)
+            .setDestinationInExternalFilesDir(context, Environment.DIRECTORY_DOWNLOADS, "$DownloadDirectory/$filename")
         val downloadId = manager.enqueue(request)
         preferences(context).edit()
             .putLong(DownloadId, downloadId)
@@ -239,11 +219,12 @@ object AppUpdateManager {
             .putInt(ExpectedVersionCode, update.versionCode)
             .putString(ExpectedVersionName, update.versionName)
             .putString(DownloadFilename, filename)
+            .putString(DownloadFilePath, destination.absolutePath)
             .remove(SignatureMatches)
             .apply()
         Toast.makeText(
             context,
-            "正在下载到“下载/$DownloadDirectory/$filename”，完成后可在管理页面安装",
+            if (wifiOnly) "已在 Wi‑Fi 下开始后台下载，完成后可在管理页面安装" else "已开始后台下载，完成后可在管理页面安装",
             Toast.LENGTH_LONG,
         ).show()
         return UpdateLaunchResult.DOWNLOAD_STARTED
@@ -309,6 +290,7 @@ object AppUpdateManager {
 
     fun clearFailedDownload(context: Context, id: Long) {
         context.getSystemService(DownloadManager::class.java).remove(id)
+        storedUpdateFile(context)?.delete()
         clearDownloadPreferences(context)
     }
 
@@ -337,27 +319,14 @@ object AppUpdateManager {
         context.startActivity(intent)
     }
 
-    private fun openDownloads(context: Context) {
-        try {
-            context.startActivity(
-                Intent(DownloadManager.ACTION_VIEW_DOWNLOADS).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK),
-            )
-        } catch (_: Exception) {
-            Toast.makeText(context, "请打开系统文件管理器中的“下载/$DownloadDirectory”目录", Toast.LENGTH_LONG).show()
-        }
-    }
-
     private fun completedDownload(context: Context): CompletedDownload? {
         val preferences = preferences(context)
         val id = preferences.getLong(CompletedDownloadId, -1L)
         if (id < 0 || !preferences.contains(SignatureMatches)) return null
-        val manager = context.getSystemService(DownloadManager::class.java)
-        val cursor = manager.query(DownloadManager.Query().setFilterById(id)) ?: return null
-        cursor.use {
-            if (!it.moveToFirst()) return null
-            if (it.getInt(it.getColumnIndexOrThrow(DownloadManager.COLUMN_STATUS)) != DownloadManager.STATUS_SUCCESSFUL) return null
-        }
-        val uri = manager.getUriForDownloadedFile(id) ?: return null
+        val file = storedUpdateFile(context) ?: return null
+        val expectedSize = preferences.getLong(ExpectedSize, -1L)
+        if (!file.isFile || expectedSize <= 0 || file.length() != expectedSize) return null
+        val uri = FileProvider.getUriForFile(context, "${context.packageName}.fileprovider", file)
         return CompletedDownload(
             id = id,
             uri = uri,
@@ -376,7 +345,46 @@ object AppUpdateManager {
             preferences.getLong(CompletedDownloadId, -1L),
         ).filter { it >= 0 }.toLongArray()
         if (ids.isNotEmpty()) manager.remove(*ids)
+        storedUpdateFile(context)?.delete()
         clearDownloadPreferences(context)
+    }
+
+    private fun reconcileStoredUpdate(context: Context, update: AppUpdate) {
+        val manager = context.getSystemService(DownloadManager::class.java)
+        if (preferences(context).contains(ExpectedVersionCode) && !storedUpdateMatches(context, update)) {
+            clearPreviousDownload(context, manager)
+        }
+        val expectedName = "third-hand-${update.versionName}-${update.versionCode}.apk"
+        updateDirectory(context).listFiles()
+            ?.filter { it.isFile && it.name != expectedName }
+            ?.forEach { it.delete() }
+    }
+
+    private fun storedUpdateMatches(context: Context, update: AppUpdate): Boolean {
+        val preferences = preferences(context)
+        val expectedFile = updateFile(context, "third-hand-${update.versionName}-${update.versionCode}.apk")
+        return preferences.getInt(ExpectedVersionCode, -1) == update.versionCode &&
+            preferences.getString(ExpectedVersionName, null) == update.versionName &&
+            preferences.getString(ExpectedSha256, null) == update.sha256 &&
+            preferences.getLong(ExpectedSize, -1L) == update.sizeBytes &&
+            preferences.getString(DownloadFilePath, null) == expectedFile.absolutePath
+    }
+
+    private fun updateDirectory(context: Context): File =
+        File(requireNotNull(context.getExternalFilesDir(Environment.DIRECTORY_DOWNLOADS)), DownloadDirectory).also { it.mkdirs() }
+
+    private fun updateFile(context: Context, filename: String): File = File(updateDirectory(context), filename)
+
+    private fun storedUpdateFile(context: Context): File? {
+        val storedPath = preferences(context).getString(DownloadFilePath, null) ?: return null
+        val file = File(storedPath)
+        return try {
+            file.canonicalFile.takeIf { candidate ->
+                candidate.toPath().startsWith(updateDirectory(context).canonicalFile.toPath())
+            }
+        } catch (_: Exception) {
+            null
+        }
     }
 
     private fun clearPreviousDownload(context: Context, manager: DownloadManager) {
@@ -386,6 +394,7 @@ object AppUpdateManager {
             preferences.getLong(CompletedDownloadId, -1L),
         ).filter { it >= 0 }.toLongArray()
         if (ids.isNotEmpty()) manager.remove(*ids)
+        storedUpdateFile(context)?.delete()
         clearDownloadPreferences(context)
     }
 
@@ -398,6 +407,7 @@ object AppUpdateManager {
             .remove(ExpectedVersionCode)
             .remove(ExpectedVersionName)
             .remove(DownloadFilename)
+            .remove(DownloadFilePath)
             .remove(SignatureMatches)
             .apply()
     }

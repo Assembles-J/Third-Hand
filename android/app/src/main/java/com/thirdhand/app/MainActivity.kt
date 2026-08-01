@@ -146,16 +146,22 @@ private fun ThirdHandApp(resumeSignal: Int) {
     var monitoringStartupDownload by remember { mutableStateOf(false) }
     LaunchedEffect(resumeSignal) {
         try {
-            updateMessage = AppUpdateManager.completedUpdateMessage(context)
-            startupDownloadProgress = AppUpdateManager.downloadProgress(context)
-            monitoringStartupDownload = startupDownloadProgress?.state?.isActive == true
             val update = AppUpdateManager.check(context)
-            val automaticResult = if (update != null && !AppUpdateManager.hasCompletedDownload(context)) {
+            val downloaded = update != null && AppUpdateManager.hasCompletedDownload(context, update)
+            startupDownloadProgress = update?.let { AppUpdateManager.downloadProgress(context) }
+            val active = update != null && AppUpdateManager.hasActiveDownload(context, update)
+            val automaticResult = if (update != null && !downloaded && !active) {
                 AppUpdateManager.downloadAutomaticallyOnWifi(context, update)
             } else null
             startupUpdate = if (
-                automaticResult == UpdateLaunchResult.DOWNLOAD_STARTED || AppUpdateManager.hasCompletedDownload(context)
+                downloaded || active || automaticResult == UpdateLaunchResult.DOWNLOAD_STARTED
             ) null else update
+            updateMessage = when {
+                downloaded -> AppUpdateManager.completedUpdateMessage(context)
+                active -> "新版本正在后台下载，可继续使用应用"
+                else -> null
+            }
+            monitoringStartupDownload = active
             if (automaticResult == UpdateLaunchResult.DOWNLOAD_STARTED) {
                 startupDownloadProgress = AppUpdateManager.downloadProgress(context)
                 monitoringStartupDownload = true
@@ -262,6 +268,7 @@ private fun ThirdHandApp(resumeSignal: Int) {
                             UpdateLaunchResult.DOWNLOAD_STARTED -> {
                                 startupDownloadProgress = AppUpdateManager.downloadProgress(context)
                                 monitoringStartupDownload = true
+                                startupUpdate = null
                                 updateMessage = "正在下载，完成后可在管理页面安装"
                             }
                             UpdateLaunchResult.INSTALLER_OPENED -> {
@@ -2243,6 +2250,7 @@ fun ProfileScreen(themeMode: ThemeMode, onThemeModeChange: (ThemeMode) -> Unit) 
     var baseUrl by remember { mutableStateOf(EndpointStore.baseUrl(context)) }
     var connectionStatus by remember { mutableStateOf<String?>(null) }
     var availableUpdate by remember { mutableStateOf<AppUpdate?>(null) }
+    var latestUpdate by remember { mutableStateOf<AppUpdate?>(null) }
     var updateStatus by remember { mutableStateOf<String?>(null) }
     var checkingUpdate by remember { mutableStateOf(false) }
     var automaticDownload by remember { mutableStateOf(AppUpdateManager.automaticDownloadEnabled(context)) }
@@ -2269,14 +2277,19 @@ fun ProfileScreen(themeMode: ThemeMode, onThemeModeChange: (ThemeMode) -> Unit) 
     fun checkForUpdate() {
         scope.launch {
             checkingUpdate = true
-            updateStatus = AppUpdateManager.completedUpdateMessage(context)
-            downloadProgress = AppUpdateManager.downloadProgress(context)
-            monitoringDownload = downloadProgress?.state?.isActive == true
             try {
                 val update = AppUpdateManager.check(context)
-                if (AppUpdateManager.hasCompletedDownload(context)) {
+                latestUpdate = update
+                val downloaded = update != null && AppUpdateManager.hasCompletedDownload(context, update)
+                downloadProgress = update?.let { AppUpdateManager.downloadProgress(context) }
+                val active = update != null && AppUpdateManager.hasActiveDownload(context, update)
+                monitoringDownload = active
+                if (downloaded) {
                     availableUpdate = null
                     updateStatus = AppUpdateManager.completedUpdateMessage(context)
+                } else if (active) {
+                    availableUpdate = null
+                    updateStatus = "新版本正在后台下载，可继续使用应用"
                 } else {
                     val automaticResult = update?.let { AppUpdateManager.downloadAutomaticallyOnWifi(context, it) }
                     availableUpdate = if (automaticResult == UpdateLaunchResult.DOWNLOAD_STARTED) null else update
@@ -2349,6 +2362,7 @@ fun ProfileScreen(themeMode: ThemeMode, onThemeModeChange: (ThemeMode) -> Unit) 
                         UpdateLaunchResult.DOWNLOAD_STARTED -> {
                             downloadProgress = AppUpdateManager.downloadProgress(context)
                             monitoringDownload = true
+                            availableUpdate = null
                             "正在下载，完成后可在管理页面安装"
                         }
                         UpdateLaunchResult.INSTALLER_OPENED -> "已重新打开系统安装器"
@@ -2357,7 +2371,7 @@ fun ProfileScreen(themeMode: ThemeMode, onThemeModeChange: (ThemeMode) -> Unit) 
                         UpdateLaunchResult.SIGNATURE_MISMATCH -> AppUpdateManager.completedUpdateMessage(context)
                         UpdateLaunchResult.DOWNLOAD_UNAVAILABLE -> "安装包不可用，请重新检查更新"
                     }
-                }, enabled = downloadProgress?.state?.isActive != true) { Text(if (AppUpdateManager.hasCompletedDownload(context)) "继续安装" else "下载并安装") }
+                }, enabled = downloadProgress?.state?.isActive != true) { Text(if (AppUpdateManager.hasCompletedDownload(context, update)) "安装更新" else "后台下载") }
             },
         )
     }
@@ -2403,7 +2417,7 @@ fun ProfileScreen(themeMode: ThemeMode, onThemeModeChange: (ThemeMode) -> Unit) 
             }
             SecondaryAction(if (checkingUpdate) "正在检查…" else "检查更新", Icons.Filled.Refresh, { checkForUpdate() }, Modifier.fillMaxWidth())
             downloadProgress?.let { UpdateDownloadProgressCard(it) }
-            if (AppUpdateManager.hasCompletedDownload(context)) {
+            if (latestUpdate?.let { AppUpdateManager.hasCompletedDownload(context, it) } == true) {
                 PrimaryAction("新版本已下载，点击安装", Icons.Filled.Refresh, {
                     updateStatus = when (AppUpdateManager.installDownloadedUpdate(context)) {
                         UpdateLaunchResult.INSTALLER_OPENED -> "已打开系统安装器，请确认安装"
