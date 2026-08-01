@@ -746,6 +746,11 @@ private fun DecisionReportRoute(report: DecisionReportDto, onViewHistory: (() ->
                 ai.reasoning_steps.forEach { step -> Text("${aiReasoningStageLabel(step.stage)}：${step.summary}", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant) }
                 ai.missing_evidence.forEach { missing -> Text("待核验：$missing", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant) }
             }
+            if (report.ai_assessment == null) {
+                HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
+                Text("AI 研究未参与本次报告", style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.SemiBold)
+                Text("当前结论完全来自确定性规则。请在后端配置 DEEPSEEK_API_KEY 并将 DECISION_AI_ENABLED=true，重新生成报告后才会出现针对该标的的 AI 证据权衡。", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            }
 
             HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
             Text("关键证据", style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.SemiBold)

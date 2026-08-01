@@ -240,10 +240,20 @@ jobs:
             update_env THIRD_HAND_MARKET_PROVIDER auto
             update_env TUSHARE_TOKEN "$TUSHARE_TOKEN"
             update_env DEEPSEEK_API_KEY "$DEEPSEEK_API_KEY"
+            # 阶段 1–7 已上线：保留 shadow 研究模式，启用确定性仓位测算和受约束的 AI 证据权衡。
+            # 三者均不连接券商，也不会自动下单。
+            update_env DECISION_SHADOW_MODE true
+            update_env DECISION_SIZING_ENABLED true
+            update_env DECISION_AI_ENABLED true
             update_env APP_PUBLIC_BASE_URL "$APP_PUBLIC_BASE_URL"
             update_env APP_UPDATE_PUBLIC_BASE_URL "$APP_UPDATE_PUBLIC_BASE_URL"
             update_env MARKET_REFRESH_ENABLED true
             update_env MARKET_REFRESH_INTERVAL_SECONDS 60
+
+            if [ -z "$DEEPSEEK_API_KEY" ]; then
+              echo "DEEPSEEK_API_KEY is required because DECISION_AI_ENABLED=true. Add it as the production GitHub Secret."
+              exit 1
+            fi
 
             if [ "$RELEASE_ANDROID" = "true" ]; then
               test -s "release-upload/$APK_FILE.part"
