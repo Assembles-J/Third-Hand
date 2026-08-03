@@ -5,6 +5,7 @@ from fastapi.testclient import TestClient
 
 from app.main import app
 from app.research_chat.models import ResearchSseEvent, ResearchSseEventType
+from app.research_chat.orchestrator import _clarification_questions
 from app.research_chat.sse import encode_event
 
 
@@ -31,6 +32,11 @@ def test_research_chat_is_inert_when_feature_flag_is_disabled(monkeypatch):
     response = client.post("/v1/research-chat/sessions", json={"title": "研究"})
 
     assert response.status_code == 404
+
+
+def test_read_only_list_tool_result_is_not_mistaken_for_a_clarification():
+    assert _clarification_questions([{"symbol": "600519"}]) is None
+    assert _clarification_questions({"clarification": True, "questions": ["请确认持仓成本"]}) == ["请确认持仓成本"]
 
 
 def test_research_stream_is_versioned_and_reports_missing_model_without_leaking_upstream(monkeypatch):

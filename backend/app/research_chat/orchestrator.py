@@ -30,6 +30,20 @@ def _flag(name: str) -> bool:
     return os.getenv(name, "false").lower() in {"1", "true", "yes", "on"}
 
 
+def _clarification_questions(result: object) -> list[str] | None:
+    """Only the dedicated input tool may turn a tool result into a clarification.
+
+    Most read-only tools correctly return lists (holdings, events, reports) or
+    scalars.  They are valid tool payloads and must not be treated as mappings.
+    """
+    if not isinstance(result, dict) or result.get("clarification") is not True:
+        return None
+    questions = result.get("questions")
+    if not isinstance(questions, list) or not 1 <= len(questions) <= 3:
+        raise ValueError("tool_invalid_clarification_payload")
+    return [str(question)[:240] for question in questions]
+
+
 class ResearchChatOrchestrator:
     def __init__(self, repo, context_builder, store, decision_orchestrator) -> None:
         self.repo = repo
@@ -129,8 +143,9 @@ class ResearchChatOrchestrator:
                         logger.exception("Research tool failed turn_id=%s tool=%s", turn.id, name)
                         yield emit(ResearchSseEventType.tool_failed, {"tool_name": name, "error_code": "tool_invalid_arguments"})
                         raise
-                    if result.get("clarification") and _flag("RESEARCH_CHAT_CLARIFICATION_ENABLED"):
-                        item = self.repo.create_clarification(turn.id, "模型需要补充", result["questions"])
+                    questions = _clarification_questions(result)
+                    if questions and _flag("RESEARCH_CHAT_CLARIFICATION_ENABLED"):
+                        item = self.repo.create_clarification(turn.id, "模型需要补充", questions)
                         self.repo.update_turn(turn.id, status=ResearchTurnStatus.waiting_user.value)
                         yield emit(ResearchSseEventType.clarification_required, item)
                         yield emit(ResearchSseEventType.done, {"status": "waiting_user", "turn_id": turn.id})
