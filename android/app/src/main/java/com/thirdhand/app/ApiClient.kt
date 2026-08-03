@@ -193,11 +193,12 @@ data class TechnicalSnapshotDto(
 )
 data class DecisionEventDto(val id: String, val title: String, val impact: String, val summary: String, val source_url: String? = null, val published_at: String? = null)
 data class CalibrationHorizonDto(val sample_count: Int = 0, val average_return_percent: Double? = null, val rule_alignment_rate_percent: Double? = null)
-data class HistoricalCalibrationDto(val action: String = "", val definition: String = "", val horizons: Map<String, CalibrationHorizonDto> = emptyMap())
+// Gson may deserialize an explicit JSON null despite the Kotlin default value.
+data class HistoricalCalibrationDto(val action: String = "", val definition: String = "", val horizons: Map<String, CalibrationHorizonDto>? = emptyMap())
 data class MarketIndexRegimeDto(val symbol: String, val name: String, val five_day_return_percent: Double, val trend: String, val above_sma20: Boolean)
 data class MarketRegimeDto(val status: String = "unavailable", val regime: String = "unknown", val indexes: List<MarketIndexRegimeDto> = emptyList(), val source: String = "", val note: String = "")
 data class RelativeHorizonDto(val stock_return_percent: Double, val benchmark_return_percent: Double, val relative_return_percent: Double)
-data class RelativeStrengthDto(val status: String = "not_configured", val benchmark_symbol: String? = null, val benchmark_name: String? = null, val horizons: Map<String, RelativeHorizonDto> = emptyMap(), val label: String? = null, val note: String = "")
+data class RelativeStrengthDto(val status: String = "not_configured", val benchmark_symbol: String? = null, val benchmark_name: String? = null, val horizons: Map<String, RelativeHorizonDto>? = emptyMap(), val label: String? = null, val note: String = "")
 data class DecisionSnapshotDto(
     val event_evidence: List<DecisionEventDto> = emptyList(), val missing_evidence: List<String> = emptyList(),
     val evidence_completeness_percent: Int = 0, val candidate_action: String = "", val confidence_definition: String = "", val historical_calibration: HistoricalCalibrationDto? = null, val market_regime: MarketRegimeDto? = null, val relative_strength: RelativeStrengthDto? = null,

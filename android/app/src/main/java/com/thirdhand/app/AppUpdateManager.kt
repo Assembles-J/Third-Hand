@@ -169,6 +169,24 @@ object AppUpdateManager {
         }
     }
 
+    /**
+     * Reconciles DownloadManager with app-owned verification state.
+     *
+     * Some OEMs delay or drop ACTION_DOWNLOAD_COMPLETE until the system
+     * notification is opened. Polling must therefore be able to finish SHA-256
+     * and signature verification without relying on that broadcast.
+     */
+    suspend fun refreshDownloadState(context: Context): UpdateDownloadProgress? = withContext(Dispatchers.IO) {
+        val progress = downloadProgress(context)
+        if (progress?.state != UpdateDownloadState.VERIFYING) return@withContext progress
+        val id = preferences(context).getLong(DownloadId, -1L)
+        val verified = id >= 0 && finalizeSuccessfulDownload(context, id)
+        if (verified) downloadProgress(context) else progress.copy(
+            state = UpdateDownloadState.FAILED,
+            message = "安装包校验失败，请重新下载",
+        )
+    }
+
     /** Starts a manual download or opens an already verified installer. Android still requires user confirmation. */
     fun downloadAndInstall(context: Context, update: AppUpdate): UpdateLaunchResult {
         if (hasCompletedDownload(context, update)) return installDownloadedUpdate(context)
@@ -292,6 +310,32 @@ object AppUpdateManager {
         context.getSystemService(DownloadManager::class.java).remove(id)
         storedUpdateFile(context)?.delete()
         clearDownloadPreferences(context)
+    }
+
+    suspend fun finalizeSuccessfulDownload(context: Context, id: Long): Boolean = withContext(Dispatchers.IO) {
+        if (!matchesPendingDownload(context, id)) return@withContext false
+        if (preferences(context).getLong(CompletedDownloadId, -1L) == id && completedDownload(context) != null) {
+            return@withContext true
+        }
+        val manager = context.getSystemService(DownloadManager::class.java)
+        val cursor = manager.query(DownloadManager.Query().setFilterById(id)) ?: return@withContext false
+        var totalSize = -1L
+        cursor.use {
+            if (!it.moveToFirst()) return@withContext false
+            if (it.getInt(it.getColumnIndexOrThrow(DownloadManager.COLUMN_STATUS)) != DownloadManager.STATUS_SUCCESSFUL) {
+                return@withContext false
+            }
+            totalSize = it.getLong(it.getColumnIndexOrThrow(DownloadManager.COLUMN_TOTAL_SIZE_BYTES))
+        }
+        val file = storedUpdateFile(context)
+        if (file == null || !file.isFile) return@withContext false
+        val uri = FileProvider.getUriForFile(context, "${context.packageName}.fileprovider", file)
+        if (!verifyDownloadedApk(context, uri, totalSize)) {
+            clearFailedDownload(context, id)
+            return@withContext false
+        }
+        markDownloadCompleted(context, id, signaturesMatchInstalledApp(context, uri))
+        true
     }
 
     fun openInstaller(context: Context, uri: Uri): Boolean {
@@ -473,30 +517,15 @@ class AppUpdateDownloadReceiver : BroadcastReceiver() {
     }
 
     private suspend fun handleCompletedDownload(context: Context, id: Long) {
-        val manager = context.getSystemService(DownloadManager::class.java)
-        val cursor = manager.query(DownloadManager.Query().setFilterById(id)) ?: return
-        var totalSize = -1L
-        cursor.use {
-            if (
-                !it.moveToFirst() ||
-                it.getInt(it.getColumnIndexOrThrow(DownloadManager.COLUMN_STATUS)) != DownloadManager.STATUS_SUCCESSFUL
-            ) {
-                AppUpdateManager.clearFailedDownload(context, id)
-                return
-            }
-            totalSize = it.getLong(it.getColumnIndexOrThrow(DownloadManager.COLUMN_TOTAL_SIZE_BYTES))
-        }
-        val uri = manager.getUriForDownloadedFile(id) ?: return
-        if (!AppUpdateManager.verifyDownloadedApk(context, uri, totalSize)) {
+        val progress = AppUpdateManager.downloadProgress(context)
+        if (progress?.state == UpdateDownloadState.FAILED) {
             AppUpdateManager.clearFailedDownload(context, id)
+            return
+        }
+        if (progress?.state == UpdateDownloadState.VERIFYING && !AppUpdateManager.finalizeSuccessfulDownload(context, id)) {
             withContext(Dispatchers.Main) {
                 Toast.makeText(context, "更新包校验失败，文件已删除并阻止安装", Toast.LENGTH_LONG).show()
             }
-            return
         }
-
-        val signatureMatches = AppUpdateManager.signaturesMatchInstalledApp(context, uri)
-        AppUpdateManager.markDownloadCompleted(context, id, signatureMatches)
-        // Installation is deliberately user initiated from the management page.
     }
 }

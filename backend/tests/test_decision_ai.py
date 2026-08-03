@@ -3,7 +3,7 @@ import json
 from app.decision_ai import DecisionAiService
 from app.decision_guard import DecisionGuard
 from app.decision_models import ActionCandidate, AiResearchAssessment
-from app.llm_client import LlmResponse, LlmUsage
+from app.llm_client import LlmClientError, LlmResponse, LlmUsage
 
 
 class Store:
@@ -52,6 +52,21 @@ def test_ai_service_rejects_unknown_evidence_and_preserves_rule_fallback():
     assert result.status == "failed"
     assert result.error_code == "invalid_ai_output"
     assert store.runs[-1]["status"] == "failed"
+
+
+def test_ai_service_does_not_repeat_a_truncated_request():
+    class TruncatingClient(Client):
+        def chat_json(self, *_args, **_kwargs):
+            self.calls += 1
+            raise LlmClientError("truncated", code="output_truncated", retryable=False)
+
+    store = Store()
+    client = TruncatingClient("")
+    result = DecisionAiService(store, client).assess(Context(), _evidence(), (_candidate(),))
+
+    assert result.status == "failed"
+    assert result.error_code == "output_truncated"
+    assert client.calls == 1
 
 
 def test_guard_rejects_ai_action_outside_policy_candidates():

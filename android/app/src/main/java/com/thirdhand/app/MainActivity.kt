@@ -49,8 +49,11 @@ import androidx.compose.material.icons.filled.CameraAlt
 import androidx.compose.material.icons.filled.ChevronRight
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.Close
+import androidx.compose.material.icons.filled.CloudDownload
+import androidx.compose.material.icons.filled.CheckCircle
 import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.Search
+import androidx.compose.material.icons.filled.SystemUpdateAlt
 import androidx.compose.material.icons.filled.Wallet
 import androidx.compose.material.icons.automirrored.filled.Article
 import androidx.compose.material3.AlertDialog
@@ -144,11 +147,12 @@ private fun ThirdHandApp(resumeSignal: Int) {
     var updateMessage by remember { mutableStateOf<String?>(null) }
     var startupDownloadProgress by remember { mutableStateOf<UpdateDownloadProgress?>(null) }
     var monitoringStartupDownload by remember { mutableStateOf(false) }
+    var installStartupUpdateWhenReady by remember { mutableStateOf(false) }
     LaunchedEffect(resumeSignal) {
         try {
             val update = AppUpdateManager.check(context)
+            startupDownloadProgress = update?.let { AppUpdateManager.refreshDownloadState(context) }
             val downloaded = update != null && AppUpdateManager.hasCompletedDownload(context, update)
-            startupDownloadProgress = update?.let { AppUpdateManager.downloadProgress(context) }
             val active = update != null && AppUpdateManager.hasActiveDownload(context, update)
             val automaticResult = if (update != null && !downloaded && !active) {
                 AppUpdateManager.downloadAutomaticallyOnWifi(context, update)
@@ -174,12 +178,16 @@ private fun ThirdHandApp(resumeSignal: Int) {
     LaunchedEffect(monitoringStartupDownload) {
         if (!monitoringStartupDownload) return@LaunchedEffect
         while (true) {
-            val current = AppUpdateManager.downloadProgress(context)
+            val current = AppUpdateManager.refreshDownloadState(context)
             startupDownloadProgress = current
             if (current == null || !current.state.isActive) {
                 monitoringStartupDownload = false
-                updateMessage = if (current?.state == UpdateDownloadState.FAILED) {
-                    current.state.label
+                val ready = AppUpdateManager.hasCompletedDownload(context)
+                updateMessage = if (ready && installStartupUpdateWhenReady) {
+                    installStartupUpdateWhenReady = false
+                    installResultMessage(AppUpdateManager.installDownloadedUpdate(context), context)
+                } else if (current?.state == UpdateDownloadState.FAILED) {
+                    current.message
                 } else {
                     AppUpdateManager.completedUpdateMessage(context) ?: current?.state?.label
                 }
@@ -249,24 +257,16 @@ private fun ThirdHandApp(resumeSignal: Int) {
             }
         }
         startupUpdate?.let { update ->
-            AlertDialog(
-                onDismissRequest = { startupUpdate = null },
-                title = { Text("发现新版本 ${update.versionName}") },
-                text = {
-                    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                        Text(update.changelog.ifBlank { "已准备好新版本，建议更新后继续使用。" })
-                        startupDownloadProgress?.let { UpdateDownloadProgressCard(it) }
-                        updateMessage?.let {
-                            Text(it, color = if (isUpdateStatusError(it)) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.onSurfaceVariant, style = MaterialTheme.typography.bodySmall)
-                        }
-                    }
-                },
-                dismissButton = { TextButton(onClick = { startupUpdate = null }) { Text("稍后") } },
-                confirmButton = {
-                    TextButton(onClick = {
+            UpdatePromptDialog(
+                update = update,
+                progress = startupDownloadProgress,
+                status = updateMessage,
+                onDismiss = { startupUpdate = null },
+                onConfirm = {
                         when (AppUpdateManager.downloadAndInstall(context, update)) {
                             UpdateLaunchResult.DOWNLOAD_STARTED -> {
                                 startupDownloadProgress = AppUpdateManager.downloadProgress(context)
+                                installStartupUpdateWhenReady = true
                                 monitoringStartupDownload = true
                                 startupUpdate = null
                                 updateMessage = "正在下载，完成后可在管理页面安装"
@@ -287,9 +287,6 @@ private fun ThirdHandApp(resumeSignal: Int) {
                                 updateMessage = "安装包不可用，请重新检查更新"
                             }
                         }
-                    }, enabled = startupDownloadProgress?.state?.isActive != true) {
-                        Text(if (AppUpdateManager.hasCompletedDownload(context)) "继续安装" else "下载并安装")
-                    }
                 },
             )
         }
@@ -1059,6 +1056,137 @@ private fun UpdateDownloadProgressCard(progress: UpdateDownloadProgress, modifie
     }
 }
 
+@Composable
+private fun UpdatePromptDialog(
+    update: AppUpdate,
+    progress: UpdateDownloadProgress?,
+    status: String?,
+    onDismiss: () -> Unit,
+    onConfirm: () -> Unit,
+) {
+    Dialog(onDismissRequest = onDismiss) {
+        Surface(
+            modifier = Modifier.fillMaxWidth(),
+            shape = RoundedCornerShape(24.dp),
+            color = MaterialTheme.colorScheme.surface,
+            tonalElevation = 6.dp,
+        ) {
+            Column(Modifier.padding(24.dp), verticalArrangement = Arrangement.spacedBy(16.dp)) {
+                Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+                    Surface(
+                        shape = RoundedCornerShape(14.dp),
+                        color = MaterialTheme.colorScheme.primaryContainer,
+                    ) {
+                        Icon(
+                            Icons.Filled.SystemUpdateAlt,
+                            contentDescription = null,
+                            tint = MaterialTheme.colorScheme.onPrimaryContainer,
+                            modifier = Modifier.padding(12.dp),
+                        )
+                    }
+                    Column(Modifier.padding(start = 14.dp).weight(1f)) {
+                        Text("新版本可用", style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.primary)
+                        Text("Third-Hand ${update.versionName}", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold)
+                        Text("${formatDownloadSize(update.sizeBytes)} · 构建 ${update.versionCode}", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    }
+                }
+                HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
+                Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                    Text("本次更新", style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.SemiBold)
+                    Text(update.changelog.ifBlank { "优化使用体验与稳定性。" }, style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                }
+                progress?.let { UpdateDownloadProgressCard(it) }
+                status?.let {
+                    Text(it, style = MaterialTheme.typography.bodySmall, color = if (isUpdateStatusError(it)) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.onSurfaceVariant)
+                }
+                Button(
+                    onClick = onConfirm,
+                    enabled = progress?.state?.isActive != true,
+                    modifier = Modifier.fillMaxWidth().heightIn(min = 48.dp),
+                ) {
+                    Icon(Icons.Filled.CloudDownload, contentDescription = null)
+                    Spacer(Modifier.width(8.dp))
+                    Text(if (AppUpdateManager.hasCompletedDownload(LocalContext.current, update)) "安装更新" else "后台下载")
+                }
+                TextButton(onClick = onDismiss, modifier = Modifier.align(Alignment.CenterHorizontally)) { Text("稍后提醒") }
+                Text("下载期间可继续使用；安装时由 Android 系统再次确认。", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant, textAlign = TextAlign.Center, modifier = Modifier.fillMaxWidth())
+            }
+        }
+    }
+}
+
+@Composable
+private fun UpdateCenterCard(
+    update: AppUpdate?,
+    progress: UpdateDownloadProgress?,
+    status: String?,
+    checking: Boolean,
+    automaticDownload: Boolean,
+    onAutomaticDownloadChange: (Boolean) -> Unit,
+    onCheck: () -> Unit,
+    onInstall: () -> Unit,
+) {
+    val context = LocalContext.current
+    val ready = update?.let { AppUpdateManager.hasCompletedDownload(context, it) } == true
+    val headline = when {
+        ready -> "更新已准备好"
+        progress?.state?.isActive == true -> progress.message
+        update != null -> "发现 ${update.versionName}"
+        status == "已是最新版本" -> "已是最新版本"
+        else -> "保持应用最新"
+    }
+    Card(
+        modifier = Modifier.padding(horizontal = 20.dp).fillMaxWidth(),
+        shape = RoundedCornerShape(24.dp),
+        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant),
+    ) {
+        Column(Modifier.padding(18.dp), verticalArrangement = Arrangement.spacedBy(16.dp)) {
+            Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+                Surface(shape = RoundedCornerShape(12.dp), color = MaterialTheme.colorScheme.primaryContainer) {
+                    Icon(
+                        if (ready) Icons.Filled.CheckCircle else Icons.Filled.SystemUpdateAlt,
+                        contentDescription = null,
+                        tint = MaterialTheme.colorScheme.onPrimaryContainer,
+                        modifier = Modifier.padding(10.dp),
+                    )
+                }
+                Column(Modifier.padding(start = 12.dp).weight(1f)) {
+                    Text("应用更新", style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    Text(headline, style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
+                }
+                Surface(shape = RoundedCornerShape(50), color = MaterialTheme.colorScheme.surface) {
+                    Text("v${BuildConfig.VERSION_NAME}", modifier = Modifier.padding(horizontal = 10.dp, vertical = 6.dp), style = MaterialTheme.typography.labelMedium)
+                }
+            }
+            progress?.let { UpdateDownloadProgressCard(it) }
+            if (ready) {
+                Button(onClick = onInstall, modifier = Modifier.fillMaxWidth().heightIn(min = 48.dp)) {
+                    Icon(Icons.Filled.SystemUpdateAlt, contentDescription = null)
+                    Spacer(Modifier.width(8.dp))
+                    Text("现在安装 ${update?.versionName.orEmpty()}")
+                }
+            } else {
+                OutlinedButton(onClick = onCheck, enabled = !checking, modifier = Modifier.fillMaxWidth().heightIn(min = 48.dp)) {
+                    Icon(Icons.Filled.Refresh, contentDescription = null)
+                    Spacer(Modifier.width(8.dp))
+                    Text(if (checking) "正在检查…" else "检查更新")
+                }
+            }
+            status?.takeUnless { progress != null || ready }?.let {
+                Text(it, style = MaterialTheme.typography.bodySmall, color = if (isUpdateStatusError(it)) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.onSurfaceVariant)
+            }
+            HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
+            Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+                Column(Modifier.weight(1f)) {
+                    Text("Wi‑Fi 下自动下载", style = MaterialTheme.typography.bodyMedium, fontWeight = FontWeight.Medium)
+                    Text("默认开启，下载完成后由你确认安装", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                }
+                Switch(checked = automaticDownload, onCheckedChange = onAutomaticDownloadChange)
+            }
+        }
+    }
+}
+
 private fun formatDownloadSize(bytes: Long): String = when {
     bytes >= 1024 * 1024 -> "%.1f MB".format(bytes / 1024.0 / 1024.0)
     bytes >= 1024 -> "%.0f KB".format(bytes / 1024.0)
@@ -1067,6 +1195,14 @@ private fun formatDownloadSize(bytes: Long): String = when {
 
 private fun isUpdateStatusError(status: String): Boolean =
     status.contains("失败") || status.contains("不可用") || status.contains("无法")
+
+private fun installResultMessage(result: UpdateLaunchResult, context: android.content.Context): String = when (result) {
+    UpdateLaunchResult.INSTALLER_OPENED -> "已打开系统安装器，请确认安装"
+    UpdateLaunchResult.NEED_INSTALL_PERMISSION -> "请允许“安装未知应用”后返回，再次点击安装"
+    UpdateLaunchResult.SIGNATURE_MISMATCH -> AppUpdateManager.completedUpdateMessage(context) ?: "安装包签名不一致"
+    UpdateLaunchResult.DOWNLOAD_UNAVAILABLE -> "安装包不可用，请重新检查更新"
+    else -> "新版本已下载，点击安装"
+}
 
 @Composable
 private fun TechnicalMetric(label: String, value: String, modifier: Modifier = Modifier, onLookup: (() -> Unit)? = null) {
@@ -1471,6 +1607,7 @@ private fun HoldingDetailScreen(holding: HoldingDto, onBack: () -> Unit) {
     val scope = rememberCoroutineScope()
     var bars by remember(holding.id) { mutableStateOf<List<DailyPriceDto>>(emptyList()) }
     var intradayBars by remember(holding.id) { mutableStateOf<List<DailyPriceDto>>(emptyList()) }
+    var intradayLoadError by remember(holding.id) { mutableStateOf<String?>(null) }
     var sales by remember(holding.id) { mutableStateOf<List<SaleRecordDto>>(emptyList()) }
     var risk by remember(holding.id) { mutableStateOf<RiskAssessmentDto?>(null) }
     var quote by remember(holding.id) { mutableStateOf<MarketQuoteDto?>(null) }
@@ -1484,7 +1621,13 @@ private fun HoldingDetailScreen(holding: HoldingDto, onBack: () -> Unit) {
     var sellOpen by remember { mutableStateOf(false) }
     LaunchedEffect(holding.id) {
         bars = runCatching { api.marketHistory(holding.symbol) }.getOrDefault(emptyList())
-        intradayBars = runCatching { api.marketIntraday(holding.symbol).map { bar -> DailyPriceDto(trading_date = bar.bar_time, open = bar.open, close = bar.close, high = bar.high, low = bar.low, volume = bar.volume, amount = bar.amount, adjustment = "1m") } }.getOrDefault(emptyList())
+        val intradayResult = runCatching { api.marketIntraday(holding.symbol) }
+        intradayBars = intradayResult.getOrDefault(emptyList()).map { bar ->
+            DailyPriceDto(trading_date = bar.bar_time, open = bar.open, close = bar.close, high = bar.high, low = bar.low, volume = bar.volume, amount = bar.amount, adjustment = "1m")
+        }
+        intradayLoadError = intradayResult.exceptionOrNull()?.let { error ->
+            "小时 K 线数据请求失败：${error.message ?: error.javaClass.simpleName}"
+        }
         sales = runCatching { api.sales(holding.symbol) }.getOrDefault(emptyList())
         risk = runCatching { api.riskAssessments().firstOrNull { it.symbol == holding.symbol } }.getOrNull()
         quote = runCatching { ApiClient.marketQuotes(api, MarketQuoteBatchRequestDto(listOf(holding.symbol))).firstOrNull() }.getOrNull()
@@ -1498,6 +1641,7 @@ private fun HoldingDetailScreen(holding: HoldingDto, onBack: () -> Unit) {
     }
     val chartBars = when (period) {
         "今日" -> intradayBars
+        "小时" -> aggregateIntradayBars(intradayBars)
         "日线" -> todaySnapshotBar(bars, quote)
         else -> aggregateBars(bars, period)
     }
@@ -1511,8 +1655,15 @@ private fun HoldingDetailScreen(holding: HoldingDto, onBack: () -> Unit) {
             item { Column(Modifier.padding(horizontal = 20.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
             Text("持有 ${holding.quantity} · 成本 ${holding.average_cost} · 现价 ${quote?.price ?: "--"}", style = MaterialTheme.typography.bodySmall)
             Text("行情 K 线", fontWeight = FontWeight.SemiBold)
-            Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) { listOf("今日", "日线", "周线", "月线").forEach { label -> TextButton(onClick = { period = label }) { Text(label, color = if (period == label) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant) } } }
-            if (chartBars.size >= 2) KLineChart(chartBars, quote.takeIf { period == "日线" || period == "今日" }) else Text(if (period == "今日") "今日分钟线正在后台同步；仅显示已缓存数据。" else "日线正在后台准备。", style = MaterialTheme.typography.bodySmall)
+            Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) { listOf("今日", "小时", "日线", "周线", "月线").forEach { label -> TextButton(onClick = { period = label }) { Text(label, color = if (period == label) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant) } } }
+            if (chartBars.size >= 2) KLineChart(chartBars, quote.takeIf { period == "日线" || period == "今日" }) else Text(
+                when {
+                    period == "今日" || period == "小时" -> intradayLoadError ?: "暂无分钟行情缓存；服务端将在下一次行情刷新后生成小时 K 线。"
+                    else -> "日线正在后台准备。"
+                },
+                style = MaterialTheme.typography.bodySmall,
+                color = if (intradayLoadError != null && (period == "今日" || period == "小时")) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.onSurfaceVariant,
+            )
             } }
             decisionReport?.let { report -> item { DecisionReportRoute(report) } }
             if (decisionReport == null) analysis?.let { review -> item { Column(Modifier.padding(horizontal = 20.dp)) {
@@ -1582,6 +1733,26 @@ private fun aggregateBars(bars: List<DailyPriceDto>, period: String): List<Daily
         DailyPriceDto(trading_date = rows.last().trading_date, open = rows.first().open, close = rows.last().close, high = rows.maxOfOrNull { it.high ?: it.close }, low = rows.minOfOrNull { it.low ?: it.close }, volume = rows.sumOf { it.volume ?: 0.0 }, amount = rows.sumOf { it.amount ?: 0.0 }, adjustment = rows.last().adjustment ?: "qfq")
     }.takeLast(120)
 }
+
+/** Converts the persisted one-minute cache into exchange-clock hourly OHLCV bars. */
+private fun aggregateIntradayBars(bars: List<DailyPriceDto>): List<DailyPriceDto> = bars
+    .groupBy { bar -> bar.trading_date.trim().take(13) }
+    .toSortedMap()
+    .values
+    .mapNotNull { group ->
+        val first = group.firstOrNull() ?: return@mapNotNull null
+        val last = group.last()
+        DailyPriceDto(
+            trading_date = "${first.trading_date.take(13)}:00",
+            open = first.open,
+            close = last.close,
+            high = group.maxOfOrNull { it.high ?: it.close },
+            low = group.minOfOrNull { it.low ?: it.close },
+            volume = group.sumOf { it.volume ?: 0.0 },
+            amount = group.sumOf { it.amount ?: 0.0 },
+            adjustment = "1h",
+        )
+    }
 
 @Composable
 private fun KLineChart(bars: List<DailyPriceDto>, quote: MarketQuoteDto? = null) = Column {
@@ -1905,11 +2076,11 @@ private fun AnalysisDetailItem(item: PortfolioAnalysisItemDto, expanded: Boolean
                 }
                 snapshot.relative_strength?.let { strength ->
                     Text("相对强弱：${strength.label ?: "待配置"}", modifier = Modifier.padding(top = 6.dp), style = MaterialTheme.typography.labelMedium, fontWeight = FontWeight.Bold)
-                    Text(strength.horizons.entries.joinToString(" · ") { "${it.key}日差 ${it.value.relative_return_percent}%" }.ifBlank { strength.note }, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    Text(strength.horizons.orEmpty().entries.joinToString(" · ") { "${it.key}日差 ${it.value.relative_return_percent}%" }.ifBlank { strength.note }, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
                 }
                 snapshot.historical_calibration?.let { calibration ->
                     Text("历史校准", modifier = Modifier.padding(top = 6.dp), style = MaterialTheme.typography.labelMedium, fontWeight = FontWeight.Bold)
-                    calibration.horizons.forEach { (days, result) ->
+                    calibration.horizons.orEmpty().forEach { (days, result) ->
                         val summary = if (result.sample_count == 0) {
                             "样本尚未成熟"
                         } else {
@@ -2278,6 +2449,7 @@ fun ProfileScreen(themeMode: ThemeMode, onThemeModeChange: (ThemeMode) -> Unit) 
     var automaticDownload by remember { mutableStateOf(AppUpdateManager.automaticDownloadEnabled(context)) }
     var downloadProgress by remember { mutableStateOf<UpdateDownloadProgress?>(null) }
     var monitoringDownload by remember { mutableStateOf(false) }
+    var installUpdateWhenReady by remember { mutableStateOf(false) }
     var personalRules by remember { mutableStateOf<List<PersonalRuleDto>>(emptyList()) }
     var learningCases by remember { mutableStateOf<List<LearningCaseDto>>(emptyList()) }
     var learningAnalysis by remember { mutableStateOf<LearningCaseAnalysisDto?>(null) }
@@ -2302,8 +2474,8 @@ fun ProfileScreen(themeMode: ThemeMode, onThemeModeChange: (ThemeMode) -> Unit) 
             try {
                 val update = AppUpdateManager.check(context)
                 latestUpdate = update
+                downloadProgress = update?.let { AppUpdateManager.refreshDownloadState(context) }
                 val downloaded = update != null && AppUpdateManager.hasCompletedDownload(context, update)
-                downloadProgress = update?.let { AppUpdateManager.downloadProgress(context) }
                 val active = update != null && AppUpdateManager.hasActiveDownload(context, update)
                 monitoringDownload = active
                 if (downloaded) {
@@ -2350,12 +2522,16 @@ fun ProfileScreen(themeMode: ThemeMode, onThemeModeChange: (ThemeMode) -> Unit) 
     LaunchedEffect(monitoringDownload) {
         if (!monitoringDownload) return@LaunchedEffect
         while (true) {
-            val current = AppUpdateManager.downloadProgress(context)
+            val current = AppUpdateManager.refreshDownloadState(context)
             downloadProgress = current
             if (current == null || !current.state.isActive) {
                 monitoringDownload = false
-                updateStatus = if (current?.state == UpdateDownloadState.FAILED) {
-                    current.state.label
+                val ready = AppUpdateManager.hasCompletedDownload(context)
+                updateStatus = if (ready && installUpdateWhenReady) {
+                    installUpdateWhenReady = false
+                    installResultMessage(AppUpdateManager.installDownloadedUpdate(context), context)
+                } else if (current?.state == UpdateDownloadState.FAILED) {
+                    current.message
                 } else {
                     AppUpdateManager.completedUpdateMessage(context) ?: current?.state?.label
                 }
@@ -2365,24 +2541,16 @@ fun ProfileScreen(themeMode: ThemeMode, onThemeModeChange: (ThemeMode) -> Unit) 
         }
     }
     availableUpdate?.let { update ->
-        AlertDialog(
-            onDismissRequest = { availableUpdate = null },
-            title = { Text("发现新版本 ${update.versionName}") },
-            text = {
-                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                    Text(update.changelog.ifBlank { "已准备好新版本，建议更新后继续使用。" })
-                    downloadProgress?.let { UpdateDownloadProgressCard(it) }
-                    updateStatus?.let {
-                        Text(it, color = if (isUpdateStatusError(it)) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.onSurfaceVariant, style = MaterialTheme.typography.bodySmall)
-                    }
-                }
-            },
-            dismissButton = { TextButton(onClick = { availableUpdate = null }) { Text("稍后") } },
-            confirmButton = {
-                TextButton(onClick = {
+        UpdatePromptDialog(
+            update = update,
+            progress = downloadProgress,
+            status = updateStatus,
+            onDismiss = { availableUpdate = null },
+            onConfirm = {
                     updateStatus = when (AppUpdateManager.downloadAndInstall(context, update)) {
                         UpdateLaunchResult.DOWNLOAD_STARTED -> {
                             downloadProgress = AppUpdateManager.downloadProgress(context)
+                            installUpdateWhenReady = true
                             monitoringDownload = true
                             availableUpdate = null
                             "正在下载，完成后可在管理页面安装"
@@ -2393,7 +2561,6 @@ fun ProfileScreen(themeMode: ThemeMode, onThemeModeChange: (ThemeMode) -> Unit) 
                         UpdateLaunchResult.SIGNATURE_MISMATCH -> AppUpdateManager.completedUpdateMessage(context)
                         UpdateLaunchResult.DOWNLOAD_UNAVAILABLE -> "安装包不可用，请重新检查更新"
                     }
-                }, enabled = downloadProgress?.state?.isActive != true) { Text(if (AppUpdateManager.hasCompletedDownload(context, update)) "安装更新" else "后台下载") }
             },
         )
     }
@@ -2421,37 +2588,24 @@ fun ProfileScreen(themeMode: ThemeMode, onThemeModeChange: (ThemeMode) -> Unit) 
             }, Modifier.fillMaxWidth())
         } }
         connectionStatus?.let { item { StatusCard(it, positive = it == "连接成功", error = it != "连接成功") } }
-        item { Text("应用更新", modifier = Modifier.padding(horizontal = 20.dp), style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold) }
-        item { Column(Modifier.padding(horizontal = 20.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-            Text("当前版本 v${BuildConfig.VERSION_NAME}（构建 ${BuildConfig.VERSION_CODE}）", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
-            Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.SpaceBetween) {
-                Column(Modifier.weight(1f)) {
-                    Text("Wi‑Fi 下自动下载更新", style = MaterialTheme.typography.bodyMedium, fontWeight = FontWeight.Medium)
-                    Text("默认开启；仅下载，安装仍需你确认。", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                }
-                Switch(
-                    checked = automaticDownload,
-                    onCheckedChange = { enabled ->
-                        automaticDownload = enabled
-                        AppUpdateManager.setAutomaticDownloadEnabled(context, enabled)
-                    },
-                )
-            }
-            SecondaryAction(if (checkingUpdate) "正在检查…" else "检查更新", Icons.Filled.Refresh, { checkForUpdate() }, Modifier.fillMaxWidth())
-            downloadProgress?.let { UpdateDownloadProgressCard(it) }
-            if (latestUpdate?.let { AppUpdateManager.hasCompletedDownload(context, it) } == true) {
-                PrimaryAction("新版本已下载，点击安装", Icons.Filled.Refresh, {
-                    updateStatus = when (AppUpdateManager.installDownloadedUpdate(context)) {
-                        UpdateLaunchResult.INSTALLER_OPENED -> "已打开系统安装器，请确认安装"
-                        UpdateLaunchResult.NEED_INSTALL_PERMISSION -> "请允许“安装未知应用”后返回，再次点击安装"
-                        UpdateLaunchResult.SIGNATURE_MISMATCH -> AppUpdateManager.completedUpdateMessage(context)
-                        UpdateLaunchResult.DOWNLOAD_UNAVAILABLE -> "安装包不可用，请重新检查更新"
-                        else -> "安装包已下载，请点击安装"
-                    }
-                }, Modifier.fillMaxWidth())
-            }
-            updateStatus?.let { StatusCard(it, positive = it == "已是最新版本", error = isUpdateStatusError(it)) }
-        } }
+        item {
+            UpdateCenterCard(
+                update = latestUpdate,
+                progress = downloadProgress,
+                status = updateStatus,
+                checking = checkingUpdate,
+                automaticDownload = automaticDownload,
+                onAutomaticDownloadChange = { enabled ->
+                    automaticDownload = enabled
+                    AppUpdateManager.setAutomaticDownloadEnabled(context, enabled)
+                    if (enabled) checkForUpdate()
+                },
+                onCheck = { checkForUpdate() },
+                onInstall = {
+                    updateStatus = installResultMessage(AppUpdateManager.installDownloadedUpdate(context), context)
+                },
+            )
+        }
         item { Text("个人复核规则", modifier = Modifier.padding(horizontal = 20.dp), style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold) }
         item {
             Column(Modifier.padding(horizontal = 20.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {

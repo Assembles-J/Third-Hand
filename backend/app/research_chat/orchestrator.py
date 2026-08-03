@@ -52,6 +52,7 @@ class ResearchChatOrchestrator:
         answer: list[str] = []
         reasoning: list[str] = []
         usage: dict[str, object] = {}
+        completion_truncated = False
         try:
             logger.info("Research turn started turn_id=%s session_id=%s symbol=%s model=%s", turn.id, session.id, symbol or session.primary_symbol, self.stream_client.settings.reasoning_model)
             inc("research_chat_turn_total")
@@ -78,6 +79,7 @@ class ResearchChatOrchestrator:
             tool_rounds = 0
             while True:
                 calls: dict[int, dict[str, object]] = {}
+                round_truncated = False
                 async for chunk in self.stream_client.stream_chat(messages, tools=definitions() if _flag("RESEARCH_CHAT_TOOL_CALLING_ENABLED") else None):
                     current_turn = self.repo.turn(turn.id)
                     if current_turn and current_turn.status == ResearchTurnStatus.cancelled:
@@ -87,6 +89,8 @@ class ResearchChatOrchestrator:
                     choices = chunk.get("choices") or []
                     if not choices:
                         continue
+                    if choices[0].get("finish_reason") == "length":
+                        round_truncated = True
                     delta = choices[0].get("delta") or {}
                     if delta.get("reasoning_content"):
                         reasoning.append(str(delta["reasoning_content"]))
@@ -102,6 +106,7 @@ class ResearchChatOrchestrator:
                         call["function"]["name"] += str(function.get("name") or "")
                         call["function"]["arguments"] += str(function.get("arguments") or "")
                 if not calls:
+                    completion_truncated = round_truncated
                     break
                 tool_rounds += 1
                 if tool_rounds > 4:
@@ -169,7 +174,7 @@ class ResearchChatOrchestrator:
             inc("research_chat_turn_completed")
             logger.info("Research turn completed turn_id=%s model=%s latency_ms=%s prompt_tokens=%s completion_tokens=%s", turn.id, self.stream_client.settings.reasoning_model, int((time.monotonic() - started) * 1000), int(usage.get("prompt_tokens") or 0), int(usage.get("completion_tokens") or 0))
             yield emit(ResearchSseEventType.usage, {"prompt_tokens": int(usage.get("prompt_tokens") or 0), "completion_tokens": int(usage.get("completion_tokens") or 0)})
-            yield emit(ResearchSseEventType.done, {"status": "completed", "turn_id": turn.id, "automatic_execution": False})
+            yield emit(ResearchSseEventType.done, {"status": "truncated" if completion_truncated else "completed", "turn_id": turn.id, "automatic_execution": False, "can_continue": completion_truncated})
         except asyncio.CancelledError:
             self.repo.update_turn(turn.id, status=ResearchTurnStatus.cancelled.value, completed_at=beijing_now().isoformat())
             inc("research_chat_cancel_total")

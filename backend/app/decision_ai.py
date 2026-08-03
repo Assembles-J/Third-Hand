@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import json
 import logging
+import os
 from dataclasses import dataclass
 from uuid import uuid4
 
@@ -36,9 +37,10 @@ class DecisionAiService:
             logger.warning("Decision AI skipped context_id=%s symbol=%s code=not_configured", context.context_id, context.symbol)
             return DecisionAiOutcome(None, "skipped", "not_configured")
         messages = decision_research_messages(context, evidence, candidates)
+        max_tokens = _decision_ai_max_tokens()
         for attempt in range(2):
             try:
-                response = self.client.chat_json(messages, max_tokens=700, thinking=False)
+                response = self.client.chat_json(messages, max_tokens=max_tokens, thinking=False)
                 assessment = AiResearchAssessment.model_validate_json(response.content)
                 self._validate_references(assessment, evidence, candidates)
                 self.store.save_decision_ai_run({**run, "status": "succeeded", "error_code": None, "model": response.model, "payload": assessment.model_dump(mode="json"), "metadata": {"response_id": response.response_id, "total_tokens": response.usage.total_tokens, "latency_ms": response.latency_ms}})
@@ -67,3 +69,12 @@ class DecisionAiService:
         allowed = {candidate.action for candidate in candidates}
         if assessment.preferred_action not in allowed:
             raise ValueError("AI action is not a policy candidate")
+
+
+def _decision_ai_max_tokens() -> int:
+    """Keep the structured response concise, while leaving room for evidence citations."""
+    try:
+        return min(max(int(os.getenv("DECISION_AI_MAX_TOKENS", "1200")), 700), 2400)
+    except ValueError:
+        logger.warning("DECISION_AI_MAX_TOKENS is invalid; using 1200")
+        return 1200

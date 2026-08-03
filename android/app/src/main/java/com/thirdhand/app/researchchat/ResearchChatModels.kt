@@ -13,7 +13,9 @@ sealed interface ResearchChatUiState {
         val answer: String = "",
         val heartbeatSeen: Boolean = false,
         val activity: List<String> = emptyList(),
+        val promptTokens: Int = 0,
+        val completionTokens: Int = 0,
     ) : ResearchChatUiState
-    data class Completed(val answer: String) : ResearchChatUiState
+    data class Completed(val answer: String, val canContinue: Boolean = false, val promptTokens: Int = 0, val completionTokens: Int = 0) : ResearchChatUiState
     data class Failed(val message: String) : ResearchChatUiState
 }
