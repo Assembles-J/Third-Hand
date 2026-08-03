@@ -50,7 +50,7 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import com.thirdhand.app.ApiClient
 import com.thirdhand.app.EndpointStore
-import com.thirdhand.app.HoldingDto
+import com.thirdhand.app.ResearchTargetDto
 import kotlinx.coroutines.launch
 
 data class ResearchChatLine(val user: Boolean, val text: String)
@@ -81,7 +81,7 @@ fun ResearchChatScreen(
     val state by controller.state.collectAsState()
     val drawerState = rememberDrawerState(DrawerValue.Closed)
     var sessions by remember { mutableStateOf<List<ResearchSessionSummary>>(emptyList()) }
-    var holdings by remember { mutableStateOf<List<HoldingDto>>(emptyList()) }
+    var researchTargets by remember { mutableStateOf<List<ResearchTargetDto>>(emptyList()) }
     var selectedSymbol by remember { mutableStateOf<String?>(controller.currentSymbol) }
     var sourcePicker by remember { mutableStateOf(false) }
     var targetPicker by remember { mutableStateOf(false) }
@@ -112,7 +112,7 @@ fun ResearchChatScreen(
     }
 
     LaunchedEffect(Unit) {
-        runCatching { ApiClient.service(context).holdings() }.onSuccess { holdings = it }.onFailure { loadError = "无法读取持仓，请检查服务连接。" }
+        runCatching { ApiClient.service(context).researchTargets() }.onSuccess { researchTargets = it }.onFailure { loadError = "无法读取研究标的，请检查服务连接。" }
         refreshSessions()
     }
     LaunchedEffect(state) {
@@ -194,7 +194,7 @@ fun ResearchChatScreen(
         }
     }
     if (targetPicker) AlertDialog(onDismissRequest = { targetPicker = false }, title = { Text("选择分析对象") }, text = {
-        Column { holdings.forEach { holding -> TextButton(onClick = { selectedSymbol = holding.symbol; controller.beginNewResearch(); onConversationChange(emptyList()); attachedSources = listOf(ResearchAttachedSource("target:${holding.symbol}", "分析对象 · ${holding.name}", holding.symbol)); targetPicker = false }, modifier = Modifier.fillMaxWidth()) { Text("${holding.name} · ${holding.symbol}") } } }
+        Column { researchTargets.forEach { target -> TextButton(onClick = { selectedSymbol = target.symbol; controller.beginNewResearch(); onConversationChange(emptyList()); attachedSources = listOf(ResearchAttachedSource("target:${target.symbol}", "分析对象 · ${target.name}", target.symbol)); targetPicker = false }, modifier = Modifier.fillMaxWidth()) { Text("${target.name} · ${target.symbol}${if (target.status == "closed_position") " · 已清仓跟踪" else ""}") } } }
     }, confirmButton = { TextButton(onClick = { targetPicker = false }) { Text("取消") } })
 }
 

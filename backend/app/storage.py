@@ -74,6 +74,14 @@ class PortfolioStore:
                     )
                 """)
                 connection.execute("""
+                    CREATE TABLE IF NOT EXISTS watchlist (
+                        symbol TEXT PRIMARY KEY,
+                        name TEXT NOT NULL,
+                        created_at TEXT NOT NULL,
+                        updated_at TEXT NOT NULL
+                    )
+                """)
+                connection.execute("""
                     CREATE TABLE IF NOT EXISTS market_quote_history (
                         id INTEGER PRIMARY KEY AUTOINCREMENT,
                         symbol TEXT NOT NULL,
@@ -419,9 +427,18 @@ class PortfolioStore:
         self, selections: list[dict[str, str]], holding_ids: list[str] | None = None,
     ) -> list[dict[str, object]]:
         draft_ids = [str(item["draft_id"]) for item in selections]
+        submitted_draft_ids = list(draft_ids)
         symbols = [str(item["symbol"]).strip().upper() for item in selections]
         if len(draft_ids) != len(set(draft_ids)):
             raise ValueError("同一草稿不能重复提交")
+        # A later screenshot row supersedes an earlier row for the same symbol.
+        # This mirrors broker snapshots and prevents duplicate holdings.
+        latest_indexes = {symbol: index for index, symbol in enumerate(symbols)}
+        if len(latest_indexes) != len(symbols):
+            retained = [index for index, symbol in enumerate(symbols) if latest_indexes[symbol] == index]
+            selections = [selections[index] for index in retained]
+            draft_ids = [draft_ids[index] for index in retained]
+            symbols = [symbols[index] for index in retained]
         if len(symbols) != len(set(symbols)):
             raise ValueError("一次导入中不能把多行映射到同一个证券代码")
         generated_ids = holding_ids or [f"holding-{draft_id}" for draft_id in draft_ids]
@@ -458,7 +475,8 @@ class PortfolioStore:
                         item,
                     )
                 committed.append(item)
-            connection.execute(f"DELETE FROM holding_drafts WHERE id IN ({placeholders})", draft_ids)
+            submitted_placeholders = ",".join("?" for _ in submitted_draft_ids)
+            connection.execute(f"DELETE FROM holding_drafts WHERE id IN ({submitted_placeholders})", submitted_draft_ids)
         return committed
 
     def delete(self, holding_id: str) -> bool:
@@ -486,6 +504,7 @@ class PortfolioStore:
     def clear_for_test(self) -> None:
         with self._connect() as connection:
             connection.execute("DELETE FROM holdings")
+            connection.execute("DELETE FROM watchlist")
             connection.execute("DELETE FROM holding_drafts")
             connection.execute("DELETE FROM market_quote_cache")
             connection.execute("DELETE FROM symbol_lookup_cache")
@@ -875,6 +894,29 @@ class PortfolioStore:
             )
         return item
 
+    def watchlist(self) -> list[dict[str, object]]:
+        with self._connect() as connection:
+            rows = connection.execute("SELECT * FROM watchlist ORDER BY updated_at DESC").fetchall()
+        return [dict(row) for row in rows]
+
+    def save_watchlist_item(self, symbol: str, name: str) -> dict[str, object]:
+        now = beijing_now().isoformat()
+        item = {"symbol": symbol.strip().upper(), "name": name.strip(), "created_at": now, "updated_at": now}
+        with self._connect() as connection:
+            connection.execute(
+                """INSERT INTO watchlist (symbol, name, created_at, updated_at)
+                VALUES (:symbol, :name, :created_at, :updated_at)
+                ON CONFLICT(symbol) DO UPDATE SET name=excluded.name, updated_at=excluded.updated_at""",
+                item,
+            )
+            row = connection.execute("SELECT * FROM watchlist WHERE symbol=?", (item["symbol"],)).fetchone()
+        return dict(row)
+
+    def delete_watchlist_item(self, symbol: str) -> bool:
+        with self._connect() as connection:
+            result = connection.execute("DELETE FROM watchlist WHERE symbol=?", (symbol.strip().upper(),))
+        return result.rowcount > 0
+
     def glossary_entry(self, term_key: str) -> dict[str, object] | None:
         with self._connect() as connection:
             row = connection.execute("SELECT * FROM glossary_entries WHERE term_key = ?", (term_key,)).fetchone()
@@ -934,6 +976,24 @@ class PortfolioStore:
         with self._connect() as connection:
             rows = connection.execute(query, params).fetchall()
         return [{**dict(row), "analysis_snapshot": json.loads(str(row["analysis_snapshot"]))} for row in rows]
+
+    def research_targets(self) -> list[dict[str, object]]:
+        """Return active holdings, independent watchlist items, and completed sales."""
+        targets: dict[str, dict[str, object]] = {}
+        for item in self.sale_records():
+            if float(item["remaining_quantity"]) <= 1e-9:
+                targets.setdefault(str(item["symbol"]), {
+                    "symbol": item["symbol"], "name": item["name"], "status": "closed_position", "last_activity_at": item["sold_at"],
+                })
+        for item in self.watchlist():
+            targets[str(item["symbol"])] = {
+                "symbol": item["symbol"], "name": item["name"], "status": "watchlist", "last_activity_at": item["updated_at"],
+            }
+        for item in self.list():
+            targets[str(item["symbol"])] = {
+                "symbol": item["symbol"], "name": item["name"], "status": "active_holding", "last_activity_at": item["created_at"],
+            }
+        return sorted(targets.values(), key=lambda item: str(item["last_activity_at"]), reverse=True)
 
     def trade_plans(self) -> list[dict[str, object]]:
         with self._connect() as connection:

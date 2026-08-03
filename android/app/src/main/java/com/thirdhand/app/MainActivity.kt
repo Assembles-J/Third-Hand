@@ -1538,6 +1538,7 @@ private fun HoldingsScreen(onOpenDetail: (HoldingDto) -> Unit) {
     val context = LocalContext.current
     val api = ApiClient.service(context)
     var holdings by remember { mutableStateOf<List<HoldingDto>>(emptyList()) }
+    var watchlist by remember { mutableStateOf<List<WatchlistItemDto>>(emptyList()) }
     var sales by remember { mutableStateOf<List<SaleRecordDto>>(emptyList()) }
     var drafts by remember { mutableStateOf<List<HoldingDraftDto>>(emptyList()) }
     var quotesBySymbol by remember { mutableStateOf<Map<String, MarketQuoteDto>>(emptyMap()) }
@@ -1547,6 +1548,7 @@ private fun HoldingsScreen(onOpenDetail: (HoldingDto) -> Unit) {
     var error by remember { mutableStateOf<String?>(null) }
     var quoteError by remember { mutableStateOf<String?>(null) }
     var showAdd by remember { mutableStateOf(false) }
+    var showWatchlistAdd by remember { mutableStateOf(false) }
     var showCashEditor by remember { mutableStateOf(false) }
     var editingDraft by remember { mutableStateOf<HoldingDraftDto?>(null) }
     var editingHolding by remember { mutableStateOf<HoldingDto?>(null) }
@@ -1581,6 +1583,7 @@ private fun HoldingsScreen(onOpenDetail: (HoldingDto) -> Unit) {
     fun refresh() = scope.launch {
         try {
             holdings = api.holdings()
+            watchlist = api.watchlist()
             availableCash = api.availableCash()
             sales = api.sales()
             drafts = api.holdingDrafts()
@@ -1660,6 +1663,28 @@ private fun HoldingsScreen(onOpenDetail: (HoldingDto) -> Unit) {
                 style = MaterialTheme.typography.bodySmall,
             )
         }
+        item {
+            Row(Modifier.padding(horizontal = 20.dp).fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+                Column(Modifier.weight(1f)) {
+                    Text("自选股", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
+                    Text(if (watchlist.isEmpty()) "添加关注标的，持续用于研究与复盘" else "${watchlist.size} 只关注标的", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                }
+                TextButton(onClick = { showWatchlistAdd = true }) { Icon(Icons.Filled.Add, null); Text("添加") }
+            }
+        }
+        items(watchlist, key = { "watch-${it.symbol}" }) { item ->
+            Card(Modifier.padding(horizontal = 20.dp).fillMaxWidth()) {
+                Row(Modifier.padding(horizontal = 14.dp, vertical = 10.dp), verticalAlignment = Alignment.CenterVertically) {
+                    Column(Modifier.weight(1f)) {
+                        Text(item.name, fontWeight = FontWeight.SemiBold)
+                        Text("${item.symbol} · 研究与复盘持续跟踪", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    }
+                    IconButton(onClick = { scope.launch { api.deleteWatchlistItem(item.symbol); refresh() } }) {
+                        Icon(Icons.Filled.Close, contentDescription = "取消关注 ${item.name}")
+                    }
+                }
+            }
+        }
         error?.let { message -> item { StatusCard(message, error = true) } }
         scanError?.let { message -> item { StatusCard(message, error = true) } }
         if (drafts.isNotEmpty()) item { Text("待补全代码", modifier = Modifier.padding(start = 20.dp, top = 6.dp, end = 20.dp), style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold) }
@@ -1696,6 +1721,13 @@ private fun HoldingsScreen(onOpenDetail: (HoldingDto) -> Unit) {
         onSave = { input -> scope.launch { try {
             api.addHolding(input); showAdd = false; refresh()
         } catch (exception: Exception) { error = "保存失败：${exception.message ?: "请稍后重试"}" } } },
+    )
+    if (showWatchlistAdd) WatchlistDialog(
+        onDismiss = { showWatchlistAdd = false },
+        onSave = { item -> scope.launch {
+            try { api.saveWatchlistItem(item); showWatchlistAdd = false; refresh() }
+            catch (exception: Exception) { error = "保存自选股失败：${exception.message ?: "请稍后重试"}" }
+        } },
     )
     editingDraft?.let { draft -> AddHoldingDialog(
         title = "补全证券代码",
@@ -2425,6 +2457,27 @@ private fun AddHoldingDialog(
             OutlinedTextField(cost, { cost = it }, label = { Text("平均成本") }, modifier = Modifier.fillMaxWidth())
         } },
         confirmButton = { Button(onClick = { onSave(HoldingInputDto(symbol, name, quantity.toDoubleOrNull() ?: 0.0, cost.toDoubleOrNull() ?: -1.0)) }, shape = RoundedCornerShape(12.dp)) { Text("保存持仓") } },
+        dismissButton = { TextButton(onClick = onDismiss) { Text("取消") } },
+    )
+}
+
+@Composable
+private fun WatchlistDialog(onDismiss: () -> Unit, onSave: (WatchlistInputDto) -> Unit) {
+    var symbol by remember { mutableStateOf("") }
+    var name by remember { mutableStateOf("") }
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text("添加自选股") },
+        text = {
+            Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                Text("自选股不计入持仓，会保留在研究与复盘中。", style = MaterialTheme.typography.bodySmall)
+                OutlinedTextField(symbol, { symbol = it.uppercase() }, label = { Text("股票代码") }, singleLine = true, modifier = Modifier.fillMaxWidth())
+                OutlinedTextField(name, { name = it }, label = { Text("股票名称") }, singleLine = true, modifier = Modifier.fillMaxWidth())
+            }
+        },
+        confirmButton = {
+            Button(onClick = { onSave(WatchlistInputDto(symbol.trim(), name.trim())) }, enabled = symbol.isNotBlank() && name.isNotBlank()) { Text("保存关注") }
+        },
         dismissButton = { TextButton(onClick = onDismiss) { Text("取消") } },
     )
 }

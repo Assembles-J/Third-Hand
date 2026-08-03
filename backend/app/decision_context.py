@@ -50,6 +50,10 @@ class DecisionContextBuilder:
         symbol = self._symbol(symbol)
         holdings = self.store.list()
         holding = next((item for item in holdings if str(item["symbol"]).strip().upper() == symbol), None)
+        research_target = next(
+            (item for item in self.store.research_targets() if str(item["symbol"]).strip().upper() == symbol),
+            None,
+        )
         quotes = {str(item["symbol"]).strip().upper(): item for item in self.store.cached_quotes(
             [str(item["symbol"]) for item in holdings] + [symbol]
         )}
@@ -88,7 +92,7 @@ class DecisionContextBuilder:
             cash_percent=round(cash / total_assets * 100, 4) if total_assets else None,
         )
         payload = {
-            "symbol": symbol, "name": str(holding["name"]) if holding else symbol,
+            "symbol": symbol, "name": str(holding["name"]) if holding else str(research_target["name"]) if research_target else symbol,
             "decision_horizon": str(plan.get("horizon", "swing")) if plan else "swing",
             "account": account, "position": position, "quote": self._quote(quote),
             "daily_bars": self._daily_bars(bars), "technical": technical, "risk": self._risk(risk),

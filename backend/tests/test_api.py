@@ -3,6 +3,7 @@ import time
 
 from fastapi.testclient import TestClient
 
+import app.main as main
 from app.main import announcement_service, app, market_data, news_service, risk_service, store
 from app.time_utils import beijing_now
 
@@ -15,6 +16,21 @@ def setup_function():
 
 def test_health():
     assert client.get("/health").json() == {"status": "ok"}
+
+
+def test_derived_refresh_skips_empty_daily_history_without_aborting(monkeypatch):
+    class MarketRegimeFixture:
+        def assess(self):
+            return {"status": "unavailable"}
+
+    store.add("holding-1", "600519", "test", 100, 10)
+    main.daily_history_attempted_for["600519"] = beijing_now().date().isoformat()
+    monkeypatch.setattr(main, "market_regime_service", MarketRegimeFixture())
+
+    main.refresh_derived_cache(["600519"], "test-empty-history")
+
+    assert store.daily_prices("600519") == []
+    assert store.cached_portfolio_analysis() is not None
 
 
 def test_delete_market_history_purges_one_symbol_cache():
@@ -297,11 +313,47 @@ def test_sale_records_realized_profit_and_reduces_holding():
     assert client.get("/v1/sales").json()[0]["id"] == sale["id"]
 
 
+def test_full_sale_keeps_symbol_available_as_a_research_target_and_reentry_reuses_it():
+    holding = client.post("/v1/holdings", json={"symbol": "01810", "name": "小米集团", "quantity": 10, "average_cost": 40}).json()
+    store.save_daily_prices("01810", [{"trading_date": "2026-08-01", "open": 40, "close": 42, "high": 43, "low": 39, "source": "test"}])
+
+    sale = client.post(f"/v1/holdings/{holding['id']}/sales", json={"quantity": 10, "sale_price": 45, "reason": "止盈退出，继续观察"})
+
+    assert sale.status_code == 201
+    assert client.get("/v1/holdings").json() == []
+    targets = client.get("/v1/research/targets").json()
+    assert targets == [{"symbol": "01810", "name": "小米集团", "status": "closed_position", "last_activity_at": sale.json()["sold_at"]}]
+    assert client.get("/v1/sales", params={"symbol": "01810"}).json()[0]["reason"] == "止盈退出，继续观察"
+    assert client.get("/v1/market/history/01810").json()[0]["close"] == 42
+    assert client.get("/v1/decisions/context/01810").json()["name"] == "小米集团"
+
+    repurchase = client.post("/v1/holdings", json={"symbol": "01810", "name": "小米集团", "quantity": 20, "average_cost": 44})
+
+    assert repurchase.status_code == 201
+    assert client.get("/v1/research/targets").json()[0]["status"] == "active_holding"
+    assert client.get("/v1/sales", params={"symbol": "01810"}).json()[0]["id"] == sale.json()["id"]
+
+
 def test_sale_rejects_quantity_above_position():
     holding = client.post("/v1/holdings", json={"symbol": "600519", "name": "贵州茅台", "quantity": 2, "average_cost": 1000}).json()
     response = client.post(f"/v1/holdings/{holding['id']}/sales", json={"quantity": 3, "sale_price": 1200})
     assert response.status_code == 422
     assert client.get("/v1/holdings").json()[0]["quantity"] == 2
+
+
+def test_watchlist_is_available_for_research_without_becoming_a_holding():
+    created = client.post("/v1/watchlist", json={"symbol": "0700", "name": "腾讯控股"})
+
+    assert created.status_code == 201
+    assert client.get("/v1/holdings").json() == []
+    assert client.get("/v1/watchlist").json()[0]["symbol"] == "0700"
+    assert client.get("/v1/research/targets").json()[0]["status"] == "watchlist"
+
+    updated = client.post("/v1/watchlist", json={"symbol": "0700", "name": "腾讯控股-W"})
+
+    assert updated.status_code == 201
+    assert client.get("/v1/watchlist").json()[0]["name"] == "腾讯控股-W"
+    assert client.delete("/v1/watchlist/0700").status_code == 204
 
 
 def test_holding_draft_can_be_confirmed_later(monkeypatch):
@@ -378,6 +430,25 @@ def test_batch_commit_is_atomic_when_any_draft_is_missing(monkeypatch):
     assert response.status_code == 409
     assert client.get("/v1/holdings").json() == []
     assert client.get("/v1/holding-drafts").json()[0]["id"] == draft["id"]
+
+
+def test_batch_commit_keeps_the_last_duplicate_symbol_from_a_screenshot(monkeypatch):
+    monkeypatch.setattr(market_data, "lookup_symbols", lambda names: [{"query": name, "matches": []} for name in names])
+    created = client.post("/v1/holding-drafts/batch", json={"items": [
+        {"client_row_id": "row-old", "name": "Xiaomi", "quantity": 100, "average_cost": 25},
+        {"client_row_id": "row-new", "name": "Xiaomi", "quantity": 200, "average_cost": 26},
+    ]}).json()
+
+    response = client.post("/v1/holding-drafts/commit", json={"items": [
+        {"draft_id": created[0]["id"], "symbol": "01810", "name": "Xiaomi"},
+        {"draft_id": created[1]["id"], "symbol": "01810", "name": "Xiaomi"},
+    ]})
+
+    assert response.status_code == 201
+    assert len(response.json()) == 1
+    assert response.json()[0]["quantity"] == 200
+    assert response.json()[0]["average_cost"] == 26
+    assert client.get("/v1/holding-drafts").json() == []
 
 
 def test_import_accepts_valid_rows_and_rejects_invalid_rows():

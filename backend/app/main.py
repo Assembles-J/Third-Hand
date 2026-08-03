@@ -203,6 +203,28 @@ class SaleRecord(BaseModel):
     reason: str = ""; analysis_snapshot: dict[str, object] = Field(default_factory=dict); sold_at: datetime
 
 
+class ResearchTarget(BaseModel):
+    symbol: str
+    name: str
+    status: Literal["active_holding", "closed_position", "watchlist"]
+    last_activity_at: datetime
+
+
+class WatchlistInput(BaseModel):
+    symbol: str = Field(min_length=1, max_length=16)
+    name: str = Field(min_length=1, max_length=100)
+
+    @field_validator("symbol")
+    @classmethod
+    def normalize_symbol(cls, value: str) -> str:
+        return value.strip().upper()
+
+
+class WatchlistItem(WatchlistInput):
+    created_at: datetime
+    updated_at: datetime
+
+
 class DailyPrice(BaseModel):
     trading_date: str
     open: float | None = None
@@ -898,6 +920,8 @@ def refresh_derived_cache(symbols: list[str], trigger: str, force_history: bool 
                     price_history_service.refresh(store, symbol)
                     daily_history_refreshed_for[symbol] = today
                 bars = store.daily_prices(symbol)
+                if not bars:
+                    raise RiskDataUnavailable("未获取到可用的历史日线，暂无法生成风险评估。")
                 item = risk_service.assess(symbol, names.get(symbol, symbol), [float(bar["close"]) for bar in bars], str(bars[-1]["trading_date"]))
                 store.save_risk(item)
             except (PriceHistoryUnavailable, RiskDataUnavailable) as error:
@@ -1509,6 +1533,29 @@ def sell_holding(holding_id: str, payload: SaleInput) -> SaleRecord:
 @app.get("/v1/sales", response_model=list[SaleRecord])
 def list_sales(symbol: str | None = None) -> list[SaleRecord]:
     return [SaleRecord.model_validate(item) for item in store.sale_records(symbol)]
+
+
+@app.get("/v1/research/targets", response_model=list[ResearchTarget])
+def list_research_targets() -> list[ResearchTarget]:
+    """Keep fully sold symbols available for research, review, and later re-entry."""
+    return [ResearchTarget.model_validate(item) for item in store.research_targets()]
+
+
+@app.get("/v1/watchlist", response_model=list[WatchlistItem])
+def list_watchlist() -> list[WatchlistItem]:
+    return [WatchlistItem.model_validate(item) for item in store.watchlist()]
+
+
+@app.post("/v1/watchlist", response_model=WatchlistItem, status_code=status.HTTP_201_CREATED)
+def save_watchlist_item(payload: WatchlistInput) -> WatchlistItem:
+    return WatchlistItem.model_validate(store.save_watchlist_item(payload.symbol, payload.name))
+
+
+@app.delete("/v1/watchlist/{symbol}", status_code=status.HTTP_204_NO_CONTENT)
+def delete_watchlist_item(symbol: str) -> Response:
+    if not store.delete_watchlist_item(symbol):
+        raise HTTPException(status_code=404, detail="未找到自选股")
+    return Response(status_code=status.HTTP_204_NO_CONTENT)
 
 
 @app.get("/v1/market/history/{symbol}", response_model=list[DailyPrice])
