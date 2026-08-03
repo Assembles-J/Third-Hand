@@ -14,6 +14,7 @@ data class ResearchSessionSummary(
 )
 
 data class ResearchStoredMessage(val user: Boolean, val text: String)
+data class ResearchAttachedSource(val key: String, val title: String, val detail: String = "")
 
 sealed interface ResearchChatUiState {
     data object Idle : ResearchChatUiState

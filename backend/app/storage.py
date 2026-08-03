@@ -754,11 +754,39 @@ class PortfolioStore:
                 rows,
             )
 
+    def replace_daily_prices(self, symbol: str, bars: list[dict[str, object]]) -> None:
+        """Atomically replace one symbol's daily cache after a full provider refresh."""
+        if not bars:
+            return
+        normalized_symbol = symbol.strip().upper()
+        now = beijing_now().isoformat()
+        rows = [
+            (normalized_symbol, str(bar["trading_date"]), decimal_text(bar.get("open")), decimal_text(bar["close"]), decimal_text(bar.get("high")), decimal_text(bar.get("low")),
+             decimal_text(bar.get("volume")), decimal_text(bar.get("amount")), str(bar.get("adjustment", "qfq")),
+             str(bar.get("source", "public-market-data")), now)
+            for bar in bars
+        ]
+        with self._connect() as connection:
+            connection.execute("DELETE FROM daily_price_cache WHERE symbol=?", (normalized_symbol,))
+            connection.executemany(
+                """INSERT INTO daily_price_cache
+                (symbol, trading_date, open, close, high, low, volume, amount, adjustment, source, updated_at)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                rows,
+            )
+
+    def delete_daily_prices(self, symbol: str) -> int:
+        """Remove cached daily bars for a symbol so corrupted data cannot reach analysis."""
+        with self._connect() as connection:
+            result = connection.execute("DELETE FROM daily_price_cache WHERE symbol=?", (symbol.strip().upper(),))
+        return result.rowcount
+
     def daily_prices(self, symbol: str, limit: int = 800) -> list[dict[str, object]]:
         with self._connect() as connection:
             rows = connection.execute(
                 "SELECT trading_date, open, close, high, low, volume, amount, adjustment, source FROM daily_price_cache "
-                "WHERE symbol=? ORDER BY trading_date DESC LIMIT ?", (symbol, max(1, limit)),
+                "WHERE symbol=? AND length(trading_date)=10 AND substr(trading_date, 5, 1)='-' "
+                "AND substr(trading_date, 8, 1)='-' ORDER BY trading_date DESC LIMIT ?", (symbol, max(1, limit)),
             ).fetchall()
         return [dict(row) for row in reversed(rows)]
 

@@ -17,6 +17,17 @@ def test_health():
     assert client.get("/health").json() == {"status": "ok"}
 
 
+def test_delete_market_history_purges_one_symbol_cache():
+    store.save_daily_prices("01810", [{
+        "trading_date": "999", "open": 12, "close": 12, "high": 12, "low": 12, "source": "legacy",
+    }])
+
+    response = client.delete("/v1/market/history/01810")
+
+    assert response.status_code == 204
+    assert store.daily_prices("01810") == []
+
+
 def test_ai_capabilities_are_sanitized(monkeypatch):
     monkeypatch.setenv("DECISION_AI_ENABLED", "true")
     monkeypatch.setenv("RESEARCH_CHAT_ENABLED", "true")

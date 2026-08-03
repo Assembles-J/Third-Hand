@@ -10,12 +10,14 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.Menu
 import androidx.compose.material3.AlertDialog
+import androidx.compose.material3.AssistChip
 import androidx.compose.material3.Button
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
@@ -83,6 +85,7 @@ fun ResearchChatScreen(
     var selectedSymbol by remember { mutableStateOf<String?>(controller.currentSymbol) }
     var sourcePicker by remember { mutableStateOf(false) }
     var targetPicker by remember { mutableStateOf(false) }
+    var attachedSources by remember { mutableStateOf<List<ResearchAttachedSource>>(emptyList()) }
     var loadError by remember { mutableStateOf<String?>(null) }
     var recordedAnswer by remember { mutableStateOf<String?>(null) }
 
@@ -94,6 +97,7 @@ fun ResearchChatScreen(
             onConversationChange(messages.map { ResearchChatLine(it.user, it.text) })
             scope.launch { drawerState.close() }
         }, { loadError = it })
+        controller.loadSources(EndpointStore.baseUrl(context), item.id, { attachedSources = it }, { loadError = it })
     }
     fun send() {
         val value = question.trim()
@@ -101,7 +105,9 @@ fun ResearchChatScreen(
         onConversationChange(conversation + ResearchChatLine(true, value))
         onQuestionChange("")
         recordedAnswer = null
-        controller.send(EndpointStore.baseUrl(context), value, selectedSymbol)
+        controller.send(EndpointStore.baseUrl(context), value, selectedSymbol) { sessionId ->
+            controller.saveSources(EndpointStore.baseUrl(context), sessionId, attachedSources)
+        }
         refreshSessions()
     }
 
@@ -129,7 +135,7 @@ fun ResearchChatScreen(
                 Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
                     Text("研究会话", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold)
                     Button(onClick = {
-                        controller.beginNewResearch(); selectedSymbol = null; onConversationChange(emptyList()); onQuestionChange(""); scope.launch { drawerState.close() }
+                        controller.beginNewResearch(); selectedSymbol = null; attachedSources = emptyList(); onConversationChange(emptyList()); onQuestionChange(""); scope.launch { drawerState.close() }
                     }, modifier = Modifier.fillMaxWidth()) { Text("+ 新建研究") }
                     HorizontalDivider()
                     if (sessions.isEmpty()) Text("还没有已保存的研究会话。", color = MaterialTheme.colorScheme.onSurfaceVariant)
@@ -157,7 +163,7 @@ fun ResearchChatScreen(
             HorizontalDivider()
             loadError?.let { Text(it, Modifier.padding(16.dp), color = MaterialTheme.colorScheme.error) }
             LazyColumn(Modifier.weight(1f), contentPadding = PaddingValues(start = 16.dp, end = 16.dp, top = 12.dp, bottom = 112.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
-                if (conversation.isEmpty()) item { EmptyResearchHint(onChooseTarget = { targetPicker = true }) }
+                if (conversation.isEmpty()) item { EmptyResearchHint(onChooseTarget = { targetPicker = true }, onPreset = onQuestionChange) }
                 items(conversation) { ChatBubble(it) }
                 if (state is ResearchChatUiState.Streaming) item { StreamingCard(state as ResearchChatUiState.Streaming) }
                 (state as? ResearchChatUiState.Completed)?.takeIf { it.canContinue }?.let {
@@ -165,10 +171,15 @@ fun ResearchChatScreen(
                 }
             }
             HorizontalDivider()
-            Row(Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 8.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                IconButton(onClick = { sourcePicker = true }, enabled = state !is ResearchChatUiState.Streaming) { Icon(Icons.Filled.Add, "添加分析信息源") }
-                OutlinedTextField(question, onQuestionChange, Modifier.weight(1f), label = { Text(if (selectedSymbol == null) "先用 + 选择分析对象" else "继续提问") }, maxLines = 3, enabled = selectedSymbol != null && state !is ResearchChatUiState.Streaming)
-                Button(onClick = ::send, enabled = question.isNotBlank() && selectedSymbol != null && state !is ResearchChatUiState.Streaming) { Text("发送") }
+            Column(Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 8.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                if (attachedSources.isNotEmpty()) LazyRow(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                    items(attachedSources) { source -> AssistChip(onClick = {}, label = { Text(source.title, maxLines = 1) }) }
+                }
+                Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    IconButton(onClick = { sourcePicker = true }, enabled = state !is ResearchChatUiState.Streaming) { Icon(Icons.Filled.Add, "添加分析信息源") }
+                    OutlinedTextField(question, onQuestionChange, Modifier.weight(1f), label = { Text(if (selectedSymbol == null) "先用 + 选择分析对象" else "继续提问") }, maxLines = 3, enabled = selectedSymbol != null && state !is ResearchChatUiState.Streaming)
+                    Button(onClick = ::send, enabled = question.isNotBlank() && selectedSymbol != null && state !is ResearchChatUiState.Streaming) { Text("发送") }
+                }
             }
         }
     }
@@ -176,17 +187,17 @@ fun ResearchChatScreen(
         Column(Modifier.padding(horizontal = 20.dp, vertical = 8.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
             Text("添加分析信息", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
             informationSources.forEach { (title, detail) ->
-                TextButton(onClick = { if (title == "选择分析对象") targetPicker = true; sourcePicker = false }, modifier = Modifier.fillMaxWidth()) {
+                TextButton(onClick = { if (title == "选择分析对象") targetPicker = true else { attachedSources = (attachedSources + ResearchAttachedSource(title, title, detail)).distinctBy { it.key }; controller.currentSessionId?.let { controller.saveSources(EndpointStore.baseUrl(context), it, attachedSources) }; sourcePicker = false } }, modifier = Modifier.fillMaxWidth()) {
                     Column(Modifier.fillMaxWidth()) { Text(title, fontWeight = FontWeight.SemiBold); Text(detail, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant) }
                 }
             }
         }
     }
     if (targetPicker) AlertDialog(onDismissRequest = { targetPicker = false }, title = { Text("选择分析对象") }, text = {
-        Column { holdings.forEach { holding -> TextButton(onClick = { selectedSymbol = holding.symbol; controller.beginNewResearch(); onConversationChange(emptyList()); targetPicker = false }, modifier = Modifier.fillMaxWidth()) { Text("${holding.name} · ${holding.symbol}") } } }
+        Column { holdings.forEach { holding -> TextButton(onClick = { selectedSymbol = holding.symbol; controller.beginNewResearch(); onConversationChange(emptyList()); attachedSources = listOf(ResearchAttachedSource("target:${holding.symbol}", "分析对象 · ${holding.name}", holding.symbol)); targetPicker = false }, modifier = Modifier.fillMaxWidth()) { Text("${holding.name} · ${holding.symbol}") } } }
     }, confirmButton = { TextButton(onClick = { targetPicker = false }) { Text("取消") } })
 }
 
-@Composable private fun EmptyResearchHint(onChooseTarget: () -> Unit) = Card(colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant)) { Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) { Text("从一个研究问题开始", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold); Text("点 + 选择分析对象和需要带入的资料。系统会自动带入行情、K 线、持仓、交易计划、规则、公告和事件证据。", style = MaterialTheme.typography.bodyMedium); TextButton(onClick = onChooseTarget) { Text("选择分析对象") } } }
+@Composable private fun EmptyResearchHint(onChooseTarget: () -> Unit, onPreset: (String) -> Unit) = Card(colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant)) { Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) { Text("从一个研究问题开始", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold); Text("点 + 选择分析对象和需要带入的资料。系统会自动带入行情、K 线、持仓、交易计划、规则、公告和事件证据。", style = MaterialTheme.typography.bodyMedium); LazyRow(horizontalArrangement = Arrangement.spacedBy(6.dp)) { items(listOf("给出当前仓位与风险建议", "核验行业逻辑与业绩变化", "识别关键事件和时间窗口", "复盘交易计划是否仍成立")) { prompt -> AssistChip(onClick = { onPreset(prompt) }, label = { Text(prompt, maxLines = 1) }) } }; TextButton(onClick = onChooseTarget) { Text("选择分析对象") } } }
 @Composable private fun StreamingCard(state: ResearchChatUiState.Streaming) = Card(colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.secondaryContainer)) { Column(Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(5.dp)) { Text(state.phase.ifBlank { "正在后台分析…" }, fontWeight = FontWeight.SemiBold); state.activity.takeLast(2).forEach { Text(it, style = MaterialTheme.typography.labelSmall) }; if (state.answer.isNotBlank()) ResearchMarkdown(state.answer) } }
 @Composable private fun ChatBubble(line: ResearchChatLine) = Column(Modifier.fillMaxWidth(), horizontalAlignment = if (line.user) Alignment.End else Alignment.Start) { Card(colors = CardDefaults.cardColors(containerColor = if (line.user) MaterialTheme.colorScheme.primaryContainer else MaterialTheme.colorScheme.surfaceVariant), modifier = Modifier.fillMaxWidth(if (line.user) .9f else 1f)) { if (line.user) Text(line.text, Modifier.padding(14.dp)) else ResearchMarkdown(line.text, Modifier.padding(14.dp)) } }

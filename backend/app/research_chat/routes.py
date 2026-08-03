@@ -3,7 +3,7 @@ from __future__ import annotations
 import os
 from fastapi import APIRouter,HTTPException,status
 from fastapi.responses import StreamingResponse
-from .models import ResearchChatSessionCreate,ResearchChatMessageRequest,ClarificationAnswer
+from .models import ResearchChatSessionCreate,ResearchChatMessageRequest,ClarificationAnswer,ResearchSessionSources
 from .repository import ResearchChatRepository
 from .context_builder import ResearchContextBuilder
 from .orchestrator import ResearchChatOrchestrator
@@ -29,6 +29,16 @@ def build_router(store,decision_context_builder,decision_orchestrator):
   require()
   if not repo.session(session_id):raise HTTPException(404,"session_not_found")
   return repo.messages(session_id)
+ @router.get("/sessions/{session_id}/sources")
+ def session_sources(session_id:str):
+  require()
+  if not repo.session(session_id):raise HTTPException(404,"session_not_found")
+  return repo.sources(session_id)
+ @router.put("/sessions/{session_id}/sources")
+ def save_session_sources(session_id:str,payload:ResearchSessionSources):
+  require()
+  if not repo.session(session_id):raise HTTPException(404,"session_not_found")
+  return repo.save_sources(session_id,[item.model_dump() for item in payload.sources])
  @router.post("/sessions/{session_id}/messages/stream")
  async def stream(session_id:str,payload:ResearchChatMessageRequest):
   require()

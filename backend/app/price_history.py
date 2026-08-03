@@ -22,6 +22,18 @@ class PriceHistoryService:
             return "etf"
         return "a"
 
+    @staticmethod
+    def _trading_date(value: object) -> str | None:
+        """Return an ISO trading date and reject provider row indexes such as ``999``."""
+        raw = str(value).strip()
+        candidate = raw[:10]
+        if len(raw) >= 8 and raw[:8].isdigit():
+            candidate = f"{raw[:4]}-{raw[4:6]}-{raw[6:8]}"
+        try:
+            return date.fromisoformat(candidate).isoformat()
+        except ValueError:
+            return None
+
     def refresh(self, store, symbol: str) -> int:
         """Fetch outside request handling, then persist normalized daily OHLCV bars."""
         symbol = symbol.strip().upper()
@@ -35,7 +47,11 @@ class PriceHistoryService:
             kind = self._kind(symbol)
             if kind == "hk":
                 frame = ak.stock_hk_daily(symbol=symbol)
-                date_values = frame.index
+                columns_available = set(getattr(frame, "columns", ()))
+                # AKShare's HK endpoint returns a RangeIndex and an explicit `date`
+                # column. Never persist that RangeIndex as a trading date.
+                date_column = next((name for name in ("date", "Date", "日期") if name in columns_available), None)
+                date_values = frame[date_column] if date_column else frame.index
                 columns = {"open": "open", "close": "close", "high": "high", "low": "low", "volume": "volume", "amount": "amount"}
             elif kind == "etf":
                 frame = ak.fund_etf_hist_em(symbol=symbol, period="daily", start_date=start, end_date=end, adjust="qfq")
@@ -49,11 +65,14 @@ class PriceHistoryService:
                 raise PriceHistoryUnavailable("历史行情为空。")
             bars = []
             for index, day in enumerate(date_values):
+                trading_date = self._trading_date(day)
+                if trading_date is None:
+                    continue
                 close = decimal_text(frame.iloc[index].get(columns["close"]))
                 if close is None:
                     continue
                 bars.append({
-                    "trading_date": str(day)[:10], "open": decimal_text(frame.iloc[index].get(columns["open"])),
+                    "trading_date": trading_date, "open": decimal_text(frame.iloc[index].get(columns["open"])),
                     "close": close, "high": decimal_text(frame.iloc[index].get(columns["high"])),
                     "low": decimal_text(frame.iloc[index].get(columns["low"])),
                     "volume": decimal_text(frame.iloc[index].get(columns["volume"])),
@@ -66,7 +85,11 @@ class PriceHistoryService:
             bars = self._tushare_bars(symbol, start)
             if not bars:
                 raise PriceHistoryUnavailable("历史行情源暂时不可用。") from error
-        store.save_daily_prices(symbol, bars)
+        if not bars:
+            raise PriceHistoryUnavailable("行情源未返回可用的交易日期。")
+        # A successful refresh is authoritative for one symbol. Replacing instead of
+        # upserting also purges legacy malformed dates already stored in the cache.
+        store.replace_daily_prices(symbol, bars)
         return len(bars)
 
     def refresh_intraday(self, store, symbol: str) -> int:

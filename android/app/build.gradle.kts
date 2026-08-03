@@ -76,6 +76,7 @@ dependencies {
     implementation("com.squareup.retrofit2:converter-gson:2.11.0")
     implementation("com.squareup.okhttp3:logging-interceptor:4.12.0")
     implementation("com.squareup.okhttp3:okhttp-sse:4.12.0")
+    implementation("com.mikepenz:multiplatform-markdown-renderer-m3-android:0.35.0")
     implementation("com.google.mlkit:text-recognition-chinese:16.0.1")
     debugImplementation("androidx.compose.ui:ui-tooling")
 }

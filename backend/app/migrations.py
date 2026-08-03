@@ -94,6 +94,9 @@ def _create_research_chat_tables(connection: sqlite3.Connection) -> None:
     );
     """)
 
+def _create_research_chat_session_sources(connection: sqlite3.Connection) -> None:
+    connection.execute("CREATE TABLE IF NOT EXISTS research_chat_session_sources (session_id TEXT NOT NULL, source_key TEXT NOT NULL, title TEXT NOT NULL, detail TEXT NOT NULL DEFAULT '', added_at TEXT NOT NULL, PRIMARY KEY(session_id, source_key))")
+
 
 MIGRATIONS = (
     Migration("0001_legacy_schema_baseline", _record_legacy_schema_baseline),
@@ -103,6 +106,7 @@ MIGRATIONS = (
     Migration("0005_decision_ai_runs", _create_decision_ai_runs),
     Migration("0006_decision_reports_and_jobs", _create_decision_reports_and_jobs),
     Migration("0007_research_chat_sessions", _create_research_chat_tables),
+    Migration("0008_research_chat_session_sources", _create_research_chat_session_sources),
 )
 
 

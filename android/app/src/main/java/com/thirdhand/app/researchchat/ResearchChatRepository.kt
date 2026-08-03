@@ -33,6 +33,21 @@ class ResearchChatRepository(private val httpClient: OkHttpClient) {
             })
         }, onFailure)
     }
+    fun sources(baseUrl: String, sessionId: String, onReady: (List<ResearchAttachedSource>) -> Unit, onFailure: (String) -> Unit) {
+        getJson("${baseUrl.trimEnd('/')}/v1/research-chat/sessions/$sessionId/sources", { body ->
+            val items = JSONArray(body)
+            onReady((0 until items.length()).map { index ->
+                val item = items.getJSONObject(index)
+                ResearchAttachedSource(item.getString("source_key"), item.getString("title"), item.optString("detail"))
+            })
+        }, onFailure)
+    }
+    fun saveSources(baseUrl: String, sessionId: String, sources: List<ResearchAttachedSource>) {
+        val entries = JSONArray().also { array -> sources.forEach { source -> array.put(JSONObject().put("source_key", source.key).put("title", source.title).put("detail", source.detail)) } }
+        val request = Request.Builder().url("${baseUrl.trimEnd('/')}/v1/research-chat/sessions/$sessionId/sources")
+            .put(JSONObject().put("sources", entries).toString().toRequestBody("application/json".toMediaType())).build()
+        httpClient.newCall(request).enqueue(object : Callback { override fun onFailure(call: Call, e: java.io.IOException) = Unit; override fun onResponse(call: Call, response: Response) { response.close() } })
+    }
 
     private fun getJson(url: String, onReady: (String) -> Unit, onFailure: (String) -> Unit) {
         httpClient.newCall(Request.Builder().url(url).get().build()).enqueue(object : Callback {

@@ -57,6 +57,7 @@ class _Frame:
     def __init__(self, rows, dates=None):
         self.rows = rows
         self.index = dates or []
+        self.columns = list(rows[0]) if rows else []
         self.empty = not rows
         self.iloc = _Iloc(rows)
     def __getitem__(self, key): return [row[key] for row in self.rows]
@@ -77,3 +78,18 @@ def test_price_history_preserves_ohlcv_for_a_etf_and_hk(monkeypatch, tmp_path):
         bar = store.daily_prices(symbol)[0]
         assert bar["open"] is not None and bar["volume"] is not None and bar["amount"] is not None
         assert bar["adjustment"] == "qfq"
+
+
+def test_hk_refresh_uses_provider_date_column_and_replaces_legacy_row_indexes(monkeypatch, tmp_path):
+    hk_frame = _Frame([{
+        "date": "2026-07-30", "open": "20.01", "close": "20.20", "high": "20.30",
+        "low": "19.90", "volume": "300", "amount": "3000",
+    }], [999])
+    monkeypatch.setitem(sys.modules, "akshare", SimpleNamespace(stock_hk_daily=lambda **_: hk_frame))
+    store = PortfolioStore(tmp_path / "history.db")
+    store.save_daily_prices("01810", [{
+        "trading_date": "999", "open": "20", "close": "20", "high": "20", "low": "20", "source": "legacy",
+    }])
+
+    assert PriceHistoryService().refresh(store, "01810") == 1
+    assert [item["trading_date"] for item in store.daily_prices("01810")] == ["2026-07-30"]

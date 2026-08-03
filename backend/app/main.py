@@ -1517,6 +1517,13 @@ def market_history(symbol: str, limit: int = Query(default=120, ge=20, le=800)) 
     return [DailyPrice.model_validate(item) for item in store.daily_prices(symbol.strip().upper(), limit)]
 
 
+@app.delete("/v1/market/history/{symbol}", status_code=status.HTTP_204_NO_CONTENT)
+def delete_market_history(symbol: str) -> Response:
+    """Purge one symbol's daily cache; use this to remove known-bad provider data."""
+    store.delete_daily_prices(symbol)
+    return Response(status_code=status.HTTP_204_NO_CONTENT)
+
+
 @app.get("/v1/market/intraday/{symbol}", response_model=list[IntradayPrice])
 def market_intraday(symbol: str, limit: int = Query(default=500, ge=20, le=1500)) -> list[IntradayPrice]:
     """SQLite-only minute bars; collection occurs in the scheduler/background task."""

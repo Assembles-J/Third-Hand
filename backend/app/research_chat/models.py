@@ -12,6 +12,8 @@ class ResearchTurnStatus(str, Enum):
 class ResearchChatSessionCreate(StrictModel): primary_symbol: str|None=Field(None,min_length=1,max_length=32); title: str=Field(min_length=1,max_length=120)
 class ResearchChatSession(StrictModel): id:str; title:str; primary_symbol:str|None=None; status:str="active"; created_at:datetime; updated_at:datetime
 class ResearchChatMessageRequest(StrictModel): message:str=Field(min_length=1,max_length=4000); symbol:str|None=Field(None,min_length=1,max_length=32); client_request_id:str=Field(min_length=8,max_length=128)
+class ResearchSessionSource(StrictModel): source_key:str=Field(min_length=1,max_length=80); title:str=Field(min_length=1,max_length=120); detail:str=Field(default="",max_length=240)
+class ResearchSessionSources(StrictModel): sources:list[ResearchSessionSource]=Field(default_factory=list,max_length=20)
 class ClarificationAnswer(StrictModel): answers: list[str]=Field(min_length=1,max_length=3)
 class ResearchChatTurn(StrictModel):
     id:str; session_id:str; client_request_id:str; status:ResearchTurnStatus; model:str; prompt_version:str; context_id:str|None=None; context_hash:str|None=None; answer_text:str=""; decision_report_id:str|None=None; error_code:str|None=None; error_message:str|None=None; prompt_tokens:int=0; completion_tokens:int=0; reasoning_tokens:int=0; latency_ms:int=0; created_at:datetime; started_at:datetime|None=None; completed_at:datetime|None=None

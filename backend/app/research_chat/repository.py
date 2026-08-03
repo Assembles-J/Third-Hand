@@ -47,6 +47,16 @@ class ResearchChatRepository:
  def messages(self,session_id,limit=100):
   with self._connect() as c: rows=c.execute("SELECT role,content,content_type,created_at FROM research_chat_messages WHERE session_id=? AND content_type IN ('user_text','assistant_answer','clarification_answer') ORDER BY created_at ASC LIMIT ?",(session_id,max(1,min(limit,200)))).fetchall()
   return [dict(x) for x in rows]
+ def sources(self,session_id):
+  with self._connect() as c: rows=c.execute("SELECT source_key,title,detail,added_at FROM research_chat_session_sources WHERE session_id=? ORDER BY added_at ASC",(session_id,)).fetchall()
+  return [dict(x) for x in rows]
+ def save_sources(self,session_id,sources):
+  now=beijing_now().isoformat()
+  with self._connect() as c:
+   for item in sources:
+    c.execute("INSERT INTO research_chat_session_sources (session_id,source_key,title,detail,added_at) VALUES (?,?,?,?,?) ON CONFLICT(session_id,source_key) DO UPDATE SET title=excluded.title,detail=excluded.detail,added_at=excluded.added_at",(session_id,item['source_key'],item['title'],item.get('detail',''),now))
+   c.execute("UPDATE research_chat_sessions SET updated_at=? WHERE id=?",(now,session_id))
+  return self.sources(session_id)
  def save_tool_call(self,turn_id,name,args,status,result=None,error=None,duration=0):
   with self._connect() as c:c.execute("INSERT INTO research_tool_calls (id,turn_id,tool_name,tool_version,arguments_json,result_summary_json,status,duration_ms,error_code,created_at,completed_at) VALUES (?,?,?,?,?,?,?,?,?,?,?)",(str(uuid4()),turn_id,name,"v1",json.dumps(args,ensure_ascii=False),json.dumps(result,ensure_ascii=False,default=str) if result else None,status,duration,error,beijing_now().isoformat(),beijing_now().isoformat()))
  def clarification(self,turn_id):

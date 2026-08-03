@@ -5,9 +5,14 @@ import kotlinx.coroutines.flow.StateFlow
 import okhttp3.OkHttpClient
 import okhttp3.sse.EventSource
 import java.util.UUID
+import java.util.concurrent.TimeUnit
 
 /** Owns the page-bound stream and reuses a session while the selected holding is unchanged. */
-class ResearchChatController(httpClient: OkHttpClient = OkHttpClient()) {
+class ResearchChatController(httpClient: OkHttpClient = OkHttpClient.Builder()
+    .readTimeout(0, TimeUnit.MILLISECONDS)
+    .writeTimeout(60, TimeUnit.SECONDS)
+    .connectTimeout(20, TimeUnit.SECONDS)
+    .build()) {
     private val repository = ResearchChatRepository(httpClient)
     private val mutableState = MutableStateFlow<ResearchChatUiState>(ResearchChatUiState.Idle)
     val state: StateFlow<ResearchChatUiState> = mutableState
@@ -20,6 +25,8 @@ class ResearchChatController(httpClient: OkHttpClient = OkHttpClient()) {
     fun loadSessions(baseUrl: String, onReady: (List<ResearchSessionSummary>) -> Unit, onFailure: (String) -> Unit) = repository.sessions(baseUrl, onReady, onFailure)
 
     fun loadMessages(baseUrl: String, sessionId: String, onReady: (List<ResearchStoredMessage>) -> Unit, onFailure: (String) -> Unit) = repository.messages(baseUrl, sessionId, onReady, onFailure)
+    fun loadSources(baseUrl: String, sessionId: String, onReady: (List<ResearchAttachedSource>) -> Unit, onFailure: (String) -> Unit) = repository.sources(baseUrl, sessionId, onReady, onFailure)
+    fun saveSources(baseUrl: String, sessionId: String, sources: List<ResearchAttachedSource>) = repository.saveSources(baseUrl, sessionId, sources)
 
     fun selectSession(sessionId: String, symbol: String?) {
         activeSessionId = sessionId
@@ -33,8 +40,9 @@ class ResearchChatController(httpClient: OkHttpClient = OkHttpClient()) {
         mutableState.value = ResearchChatUiState.Idle
     }
 
-    fun send(baseUrl: String, message: String, symbol: String?) {
+    fun send(baseUrl: String, message: String, symbol: String?, onSessionReady: ((String) -> Unit)? = null) {
         if (activeSessionId != null && activeSymbol == symbol) {
+            onSessionReady?.invoke(activeSessionId!!)
             start(baseUrl, activeSessionId!!, message, symbol)
             return
         }
@@ -42,6 +50,7 @@ class ResearchChatController(httpClient: OkHttpClient = OkHttpClient()) {
         repository.createSession(baseUrl, symbol?.let { "$it 研究" } ?: "研究对话", symbol, { sessionId ->
             activeSessionId = sessionId
             activeSymbol = symbol
+            onSessionReady?.invoke(sessionId)
             start(baseUrl, sessionId, message, symbol)
         }) { error -> mutableState.value = ResearchChatUiState.Failed(error) }
     }
