@@ -54,6 +54,15 @@ def test_ai_service_rejects_unknown_evidence_and_preserves_rule_fallback():
     assert store.runs[-1]["status"] == "failed"
 
 
+def test_ai_service_accepts_a_fenced_json_response_and_canonicalizes_a_unique_title():
+    payload = {"thesis_status": "weakened", "preferred_action": "REDUCE", "supporting_evidence_ids": ["cap"], "opposing_evidence_ids": [], "missing_evidence": [], "reasoning_steps": [], "uncertainty": "medium", "summary": "需要留意仓位上限。"}
+    store = Store()
+    result = DecisionAiService(store, Client(f"```json\n{json.dumps(payload)}\n``` ")).assess(Context(), _evidence(), (_candidate(),))
+
+    assert result.status == "succeeded"
+    assert result.assessment.supporting_evidence_ids == ("position.above_max",)
+
+
 def test_ai_service_does_not_repeat_a_truncated_request():
     class TruncatingClient(Client):
         def chat_json(self, *_args, **_kwargs):

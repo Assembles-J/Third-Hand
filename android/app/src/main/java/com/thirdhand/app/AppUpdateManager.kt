@@ -79,7 +79,7 @@ object AppUpdateManager {
     private const val DownloadFilePath = "download_file_path"
     private const val SignatureMatches = "signature_matches"
     private const val AutomaticDownloadEnabled = "automatic_download_enabled"
-    private const val DownloadDirectory = "updates"
+    private const val DownloadDirectory = "Third-Hand/updates"
 
     suspend fun check(context: Context): AppUpdate? = withContext(Dispatchers.IO) {
         // Debug builds are deliberately signed and versioned separately from
@@ -227,7 +227,13 @@ object AppUpdateManager {
             .setAllowedOverMetered(true)
             .setAllowedOverRoaming(false)
             .setNotificationVisibility(DownloadManager.Request.VISIBILITY_VISIBLE_NOTIFY_COMPLETED)
-            .setDestinationInExternalFilesDir(context, Environment.DIRECTORY_DOWNLOADS, "$DownloadDirectory/$filename")
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+            // DownloadManager is a MediaProvider client on modern Android.
+            // Several OEM providers reject Android/data private destinations.
+            request.setDestinationInExternalPublicDir(Environment.DIRECTORY_DOWNLOADS, "$DownloadDirectory/$filename")
+        } else {
+            request.setDestinationInExternalFilesDir(context, Environment.DIRECTORY_DOWNLOADS, "updates/$filename")
+        }
         val downloadId = manager.enqueue(request)
         preferences(context).edit()
             .putLong(DownloadId, downloadId)
@@ -348,7 +354,7 @@ object AppUpdateManager {
         } catch (_: Exception) {
             Toast.makeText(
                 context,
-                "无法打开安装器。安装包仍保留在“下载/$DownloadDirectory”，可手动点击安装。",
+                "无法打开安装器。安装包仍保留在“下载/Third-Hand/updates”，可手动点击安装。",
                 Toast.LENGTH_LONG,
             ).show()
             false
@@ -414,8 +420,13 @@ object AppUpdateManager {
             preferences.getString(DownloadFilePath, null) == expectedFile.absolutePath
     }
 
+    @Suppress("DEPRECATION")
     private fun updateDirectory(context: Context): File =
-        File(requireNotNull(context.getExternalFilesDir(Environment.DIRECTORY_DOWNLOADS)), DownloadDirectory).also { it.mkdirs() }
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+            File(Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DOWNLOADS), DownloadDirectory)
+        } else {
+            File(requireNotNull(context.getExternalFilesDir(Environment.DIRECTORY_DOWNLOADS)), "updates")
+        }.also { it.mkdirs() }
 
     private fun updateFile(context: Context, filename: String): File = File(updateDirectory(context), filename)
 

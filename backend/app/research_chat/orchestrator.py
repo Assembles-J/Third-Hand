@@ -53,6 +53,8 @@ class ResearchChatOrchestrator:
         reasoning: list[str] = []
         usage: dict[str, object] = {}
         completion_truncated = False
+        answer_persisted = False
+        final_answer = ""
         try:
             logger.info("Research turn started turn_id=%s session_id=%s symbol=%s model=%s", turn.id, session.id, symbol or session.primary_symbol, self.stream_client.settings.reasoning_model)
             inc("research_chat_turn_total")
@@ -139,6 +141,7 @@ class ResearchChatOrchestrator:
             final_answer = "".join(answer).strip()
             self.repo.add_message(session.id, turn.id, "user", "user_text", user_message)
             self.repo.add_message(session.id, turn.id, "assistant", "assistant_answer", final_answer)
+            answer_persisted = True
             decision_id = None
             if _flag("RESEARCH_CHAT_DECISION_OUTPUT_ENABLED"):
                 evidence = self.decision_orchestrator.evidence_engine.build(context)
@@ -180,12 +183,26 @@ class ResearchChatOrchestrator:
             inc("research_chat_cancel_total")
             raise
         except LlmClientError as error:
+            if answer_persisted:
+                logger.warning("Research post-answer artifact skipped turn_id=%s code=%s", turn.id, error.code)
+                self.repo.update_turn(turn.id, status=ResearchTurnStatus.completed.value, answer_text=final_answer, prompt_tokens=int(usage.get("prompt_tokens") or 0), completion_tokens=int(usage.get("completion_tokens") or 0), latency_ms=int((time.monotonic() - started) * 1000), completed_at=beijing_now().isoformat())
+                yield emit(ResearchSseEventType.warning, {"code": "decision_artifact_unavailable", "message": "研究回答已完成；附加决策报告暂未生成。"})
+                yield emit(ResearchSseEventType.usage, {"prompt_tokens": int(usage.get("prompt_tokens") or 0), "completion_tokens": int(usage.get("completion_tokens") or 0)})
+                yield emit(ResearchSseEventType.done, {"status": "truncated" if completion_truncated else "completed", "turn_id": turn.id, "automatic_execution": False, "can_continue": completion_truncated})
+                return
             inc("research_chat_upstream_errors_total")
             self.repo.update_turn(turn.id, status=ResearchTurnStatus.failed.value, error_code=error.code, error_message=str(error), completed_at=beijing_now().isoformat())
             logger.warning("Research turn failed turn_id=%s model=%s code=%s status=%s", turn.id, self.stream_client.settings.reasoning_model, error.code, error.status_code)
             yield emit(ResearchSseEventType.error, {"code": error.code, "message": str(error)})
             yield emit(ResearchSseEventType.done, {"status": "failed", "turn_id": turn.id})
         except Exception:
+            if answer_persisted:
+                logger.exception("Research post-answer artifact skipped turn_id=%s", turn.id)
+                self.repo.update_turn(turn.id, status=ResearchTurnStatus.completed.value, answer_text=final_answer, prompt_tokens=int(usage.get("prompt_tokens") or 0), completion_tokens=int(usage.get("completion_tokens") or 0), latency_ms=int((time.monotonic() - started) * 1000), completed_at=beijing_now().isoformat())
+                yield emit(ResearchSseEventType.warning, {"code": "decision_artifact_unavailable", "message": "研究回答已完成；附加决策报告暂未生成。"})
+                yield emit(ResearchSseEventType.usage, {"prompt_tokens": int(usage.get("prompt_tokens") or 0), "completion_tokens": int(usage.get("completion_tokens") or 0)})
+                yield emit(ResearchSseEventType.done, {"status": "truncated" if completion_truncated else "completed", "turn_id": turn.id, "automatic_execution": False, "can_continue": completion_truncated})
+                return
             inc("research_chat_upstream_errors_total")
             self.repo.update_turn(turn.id, status=ResearchTurnStatus.failed.value, error_code="upstream_invalid_response", error_message="研究流处理失败", completed_at=beijing_now().isoformat())
             logger.exception("Research turn crashed turn_id=%s model=%s", turn.id, self.stream_client.settings.reasoning_model)

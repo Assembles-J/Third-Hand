@@ -663,7 +663,7 @@ private fun TodayScreen() {
         selectedHolding?.let { holding -> item {
             Column(Modifier.padding(horizontal = 20.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
                 PrimaryAction("根据当前行情主动分析 ${holding.name}", Icons.Filled.AutoGraph, ::analyzeSelected, Modifier.fillMaxWidth(), enabled = !analyzing)
-                Text("会生成可追溯报告：证据冲突、规则候选、仓位约束及可选 AI 研究结论；不会自动交易。", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                Text("会把行情、你的持仓和计划放在一起核对，告诉你哪些信息支持或反对当前判断；AI 只负责解释，不会替你下单。", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
             }
         } }
         decisionReport?.let { report -> item { DecisionReportRoute(report, onViewHistory = { showDecisionHistory = true }) } }
@@ -747,15 +747,15 @@ private fun DecisionReportRoute(report: DecisionReportDto, onViewHistory: (() ->
 
             report.ai_assessment?.let { ai ->
                 HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
-                Text("AI 研究解读", style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.SemiBold)
-                Text("交易逻辑：${thesisStatusLabel(ai.thesis_status)} · 不确定性：${uncertaintyLabel(ai.uncertainty)}", style = MaterialTheme.typography.bodySmall, fontWeight = FontWeight.Medium)
+                Text("AI 帮你读这份分析", style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.SemiBold)
+                Text("原来的判断：${thesisStatusLabel(ai.thesis_status)} · 把握程度：${uncertaintyLabel(ai.uncertainty)}", style = MaterialTheme.typography.bodySmall, fontWeight = FontWeight.Medium)
                 Text(ai.summary, style = MaterialTheme.typography.bodySmall)
                 ai.reasoning_steps.forEach { step -> Text("${aiReasoningStageLabel(step.stage)}：${step.summary}", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant) }
-                ai.missing_evidence.forEach { missing -> Text("待核验：$missing", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant) }
+                ai.missing_evidence.forEach { missing -> Text("还需要确认：$missing", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant) }
             }
             if (report.ai_assessment == null) {
                 HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
-                Text("AI 研究未参与本次报告", style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.SemiBold)
+                Text("这次还没有 AI 解读", style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.SemiBold)
                 Text(decisionAiUnavailableMessage(report.ai_status, report.ai_error_code), style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
             }
 
@@ -783,7 +783,7 @@ private fun decisionAiUnavailableMessage(status: String?, errorCode: String?): S
         "invalid_response" -> "DeepSeek 返回结构无法解析"
         "empty_content" -> "DeepSeek 返回了空内容"
         "output_truncated" -> "DeepSeek 输出被截断"
-        "invalid_ai_output" -> "AI 输出未通过报告结构或证据引用校验"
+        "invalid_ai_output" -> "AI 的回答格式或引用的数据对不上。本次已保留行情和规则核对结果；请稍后重新分析，AI 会按本次数据重新整理。"
         else -> when (status) {
             "disabled" -> "决策 AI 功能未开启"
             "skipped" -> "决策 AI 未满足调用条件"
@@ -791,7 +791,7 @@ private fun decisionAiUnavailableMessage(status: String?, errorCode: String?): S
             else -> "后端未返回 AI 运行状态；请在升级服务后重新生成报告"
         }
     }
-    return "当前结论仅来自确定性规则。本次 AI 状态：$reason。"
+    return "当前结论仍可参考已核对的数据和规则。$reason"
 }
 
 @Composable

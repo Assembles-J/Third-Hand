@@ -24,6 +24,11 @@ def build_router(store,decision_context_builder,decision_orchestrator):
   require();item=repo.session(session_id)
   if not item:raise HTTPException(404,"session_not_found")
   return item
+ @router.get("/sessions/{session_id}/messages")
+ def session_messages(session_id:str):
+  require()
+  if not repo.session(session_id):raise HTTPException(404,"session_not_found")
+  return repo.messages(session_id)
  @router.post("/sessions/{session_id}/messages/stream")
  async def stream(session_id:str,payload:ResearchChatMessageRequest):
   require()
