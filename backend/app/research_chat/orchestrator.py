@@ -72,8 +72,7 @@ class ResearchChatOrchestrator:
         try:
             logger.info("Research turn started turn_id=%s session_id=%s symbol=%s model=%s", turn.id, session.id, symbol or session.primary_symbol, self.stream_client.settings.reasoning_model)
             if not self.repo.history(session.id, limit=1):
-                prefix = (symbol or session.primary_symbol or "研究").upper()
-                self.repo.update_session_title(session.id, f"{prefix} · {user_message.strip()[:42]}")
+                self.repo.update_session_title(session.id, user_message.strip()[:80])
             inc("research_chat_turn_total")
             self.repo.update_turn(turn.id, status=ResearchTurnStatus.building_context.value, started_at=beijing_now().isoformat())
             yield emit(ResearchSseEventType.session, {"session_id": session.id, "turn_id": turn.id})

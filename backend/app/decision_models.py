@@ -22,6 +22,7 @@ class AccountSnapshot(DecisionModel):
 class PositionSnapshot(DecisionModel):
     quantity: float
     average_cost: float
+    opened_at: str | None = None
     current_price: float | None
     market_value: float | None
     cost_value: float

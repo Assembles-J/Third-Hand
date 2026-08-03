@@ -4,6 +4,8 @@ import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.ExperimentalLayoutApi
+import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
@@ -15,6 +17,9 @@ import androidx.compose.foundation.lazy.items
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.Add
+import androidx.compose.material.icons.filled.AccountBalanceWallet
+import androidx.compose.material.icons.filled.Bookmark
+import androidx.compose.material.icons.filled.ShowChart
 import androidx.compose.material.icons.filled.Menu
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.AssistChip
@@ -194,10 +199,25 @@ fun ResearchChatScreen(
         }
     }
     if (targetPicker) AlertDialog(onDismissRequest = { targetPicker = false }, title = { Text("选择分析对象") }, text = {
-        Column { researchTargets.forEach { target -> TextButton(onClick = { selectedSymbol = target.symbol; controller.beginNewResearch(); onConversationChange(emptyList()); attachedSources = listOf(ResearchAttachedSource("target:${target.symbol}", "分析对象 · ${target.name}", target.symbol)); targetPicker = false }, modifier = Modifier.fillMaxWidth()) { Text("${target.name} · ${target.symbol}${if (target.status == "closed_position") " · 已清仓跟踪" else ""}") } } }
+        Column { researchTargets.forEach { target ->
+            TextButton(onClick = { selectedSymbol = target.symbol; controller.beginNewResearch(); onConversationChange(emptyList()); attachedSources = listOf(ResearchAttachedSource("target:${target.symbol}", "分析对象 · ${target.name}", target.symbol)); targetPicker = false }, modifier = Modifier.fillMaxWidth()) {
+                Icon(researchTargetIcon(target.status), contentDescription = null, tint = MaterialTheme.colorScheme.primary)
+                Column(Modifier.padding(start = 12.dp).weight(1f)) {
+                    Text(target.name, fontWeight = FontWeight.SemiBold)
+                    Text("${target.symbol}${if (target.status == "closed_position") " · 已清仓跟踪" else ""}", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                }
+            }
+        } }
     }, confirmButton = { TextButton(onClick = { targetPicker = false }) { Text("取消") } })
 }
 
-@Composable private fun EmptyResearchHint(onChooseTarget: () -> Unit, onPreset: (String) -> Unit) = Card(colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant)) { Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) { Text("从一个研究问题开始", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold); Text("点 + 选择分析对象和需要带入的资料。系统会自动带入行情、K 线、持仓、交易计划、规则、公告和事件证据。", style = MaterialTheme.typography.bodyMedium); LazyRow(horizontalArrangement = Arrangement.spacedBy(6.dp)) { items(listOf("给出当前仓位与风险建议", "核验行业逻辑与业绩变化", "识别关键事件和时间窗口", "复盘交易计划是否仍成立")) { prompt -> AssistChip(onClick = { onPreset(prompt) }, label = { Text(prompt, maxLines = 1) }) } }; TextButton(onClick = onChooseTarget) { Text("选择分析对象") } } }
+private fun researchTargetIcon(status: String) = when (status) {
+    "active_holding" -> Icons.Filled.AccountBalanceWallet
+    "closed_position" -> Icons.Filled.ShowChart
+    else -> Icons.Filled.Bookmark
+}
+
+@OptIn(ExperimentalLayoutApi::class)
+@Composable private fun EmptyResearchHint(onChooseTarget: () -> Unit, onPreset: (String) -> Unit) = Card(colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant)) { Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) { Text("从一个研究问题开始", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold); Text("点 + 选择分析对象和需要带入的资料。系统会自动带入行情、K 线、持仓、交易计划、规则、公告和事件证据。", style = MaterialTheme.typography.bodyMedium); FlowRow(horizontalArrangement = Arrangement.spacedBy(6.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) { listOf("给出当前仓位与风险建议", "核验行业逻辑与业绩变化", "识别关键事件和时间窗口", "复盘交易计划是否仍成立").forEach { prompt -> AssistChip(onClick = { onPreset(prompt) }, label = { Text(prompt, maxLines = 1, overflow = TextOverflow.Ellipsis) }) } }; TextButton(onClick = onChooseTarget) { Text("选择分析对象") } } }
 @Composable private fun StreamingCard(state: ResearchChatUiState.Streaming) = Card(colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.secondaryContainer)) { Column(Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(5.dp)) { Text(state.phase.ifBlank { "正在后台分析…" }, fontWeight = FontWeight.SemiBold); state.activity.takeLast(2).forEach { Text(it, style = MaterialTheme.typography.labelSmall) }; if (state.answer.isNotBlank()) ResearchMarkdown(state.answer) } }
 @Composable private fun ChatBubble(line: ResearchChatLine) = Column(Modifier.fillMaxWidth(), horizontalAlignment = if (line.user) Alignment.End else Alignment.Start) { Card(colors = CardDefaults.cardColors(containerColor = if (line.user) MaterialTheme.colorScheme.primaryContainer else MaterialTheme.colorScheme.surfaceVariant), modifier = Modifier.fillMaxWidth(if (line.user) .9f else 1f)) { if (line.user) Text(line.text, Modifier.padding(14.dp)) else ResearchMarkdown(line.text, Modifier.padding(14.dp)) } }

@@ -293,10 +293,11 @@ class PortfolioStore:
             "average_cost": average_cost, "created_at": beijing_now().isoformat(),
         }
         with self._connect() as connection:
-            existing = connection.execute("SELECT id FROM holdings WHERE symbol = ? ORDER BY created_at DESC LIMIT 1", (symbol,)).fetchone()
+            existing = connection.execute("SELECT id, created_at FROM holdings WHERE symbol = ? ORDER BY created_at DESC LIMIT 1", (symbol,)).fetchone()
             if existing:
                 item["id"] = str(existing["id"])
-                connection.execute("UPDATE holdings SET name=:name, quantity=:quantity, average_cost=:average_cost, created_at=:created_at WHERE id=:id", item)
+                item["created_at"] = str(existing["created_at"])
+                connection.execute("UPDATE holdings SET name=:name, quantity=:quantity, average_cost=:average_cost WHERE id=:id", item)
             else:
                 connection.execute("INSERT INTO holdings (id, symbol, name, quantity, average_cost, created_at) VALUES (:id, :symbol, :name, :quantity, :average_cost, :created_at)", item)
         return item
@@ -486,14 +487,15 @@ class PortfolioStore:
 
     def update(self, holding_id: str, symbol: str, name: str, quantity: float, average_cost: float) -> dict[str, object] | None:
         with self._connect() as connection:
-            current = connection.execute("SELECT id FROM holdings WHERE id = ?", (holding_id,)).fetchone()
+            current = connection.execute("SELECT id, created_at FROM holdings WHERE id = ?", (holding_id,)).fetchone()
             if not current: return None
             duplicate = connection.execute("SELECT id FROM holdings WHERE symbol = ? AND id != ?", (symbol, holding_id)).fetchone()
             if duplicate:
                 connection.execute("DELETE FROM holdings WHERE id = ?", (holding_id,))
                 holding_id = str(duplicate["id"])
-            item = {"id": holding_id, "symbol": symbol, "name": name, "quantity": quantity, "average_cost": average_cost, "created_at": beijing_now().isoformat()}
-            connection.execute("UPDATE holdings SET symbol=:symbol,name=:name,quantity=:quantity,average_cost=:average_cost,created_at=:created_at WHERE id=:id", item)
+                current = connection.execute("SELECT id, created_at FROM holdings WHERE id = ?", (holding_id,)).fetchone()
+            item = {"id": holding_id, "symbol": symbol, "name": name, "quantity": quantity, "average_cost": average_cost, "created_at": str(current["created_at"])}
+            connection.execute("UPDATE holdings SET symbol=:symbol,name=:name,quantity=:quantity,average_cost=:average_cost WHERE id=:id", item)
         return item
 
     def delete_draft(self, draft_id: str) -> bool:
@@ -968,7 +970,7 @@ class PortfolioStore:
             if remaining <= 1e-9:
                 connection.execute("DELETE FROM holdings WHERE id=?", (holding_id,))
             else:
-                connection.execute("UPDATE holdings SET quantity=?, created_at=? WHERE id=?", (remaining, item["sold_at"], holding_id))
+                connection.execute("UPDATE holdings SET quantity=? WHERE id=?", (remaining, holding_id))
         return item
 
     def sale_records(self, symbol: str | None = None, limit: int = 200) -> list[dict[str, object]]:

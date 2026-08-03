@@ -34,9 +34,9 @@ class ResearchChatController(httpClient: OkHttpClient = OkHttpClient.Builder()
         mutableState.value = ResearchChatUiState.Idle
     }
 
-    fun beginNewResearch() {
+    fun beginNewResearch(symbol: String? = null) {
         activeSessionId = null
-        activeSymbol = null
+        activeSymbol = symbol
         mutableState.value = ResearchChatUiState.Idle
     }
 

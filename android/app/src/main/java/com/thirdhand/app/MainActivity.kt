@@ -45,6 +45,7 @@ import androidx.compose.material.icons.filled.ArrowBack
 import androidx.compose.material.icons.filled.AdminPanelSettings
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.AutoGraph
+import androidx.compose.material.icons.filled.Bookmark
 import androidx.compose.material.icons.filled.CameraAlt
 import androidx.compose.material.icons.filled.ChevronRight
 import androidx.compose.material.icons.filled.Delete
@@ -218,6 +219,7 @@ private fun ThirdHandApp(resumeSignal: Int) {
                             Triple("持仓", Icons.Filled.Wallet, 1),
                             Triple("管理", Icons.Filled.AdminPanelSettings, 2),
                             Triple("研究", Icons.AutoMirrored.Filled.Article, 4),
+                            Triple("自选", Icons.Filled.Bookmark, 5),
                         ).forEach { (label, icon, targetTab) ->
                             NavigationBarItem(
                                 selected = tab == targetTab || (targetTab == 2 && tab == 3),
@@ -239,7 +241,7 @@ private fun ThirdHandApp(resumeSignal: Int) {
                         onDragStart = { horizontalDrag = 0f },
                         onHorizontalDrag = { _, amount -> horizontalDrag += amount },
                         onDragEnd = {
-                            if (horizontalDrag <= -56f) tab = (tab + 1).coerceAtMost(4)
+                            if (horizontalDrag <= -56f) tab = (tab + 1).coerceAtMost(5)
                             if (horizontalDrag >= 56f) tab = (tab - 1).coerceAtLeast(0)
                         },
                     )
@@ -266,6 +268,12 @@ private fun ThirdHandApp(resumeSignal: Int) {
                                 onQuestionChange = { researchDraft = it },
                                 onClose = { tab = 0 },
                             )
+                            5 -> WatchlistScreen(onResearch = { target ->
+                                researchChatController.beginNewResearch(target.symbol)
+                                researchConversation = emptyList()
+                                researchDraft = ""
+                                tab = 4
+                            })
                             else -> TodayScreen(onOpenTradePlan = { tab = 3 })
                         }
                     }
@@ -1531,6 +1539,99 @@ private fun DraftHoldingCard(draft: HoldingDraftDto, onComplete: () -> Unit, onD
             TextButton(onClick = onDelete, colors = ButtonDefaults.textButtonColors(contentColor = MaterialTheme.colorScheme.error)) { Text("删除") }
         }
     }
+}
+
+@Composable
+private fun WatchlistScreen(onResearch: (ResearchTargetDto) -> Unit) {
+    val context = LocalContext.current
+    val api = remember { ApiClient.service(context) }
+    val scope = rememberCoroutineScope()
+    var targets by remember { mutableStateOf<List<ResearchTargetDto>>(emptyList()) }
+    var selectedTarget by remember { mutableStateOf<ResearchTargetDto?>(null) }
+    var sales by remember { mutableStateOf<List<SaleRecordDto>>(emptyList()) }
+    var showAdd by remember { mutableStateOf(false) }
+    var error by remember { mutableStateOf<String?>(null) }
+
+    fun refresh() = scope.launch {
+        try {
+            targets = api.researchTargets()
+            error = null
+        } catch (_: Exception) {
+            error = "读取自选股失败，请确认服务正在运行。"
+        }
+    }
+    fun openDetail(target: ResearchTargetDto) {
+        selectedTarget = target
+        scope.launch {
+            sales = try { api.sales(target.symbol) } catch (_: Exception) { emptyList() }
+        }
+    }
+
+    LaunchedEffect(Unit) { refresh() }
+    LazyColumn(
+        contentPadding = androidx.compose.foundation.layout.PaddingValues(bottom = 24.dp),
+        verticalArrangement = Arrangement.spacedBy(8.dp),
+    ) {
+        item { AppHero("自选股", "持仓自动同步；持续关注的标的和已清仓股票都在这里") }
+        item {
+            Row(Modifier.padding(horizontal = 20.dp).fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+                Column(Modifier.weight(1f)) {
+                    Text("${targets.size} 只关注标的", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
+                    Text("可直接发起 AI 分析；AI 会结合持仓成本、入手时间和卖出记录。", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                }
+                TextButton(onClick = { showAdd = true }) { Icon(Icons.Filled.Add, null); Text("添加") }
+            }
+        }
+        if (targets.isEmpty()) item {
+            StatusCard("还没有自选股。添加关注股票或录入持仓后，会自动显示在这里。")
+        }
+        items(targets, key = { "watchlist-target-${it.symbol}" }) { target ->
+            Card(Modifier.padding(horizontal = 20.dp).fillMaxWidth().clickable { openDetail(target) }) {
+                Row(Modifier.padding(14.dp), verticalAlignment = Alignment.CenterVertically) {
+                    Icon(
+                        if (target.status == "active_holding") Icons.Filled.Wallet else Icons.Filled.Bookmark,
+                        contentDescription = null,
+                        tint = MaterialTheme.colorScheme.primary,
+                    )
+                    Column(Modifier.padding(start = 12.dp).weight(1f)) {
+                        Text(target.name, style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.SemiBold)
+                        Text("${target.symbol} · ${watchlistStatusLabel(target.status)}", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    }
+                    TextButton(onClick = { onResearch(target) }) { Text("AI 分析") }
+                }
+            }
+        }
+        error?.let { item { StatusCard(it, error = true) } }
+    }
+    if (showAdd) WatchlistDialog(
+        onDismiss = { showAdd = false },
+        onSave = { item -> scope.launch {
+            try { api.saveWatchlistItem(item); showAdd = false; refresh() }
+            catch (_: Exception) { error = "保存自选股失败，请稍后重试。" }
+        } },
+    )
+    selectedTarget?.let { target -> AlertDialog(
+        onDismissRequest = { selectedTarget = null },
+        title = { Text("${target.name} · ${target.symbol}") },
+        text = {
+            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                Text("当前状态：${watchlistStatusLabel(target.status)}", style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.primary)
+                Text("历史成交", style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.SemiBold)
+                if (sales.isEmpty()) Text("暂无卖出或清仓记录。", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                sales.take(5).forEach { sale ->
+                    Text("${beijingTimestamp(sale.sold_at)} · 卖出 ${sale.quantity} · 已实现 ${signedPositionValue(sale.realized_pnl)}", style = MaterialTheme.typography.bodySmall)
+                }
+            }
+        },
+        confirmButton = { Button(onClick = { selectedTarget = null; onResearch(target) }) { Text("AI 分析") } },
+        dismissButton = { TextButton(onClick = { selectedTarget = null }) { Text("关闭") } },
+    ) }
+}
+
+private fun watchlistStatusLabel(status: String) = when (status) {
+    "active_holding" -> "持仓中"
+    "closed_position" -> "已清仓，持续跟踪"
+    else -> "关注中"
 }
 
 @Composable
@@ -3074,7 +3175,10 @@ private fun DailyReviewCard(
             Text("${review.review_date} · ${review.suggested_position_band}", style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.primary)
             review.items.forEach { item ->
                 Column(verticalArrangement = Arrangement.spacedBy(3.dp)) {
-                    Text("${item.symbol} · ${if (item.action == "add") "关注加仓" else "关注减仓"}", fontWeight = FontWeight.SemiBold)
+                    Text(
+                        "${item.name.ifBlank { item.symbol }} · ${item.symbol} · ${if (item.action == "add") "关注加仓" else "关注减仓"}",
+                        fontWeight = FontWeight.SemiBold,
+                    )
                     Text("参考价 ${item.reference_price} · 建议数量 ${item.suggested_quantity ?: "待确认"} · 执行：${item.execution_status}", style = MaterialTheme.typography.bodySmall)
                     if (item.execution_status == "pending") {
                         TextButton(onClick = { onRecordExecution(review, item) }) { Text("录入实际执行") }
@@ -3104,7 +3208,7 @@ private fun DailyReviewExecutionDialog(
     var note by remember(item.symbol) { mutableStateOf("") }
     AlertDialog(
         onDismissRequest = onDismiss,
-        title = { Text("记录 ${item.symbol} 的实际执行") },
+        title = { Text("记录 ${item.name.ifBlank { item.symbol }}（${item.symbol}）的实际执行") },
         text = {
             Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                 Text("请填写实际成交数据，用于和计划快照分开评价。", style = MaterialTheme.typography.bodySmall)
