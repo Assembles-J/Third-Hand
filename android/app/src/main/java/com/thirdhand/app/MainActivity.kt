@@ -48,6 +48,7 @@ import androidx.compose.material.icons.filled.AutoGraph
 import androidx.compose.material.icons.filled.CameraAlt
 import androidx.compose.material.icons.filled.ChevronRight
 import androidx.compose.material.icons.filled.Delete
+import androidx.compose.material.icons.filled.Edit
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.CloudDownload
 import androidx.compose.material.icons.filled.CheckCircle
@@ -118,6 +119,8 @@ import java.time.temporal.WeekFields
 import java.time.ZoneOffset
 import java.time.format.DateTimeFormatter
 import com.thirdhand.app.researchchat.ResearchChatScreen
+import com.thirdhand.app.researchchat.ResearchChatController
+import com.thirdhand.app.researchchat.ResearchChatLine
 import kotlinx.coroutines.delay
 
 class MainActivity : ComponentActivity() {
@@ -145,6 +148,9 @@ private fun ThirdHandApp(resumeSignal: Int) {
     }
     var themeMode by remember { mutableStateOf(ThemeStore.load(context)) }
     var tab by remember { mutableIntStateOf(0) }
+    val researchChatController = remember { ResearchChatController() }
+    var researchConversation by remember { mutableStateOf<List<ResearchChatLine>>(emptyList()) }
+    var researchDraft by remember { mutableStateOf("") }
     var detailHolding by remember { mutableStateOf<HoldingDto?>(null) }
     var startupUpdate by remember { mutableStateOf<AppUpdate?>(null) }
     var updateMessage by remember { mutableStateOf<String?>(null) }
@@ -205,7 +211,7 @@ private fun ThirdHandApp(resumeSignal: Int) {
     ThirdHandTheme(themeMode) {
         Scaffold(
             bottomBar = {
-                if (detailHolding == null) {
+                if (detailHolding == null && tab != 4) {
                     NavigationBar {
                         listOf(
                             Triple("今日", Icons.Filled.AutoGraph, 0),
@@ -248,12 +254,19 @@ private fun ThirdHandApp(resumeSignal: Int) {
                         label = "bottomNavigationPage",
                     ) { activeTab ->
                         when (activeTab) {
-                            0 -> TodayScreen()
+                            0 -> TodayScreen(onOpenTradePlan = { tab = 3 })
                             1 -> HoldingsScreen(onOpenDetail = { detailHolding = it })
                             2 -> UnifiedCenterScreen(ThemeMode.DARK, onThemeModeChange = { themeMode -> })
                             3 -> TradePlanScreen()
-                            4 -> ResearchChatScreen()
-                            else -> TodayScreen()
+                            4 -> ResearchChatScreen(
+                                controller = researchChatController,
+                                conversation = researchConversation,
+                                onConversationChange = { researchConversation = it },
+                                question = researchDraft,
+                                onQuestionChange = { researchDraft = it },
+                                onClose = { tab = 0 },
+                            )
+                            else -> TodayScreen(onOpenTradePlan = { tab = 3 })
                         }
                     }
                 }
@@ -573,7 +586,7 @@ private fun impactColor(direction: String?): Color = when (direction) {
 }
 
 @Composable
-private fun TodayScreen() {
+private fun TodayScreen(onOpenTradePlan: () -> Unit) {
     val context = LocalContext.current
     val api = ApiClient.service(context)
     var holdings by remember { mutableStateOf<List<HoldingDto>>(emptyList()) }
@@ -584,6 +597,7 @@ private fun TodayScreen() {
     var error by remember { mutableStateOf<String?>(null) }
     var statusMessage by remember { mutableStateOf<String?>(null) }
     var analyzing by remember { mutableStateOf(false) }
+    var instrumentSetupSymbol by remember { mutableStateOf<String?>(null) }
     val scope = rememberCoroutineScope()
     fun load() = scope.launch {
         try {
@@ -669,10 +683,20 @@ private fun TodayScreen() {
                 Text("会把行情、你的持仓和计划放在一起核对，告诉你哪些信息支持或反对当前判断；AI 只负责解释，不会替你下单。", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
             }
         } }
-        decisionReport?.let { report -> item { DecisionReportRoute(report, onViewHistory = { showDecisionHistory = true }) } }
+        decisionReport?.let { report -> item {
+            DecisionReportRoute(
+                report,
+                onViewHistory = { showDecisionHistory = true },
+                onResolveBlocker = { code ->
+                    if (code == "trade_plan.enabled" || code == "trade_plan.invalidation_price") onOpenTradePlan()
+                    if (code == "instrument.lot_size") instrumentSetupSymbol = report.symbol
+                },
+            )
+        } }
         if (decisionReport == null) selectedAnalysis?.let { item { BaselineReviewRoute(it) } }
         if (selectedHolding != null && decisionReport == null) item { StatusCard("尚未生成新版决策报告。点击主动分析后将在这里展示可追溯的证据与仓位结果。") }
     }
+    instrumentSetupSymbol?.let { symbol -> InstrumentMetadataDialog(symbol, onDismiss = { instrumentSetupSymbol = null }) }
     if (showDecisionHistory && selectedSymbol != null) DecisionHistoryDialog(selectedSymbol!!, onDismiss = { showDecisionHistory = false })
 }
 
@@ -702,7 +726,54 @@ private fun BaselineReviewRoute(item: PortfolioAnalysisItemDto) {
 }
 
 @Composable
-private fun DecisionReportRoute(report: DecisionReportDto, onViewHistory: (() -> Unit)? = null) {
+private fun InstrumentMetadataDialog(symbol: String, onDismiss: () -> Unit) {
+    val context = LocalContext.current
+    val api = ApiClient.service(context)
+    val scope = rememberCoroutineScope()
+    var lotSize by remember(symbol) { mutableStateOf("100") }
+    var saving by remember { mutableStateOf(false) }
+    var error by remember { mutableStateOf<String?>(null) }
+    LaunchedEffect(symbol) {
+        runCatching { api.instrumentMetadata(symbol) }.getOrNull()?.let { metadata ->
+            lotSize = metadata.lot_size?.toString() ?: "100"
+        }
+    }
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text("补充交易单位") },
+        text = {
+            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                Text("系统需要最小交易单位，才能把风险预算换算为可交易数量。A 股通常为 100 股；请以该证券的交易规则为准。", style = MaterialTheme.typography.bodySmall)
+                OutlinedTextField(lotSize, { lotSize = it }, label = { Text("最小交易单位（股）") }, modifier = Modifier.fillMaxWidth())
+                error?.let { Text(it, color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.bodySmall) }
+            }
+        },
+        confirmButton = {
+            Button(enabled = !saving, onClick = {
+                val value = lotSize.toIntOrNull()
+                if (value == null || value <= 0) {
+                    error = "请输入大于 0 的整数。"
+                    return@Button
+                }
+                scope.launch {
+                    saving = true
+                    try {
+                        api.saveInstrumentMetadata(symbol, InstrumentMetadataInputDto("CN", "CNY", value, "0.01", "user_confirmed", LocalDate.now().toString()))
+                        onDismiss()
+                    } catch (_: Exception) {
+                        error = "保存失败，请检查网络后重试。"
+                    } finally {
+                        saving = false
+                    }
+                }
+            }) { Text(if (saving) "保存中…" else "保存") }
+        },
+        dismissButton = { TextButton(onClick = onDismiss) { Text("取消") } },
+    )
+}
+
+@Composable
+private fun DecisionReportRoute(report: DecisionReportDto, onViewHistory: (() -> Unit)? = null, onResolveBlocker: ((String) -> Unit)? = null) {
     Card(Modifier.padding(horizontal = 20.dp).fillMaxWidth(), shape = RoundedCornerShape(18.dp)) {
         Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
             Text("本次决策报告", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
@@ -719,9 +790,13 @@ private fun DecisionReportRoute(report: DecisionReportDto, onViewHistory: (() ->
                 if (candidate.blocked_reasons.isNotEmpty()) {
                     Text(if (index == 0) "解除阻断" else "备选动作：${decisionActionLabel(candidate.action)}", style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.SemiBold)
                     Text("本次未生成操作结论。请先完成以下项目，再重新分析。", style = MaterialTheme.typography.bodySmall)
-                    candidate.blocked_reasons.map(::blockerGuidance).forEach { guidance ->
+                    candidate.blocked_reasons.forEach { code ->
+                        val guidance = blockerGuidance(code)
                         Text(guidance.title, color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.bodySmall, fontWeight = FontWeight.SemiBold)
                         Text(guidance.nextStep, style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                        if (onResolveBlocker != null && code in setOf("trade_plan.enabled", "trade_plan.invalidation_price", "instrument.lot_size")) {
+                            TextButton(onClick = { onResolveBlocker(code) }) { Text(blockerActionLabel(code)) }
+                        }
                     }
                 } else {
                     Text(if (index == 0) "首选规则候选" else "备选动作", style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.SemiBold)
@@ -748,6 +823,12 @@ private fun DecisionReportRoute(report: DecisionReportDto, onViewHistory: (() ->
                 ).takeIf { it.isNotEmpty() }?.let { Text(it.joinToString(" · "), style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant) }
                 sizing.blocked_reasons.map(::blockerGuidance).forEach { guidance -> Text("需处理：${guidance.title}", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.error) }
             }
+
+            report.sizing?.blocked_reasons
+                ?.filter { it in setOf("trade_plan.enabled", "trade_plan.invalidation_price", "instrument.lot_size") }
+                ?.forEach { code ->
+                    TextButton(onClick = { onResolveBlocker?.invoke(code) }) { Text(blockerActionLabel(code)) }
+                }
 
             report.ai_assessment?.let { ai ->
                 HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
@@ -919,6 +1000,11 @@ private fun evidenceDirectionLabel(direction: String): String = when (direction)
 @Composable
 private fun evidenceDirectionColor(direction: String): Color = when (direction) { "negative" -> MaterialTheme.colorScheme.error; "positive" -> MaterialTheme.colorScheme.tertiary; else -> MaterialTheme.colorScheme.onSurfaceVariant }
 private data class BlockerGuidance(val title: String, val nextStep: String)
+private fun blockerActionLabel(code: String): String = when (code) {
+    "instrument.lot_size" -> "填写最小交易单位"
+    "trade_plan.enabled", "trade_plan.invalidation_price" -> "前往填写交易计划"
+    else -> "处理此项"
+}
 private fun blockerGuidance(code: String): BlockerGuidance = when (code) {
     "trade_plan.enabled" -> BlockerGuidance("缺少已启用的交易计划", "前往“管理”→“交易计划”，为该标的新增或启用计划，并填写入场、加仓、减仓、退出条件、仓位上限和风险预算；保存后回到此页重新分析。")
     "quote.price" -> BlockerGuidance("缺少可用行情价格", "前往“持仓”刷新行情；若仍失败，请核对证券代码、网络连接和行情服务状态。")
@@ -1709,7 +1795,6 @@ private fun HoldingDetailScreen(holding: HoldingDto, onBack: () -> Unit) {
     }
     val chartBars = when (period) {
         "今日" -> intradayBars
-        "小时" -> aggregateIntradayBars(intradayBars)
         "日线" -> todaySnapshotBar(bars, quote)
         else -> aggregateBars(bars, period)
     }
@@ -1723,14 +1808,18 @@ private fun HoldingDetailScreen(holding: HoldingDto, onBack: () -> Unit) {
             item { Column(Modifier.padding(horizontal = 20.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
             Text("持有 ${holding.quantity} · 成本 ${holding.average_cost} · 现价 ${quote?.price ?: "--"}", style = MaterialTheme.typography.bodySmall)
             Text("行情 K 线", fontWeight = FontWeight.SemiBold)
-            Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) { listOf("今日", "小时", "日线", "周线", "月线").forEach { label -> TextButton(onClick = { period = label }) { Text(label, color = if (period == label) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant) } } }
-            if (chartBars.size >= 2) KLineChart(chartBars, quote.takeIf { period == "日线" || period == "今日" }) else Text(
+            Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) { listOf("今日", "日线", "周线", "月线").forEach { label -> TextButton(onClick = { period = label }) { Text(label, color = if (period == label) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant) } } }
+            if (chartBars.size >= 2) KLineChart(
+                chartBars,
+                quote.takeIf { period == "日线" || period == "今日" },
+                useTimeAxis = period == "今日",
+            ) else Text(
                 when {
-                    period == "今日" || period == "小时" -> intradayLoadError ?: "暂无分钟行情缓存；服务端将在下一次行情刷新后生成小时 K 线。"
+                    period == "今日" -> intradayLoadError ?: "暂无分钟行情缓存；请稍后刷新。"
                     else -> "日线正在后台准备。"
                 },
                 style = MaterialTheme.typography.bodySmall,
-                color = if (intradayLoadError != null && (period == "今日" || period == "小时")) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.onSurfaceVariant,
+                color = if (intradayLoadError != null && period == "今日") MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.onSurfaceVariant,
             )
             } }
             decisionReport?.let { report -> item { DecisionReportRoute(report) } }
@@ -1802,28 +1891,25 @@ private fun aggregateBars(bars: List<DailyPriceDto>, period: String): List<Daily
     }.takeLast(120)
 }
 
-/** Converts the persisted one-minute cache into exchange-clock hourly OHLCV bars. */
-private fun aggregateIntradayBars(bars: List<DailyPriceDto>): List<DailyPriceDto> = bars
-    .groupBy { bar -> bar.trading_date.trim().take(13) }
-    .toSortedMap()
-    .values
-    .mapNotNull { group ->
-        val first = group.firstOrNull() ?: return@mapNotNull null
-        val last = group.last()
-        DailyPriceDto(
-            trading_date = "${first.trading_date.take(13)}:00",
-            open = first.open,
-            close = last.close,
-            high = group.maxOfOrNull { it.high ?: it.close },
-            low = group.minOfOrNull { it.low ?: it.close },
-            volume = group.sumOf { it.volume ?: 0.0 },
-            amount = group.sumOf { it.amount ?: 0.0 },
-            adjustment = "1h",
-        )
-    }
+private fun intradayTimeLabel(timestamp: String): String =
+    Regex("\\d{2}:\\d{2}").find(timestamp)?.value ?: timestamp.takeLast(5)
+
+/** Selects enough evenly spaced labels for a compact mobile axis without crowding it. */
+private fun intradayAxisIndices(size: Int): List<Int> {
+    val labelCount = minOf(size, 5)
+    if (labelCount <= 1) return listOf(0)
+    val denominator = labelCount - 1
+    return (0 until labelCount).map { slot ->
+        (slot * (size - 1) + denominator / 2) / denominator
+    }.distinct()
+}
 
 @Composable
-private fun KLineChart(bars: List<DailyPriceDto>, quote: MarketQuoteDto? = null) = Column {
+private fun KLineChart(
+    bars: List<DailyPriceDto>,
+    quote: MarketQuoteDto? = null,
+    useTimeAxis: Boolean = false,
+) = Column {
     val visible = bars.takeLast(60)
     var selectedIndex by remember(visible.lastOrNull()?.trading_date) { mutableIntStateOf(visible.lastIndex) }
     val selected = visible[selectedIndex.coerceIn(0, visible.lastIndex)]
@@ -1844,36 +1930,65 @@ private fun KLineChart(bars: List<DailyPriceDto>, quote: MarketQuoteDto? = null)
             )
         }
         if (!isTodaySnapshot) Text(if (selectedIndex == visible.lastIndex) "最新交易日 K 线 · ${selected.trading_date}" else "十字线定位 · ${selected.trading_date}", style = MaterialTheme.typography.labelMedium, fontWeight = FontWeight.Bold)
-        Text("开 ${marketNumber(selected.open)}  高 ${marketNumber(selected.high)}  低 ${marketNumber(selected.low)}  收 ${marketNumber(selected.close)}  涨跌 ${"%.2f".format(change)}%  量 ${marketNumber(selected.volume)}", style = MaterialTheme.typography.labelSmall, color = if (change >= 0) Color(0xFFD32F2F) else Color(0xFF178A4B))
+        val changeColor = if (change >= 0) Color(0xFFD32F2F) else Color(0xFF178A4B)
+        Text(
+            "开 ${marketNumber(selected.open)}   高 ${marketNumber(selected.high)}   低 ${marketNumber(selected.low)}",
+            style = MaterialTheme.typography.labelSmall,
+            color = changeColor,
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis,
+        )
+        Text(
+            "收 ${marketNumber(selected.close)}   涨跌 ${"%.2f".format(change)}%   量 ${marketNumber(selected.volume)}",
+            style = MaterialTheme.typography.labelSmall,
+            color = changeColor,
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis,
+        )
     }
     Row(Modifier.fillMaxWidth().padding(top = 6.dp)) {
         Column(Modifier.width(48.dp).height(230.dp), verticalArrangement = Arrangement.SpaceBetween) {
             Text("%.2f".format(maximum), style = MaterialTheme.typography.labelSmall); Text("%.2f".format((maximum + minimum) / 2), style = MaterialTheme.typography.labelSmall); Text("%.2f".format(minimum), style = MaterialTheme.typography.labelSmall); Text("量", style = MaterialTheme.typography.labelSmall)
         }
         Canvas(Modifier.weight(1f).height(230.dp).pointerInput(visible) {
-            fun selectAt(x: Float) { selectedIndex = (x / size.width * visible.size).toInt().coerceIn(0, visible.lastIndex) }
+            fun xFor(index: Int): Float = (index + .5f) / visible.size * size.width
+            fun selectAt(x: Float) {
+                selectedIndex = visible.indices.minByOrNull { index -> kotlin.math.abs(xFor(index) - x) } ?: visible.lastIndex
+            }
             detectDragGestures(onDragStart = { selectAt(it.x) }, onDrag = { changeEvent, _ -> selectAt(changeEvent.position.x) })
         }) {
             val priceHeight = size.height * .74f
             val volumeTop = priceHeight + 8f
             val span = (maximum - minimum).takeIf { it > 0 } ?: 1.0
             val step = size.width / visible.size
+            val candleWidth = (step * .55f).coerceAtLeast(2f)
             val maxVolume = visible.maxOfOrNull { it.volume ?: 0.0 }?.takeIf { it > 0 } ?: 1.0
             fun y(value: Double) = priceHeight - ((value - minimum) / span * priceHeight).toFloat()
             visible.forEachIndexed { index, bar ->
-                val x = step * index + step / 2; val open = bar.open ?: bar.close
+                val x = step * index + step / 2
+                val open = bar.open ?: bar.close
                 val color = if (bar.close >= open) Color(0xFFD32F2F) else Color(0xFF178A4B)
                 drawLine(color, Offset(x, y(bar.high ?: bar.close)), Offset(x, y(bar.low ?: bar.close)), strokeWidth = 1.4f)
-                drawLine(color, Offset(x, y(open)), Offset(x, y(bar.close)), strokeWidth = (step * .55f).coerceAtLeast(2f))
+                drawLine(color, Offset(x, y(open)), Offset(x, y(bar.close)), strokeWidth = candleWidth)
                 val volumeHeight = ((bar.volume ?: 0.0) / maxVolume * (size.height - volumeTop)).toFloat()
-                drawLine(color.copy(alpha = .7f), Offset(x, size.height), Offset(x, size.height - volumeHeight), strokeWidth = (step * .55f).coerceAtLeast(2f))
+                drawLine(color.copy(alpha = .7f), Offset(x, size.height), Offset(x, size.height - volumeHeight), strokeWidth = candleWidth)
             }
             val crossX = step * selectedIndex + step / 2
             drawLine(crosshairColor.copy(alpha = .75f), Offset(crossX, 0f), Offset(crossX, size.height), strokeWidth = 1.5f)
             drawLine(crosshairColor.copy(alpha = .45f), Offset(0f, y(selected.close)), Offset(size.width, y(selected.close)), strokeWidth = 1f)
         }
     }
-    Row(Modifier.fillMaxWidth().padding(start = 48.dp), horizontalArrangement = Arrangement.SpaceBetween) { Text(visible.first().trading_date, style = MaterialTheme.typography.labelSmall); Text(visible[visible.size / 2].trading_date, style = MaterialTheme.typography.labelSmall); Text(visible.last().trading_date, style = MaterialTheme.typography.labelSmall) }
+    Row(Modifier.fillMaxWidth().padding(start = 48.dp), horizontalArrangement = Arrangement.SpaceBetween) {
+        if (useTimeAxis) {
+            intradayAxisIndices(visible.size).forEach { index ->
+                Text(intradayTimeLabel(visible[index].trading_date), style = MaterialTheme.typography.labelSmall)
+            }
+        } else {
+            Text(visible.first().trading_date, style = MaterialTheme.typography.labelSmall)
+            Text(visible[visible.size / 2].trading_date, style = MaterialTheme.typography.labelSmall)
+            Text(visible.last().trading_date, style = MaterialTheme.typography.labelSmall)
+        }
+    }
 }
 
 @Composable
@@ -2528,6 +2643,8 @@ fun ProfileScreen(themeMode: ThemeMode, onThemeModeChange: (ThemeMode) -> Unit) 
     var researchStatus by remember { mutableStateOf<String?>(null) }
     var showRuleDialog by remember { mutableStateOf(false) }
     var showLearningDialog by remember { mutableStateOf(false) }
+    var editingLearningCase by remember { mutableStateOf<LearningCaseDto?>(null) }
+    var deletingLearningCase by remember { mutableStateOf<LearningCaseDto?>(null) }
     fun refreshResearchData() {
         scope.launch {
             try {
@@ -2732,7 +2849,13 @@ fun ProfileScreen(themeMode: ThemeMode, onThemeModeChange: (ThemeMode) -> Unit) 
                 if (learningCases.isEmpty()) Text("还没有复盘记录。可把一次判断、核验结果和教训保存下来，供后续 AI 解读参考。", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
             }
         }
-        items(learningCases, key = { it.id }) { item -> LearningCaseCard(item) }
+        items(learningCases, key = { it.id }) { item ->
+            LearningCaseCard(
+                item = item,
+                onEdit = { editingLearningCase = item },
+                onDelete = { deletingLearningCase = item },
+            )
+        }
         item { Text("外观", modifier = Modifier.padding(horizontal = 20.dp), style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold) }
         items(ThemeMode.entries) { mode ->
             Row(
@@ -2764,6 +2887,7 @@ fun ProfileScreen(themeMode: ThemeMode, onThemeModeChange: (ThemeMode) -> Unit) 
     }
     if (showLearningDialog) {
         LearningCaseDialog(
+            initial = null,
             onDismiss = { showLearningDialog = false },
             onSave = { input ->
                 scope.launch {
@@ -2776,6 +2900,44 @@ fun ProfileScreen(themeMode: ThemeMode, onThemeModeChange: (ThemeMode) -> Unit) 
                     }
                 }
             },
+        )
+    }
+    editingLearningCase?.let { initial ->
+        LearningCaseDialog(
+            initial = initial,
+            onDismiss = { editingLearningCase = null },
+            onSave = { input ->
+                scope.launch {
+                    try {
+                        api.updateLearningCase(initial.id, input)
+                        editingLearningCase = null
+                        refreshResearchData()
+                    } catch (_: Exception) {
+                        researchStatus = "修改复盘记录失败，请检查输入和服务连接"
+                    }
+                }
+            },
+        )
+    }
+    deletingLearningCase?.let { item ->
+        AlertDialog(
+            onDismissRequest = { deletingLearningCase = null },
+            title = { Text("删除复盘记录？") },
+            text = { Text("将删除“${item.title}”。此操作无法撤销。") },
+            confirmButton = {
+                Button(onClick = {
+                    scope.launch {
+                        try {
+                            api.deleteLearningCase(item.id)
+                            deletingLearningCase = null
+                            refreshResearchData()
+                        } catch (_: Exception) {
+                            researchStatus = "删除复盘记录失败，请稍后重试"
+                        }
+                    }
+                }) { Text("删除") }
+            },
+            dismissButton = { TextButton(onClick = { deletingLearningCase = null }) { Text("取消") } },
         )
     }
     recordingReviewItem?.let { (review, item) ->
@@ -2820,10 +2982,20 @@ private fun PersonalRuleCard(rule: PersonalRuleDto) =
     }
 
 @Composable
-private fun LearningCaseCard(item: LearningCaseDto) =
+private fun LearningCaseCard(
+    item: LearningCaseDto,
+    onEdit: () -> Unit,
+    onDelete: () -> Unit,
+) =
     Card(Modifier.padding(horizontal = 20.dp).fillMaxWidth()) {
         Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(5.dp)) {
-            Text(item.title, style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.Bold)
+            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+                Text(item.title, style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.Bold, modifier = Modifier.weight(1f))
+                Row {
+                    IconButton(onClick = onEdit) { Icon(Icons.Filled.Edit, contentDescription = "编辑复盘记录") }
+                    IconButton(onClick = onDelete) { Icon(Icons.Filled.Delete, contentDescription = "删除复盘记录") }
+                }
+            }
             Text("${item.symbol ?: "组合"} · ${item.position_band} · 置信度 ${(item.confidence * 100).toInt()}%", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.primary)
             Text("当时判断：${item.context}", style = MaterialTheme.typography.bodySmall)
             Text("复盘结论：${item.lesson}", style = MaterialTheme.typography.bodySmall, fontWeight = FontWeight.SemiBold)
@@ -2932,17 +3104,18 @@ private fun PersonalRuleDialog(
 
 @Composable
 private fun LearningCaseDialog(
+    initial: LearningCaseDto?,
     onDismiss: () -> Unit,
     onSave: (LearningCaseInputDto) -> Unit,
 ) {
-    var symbol by remember { mutableStateOf("") }
-    var title by remember { mutableStateOf("") }
-    var context by remember { mutableStateOf("") }
-    var lesson by remember { mutableStateOf("") }
-    var outcome by remember { mutableStateOf("") }
+    var symbol by remember(initial?.id) { mutableStateOf(initial?.symbol ?: "") }
+    var title by remember(initial?.id) { mutableStateOf(initial?.title ?: "") }
+    var context by remember(initial?.id) { mutableStateOf(initial?.context ?: "") }
+    var lesson by remember(initial?.id) { mutableStateOf(initial?.lesson ?: "") }
+    var outcome by remember(initial?.id) { mutableStateOf(initial?.outcome ?: "") }
     AlertDialog(
         onDismissRequest = onDismiss,
-        title = { Text("记录一次复盘") },
+        title = { Text(if (initial == null) "记录一次复盘" else "编辑复盘记录") },
         text = {
             Column(Modifier.verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(8.dp)) {
                 OutlinedTextField(symbol, { symbol = it }, label = { Text("证券代码（可不填）") }, modifier = Modifier.fillMaxWidth())
@@ -2962,9 +3135,10 @@ private fun LearningCaseDialog(
                         context = context.trim(),
                         lesson = lesson.trim(),
                         outcome = outcome.trim(),
-                        position_band = "待评估",
-                        planned_action = "继续观察并核验原始信息",
-                        confidence = 0.5,
+                        position_band = initial?.position_band ?: "待评估",
+                        planned_action = initial?.planned_action ?: "继续观察并核验原始信息",
+                        confidence = initial?.confidence ?: 0.5,
+                        evidence_links = initial?.evidence_links ?: emptyList(),
                     ))
                 },
             ) { Text("保存") }

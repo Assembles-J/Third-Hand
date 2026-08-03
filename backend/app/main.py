@@ -1300,6 +1300,39 @@ def create_learning_case(payload: LearningCaseInput) -> LearningCase:
     return LearningCase.model_validate(store.add_learning_case(item))
 
 
+@app.put("/v1/learning-cases/{case_id}", response_model=LearningCase)
+def update_learning_case(case_id: str, payload: LearningCaseInput) -> LearningCase:
+    item = store.update_learning_case(case_id, payload.model_dump())
+    if not item:
+        raise HTTPException(status_code=404, detail="复盘记录不存在或已删除。")
+    return LearningCase.model_validate(item)
+
+
+@app.delete("/v1/learning-cases/{case_id}", status_code=status.HTTP_204_NO_CONTENT)
+def delete_learning_case(case_id: str) -> None:
+    if not store.delete_learning_case(case_id):
+        raise HTTPException(status_code=404, detail="复盘记录不存在或已删除。")
+
+
+def _local_learning_case_analysis(cases: list[dict[str, object]]) -> LearningCaseAnalysis:
+    """Useful offline fallback; it summarizes only user-authored review fields."""
+    lessons = [str(case.get("lesson", "")).strip() for case in cases if str(case.get("lesson", "")).strip()]
+    outcomes = [str(case.get("outcome", "")).strip() for case in cases if str(case.get("outcome", "")).strip()]
+    symbols = sorted({str(case["symbol"]).upper() for case in cases if case.get("symbol")})
+    scope = "、".join(symbols[:3]) if symbols else "组合"
+    recurring = [f"已累计 {len(cases)} 条复盘记录；重点回看重复出现的判断依据与结果。"]
+    if lessons:
+        recurring.append(f"最近的复盘教训：{lessons[0][:80]}")
+    focus = ["下次先记录可验证的判断依据，再记录实际结果。"]
+    if outcomes:
+        focus.append(f"核验上一条结果：{outcomes[0][:80]}")
+    return LearningCaseAnalysis(
+        summary=f"离线复盘总结：{scope} 共 {len(cases)} 条记录。当前为本地归纳，AI 服务恢复后可生成更完整的重复模式分析。",
+        recurring_patterns=recurring[:5], next_review_focus=focus[:5],
+        confidence="low" if len(cases) < 3 else "medium",
+    )
+
+
 @app.post("/v1/learning-cases/analysis", response_model=LearningCaseAnalysis)
 def analyze_learning_cases() -> LearningCaseAnalysis:
     """Summarize the user's own review records without producing trading advice."""
@@ -1307,7 +1340,7 @@ def analyze_learning_cases() -> LearningCaseAnalysis:
     if not cases:
         raise HTTPException(status_code=422, detail="请先至少保存一条复盘记录，再生成 AI 分析。")
     if not ai_analysis_service.client.enabled:
-        raise HTTPException(status_code=503, detail="AI 服务尚未配置，请设置 DEEPSEEK_API_KEY 后重试。")
+        return _local_learning_case_analysis(cases)
 
     compact_cases = [{
         "title": item.get("title"),
@@ -1335,7 +1368,7 @@ def analyze_learning_cases() -> LearningCaseAnalysis:
         return LearningCaseAnalysis.model_validate_json(response.content.strip().removeprefix("```json").removesuffix("```").strip())
     except (LlmClientError, ValueError, json.JSONDecodeError) as error:
         logger.warning("复盘 AI 分析失败: %s", error)
-        raise HTTPException(status_code=503, detail="AI 分析暂时不可用，请稍后重试。") from error
+        return _local_learning_case_analysis(cases)
 
 @app.get("/v1/research-rules", response_model=list[ResearchRule])
 def research_rules() -> list[ResearchRule]:

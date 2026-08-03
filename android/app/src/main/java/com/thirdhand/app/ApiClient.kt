@@ -125,6 +125,8 @@ data class SaleRecordDto(
 )
 data class DailyPriceDto(val trading_date: String, val open: Double? = null, val close: Double, val high: Double? = null, val low: Double? = null, val volume: Double? = null, val amount: Double? = null, val adjustment: String? = "qfq")
 data class IntradayPriceDto(val bar_time: String, val open: Double, val close: Double, val high: Double, val low: Double, val volume: Double? = null, val amount: Double? = null, val average_price: Double? = null, val source: String, val updated_at: String)
+data class InstrumentMetadataDto(val symbol: String, val market: String, val currency: String, val lot_size: Int? = null, val price_tick: String? = null, val source: String, val as_of: String, val updated_at: String)
+data class InstrumentMetadataInputDto(val market: String, val currency: String, val lot_size: Int? = null, val price_tick: String? = null, val source: String, val as_of: String)
 data class RecommendationRequestDto(val symbols: List<String>)
 data class AvailableCashDto(val available_cash: Double, val updated_at: String = "")
 data class AvailableCashInputDto(val available_cash: Double)
@@ -372,6 +374,10 @@ interface ThirdHandApi {
     suspend fun marketHistory(@Path("symbol") symbol: String, @Query("limit") limit: Int = 120): List<DailyPriceDto>
     @GET("v1/market/intraday/{symbol}")
     suspend fun marketIntraday(@Path("symbol") symbol: String, @Query("limit") limit: Int = 500): List<IntradayPriceDto>
+    @GET("v1/instruments/{symbol}/metadata")
+    suspend fun instrumentMetadata(@Path("symbol") symbol: String): InstrumentMetadataDto
+    @PUT("v1/instruments/{symbol}/metadata")
+    suspend fun saveInstrumentMetadata(@Path("symbol") symbol: String, @Body input: InstrumentMetadataInputDto): InstrumentMetadataDto
     @GET("v1/account/cash")
     suspend fun availableCash(): AvailableCashDto
     @PUT("v1/account/cash")
@@ -448,6 +454,12 @@ interface ThirdHandApi {
 
     @POST("v1/learning-cases")
     suspend fun createLearningCase(@Body item: LearningCaseInputDto): LearningCaseDto
+
+    @PUT("v1/learning-cases/{id}")
+    suspend fun updateLearningCase(@Path("id") id: String, @Body item: LearningCaseInputDto): LearningCaseDto
+
+    @DELETE("v1/learning-cases/{id}")
+    suspend fun deleteLearningCase(@Path("id") id: String)
 
     @POST("v1/learning-cases/analysis")
     suspend fun learningCaseAnalysis(): LearningCaseAnalysisDto

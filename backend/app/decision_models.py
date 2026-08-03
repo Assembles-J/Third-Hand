@@ -117,6 +117,7 @@ class TradePlanSnapshot(DecisionModel):
     enabled: bool
     version: int
     structured_conditions: tuple[dict[str, object], ...] = ()
+    is_draft: bool = False
 
 
 class PersonalRuleSnapshot(DecisionModel):

@@ -790,6 +790,31 @@ class PortfolioStore:
         with self._connect() as connection: rows = connection.execute(query, params).fetchall()
         return [{**dict(row), "evidence_links": json.loads(str(row["evidence_links"]))} for row in rows]
 
+    def update_learning_case(self, case_id: str, item: dict[str, object]) -> dict[str, object] | None:
+        """Update the editable content while retaining the original review timestamp."""
+        payload = {**item, "evidence_links": json.dumps(item.get("evidence_links", []), ensure_ascii=False)}
+        with self._connect() as connection:
+            cursor = connection.execute(
+                """UPDATE learning_cases SET symbol=:symbol, title=:title, context=:context,
+                lesson=:lesson, outcome=:outcome, position_band=:position_band,
+                planned_action=:planned_action, confidence=:confidence, evidence_links=:evidence_links
+                WHERE id=:id""",
+                {**payload, "id": case_id},
+            )
+        if cursor.rowcount == 0:
+            return None
+        return {"id": case_id, **item, "created_at": self.learning_case_created_at(case_id)}
+
+    def learning_case_created_at(self, case_id: str) -> str:
+        with self._connect() as connection:
+            row = connection.execute("SELECT created_at FROM learning_cases WHERE id=?", (case_id,)).fetchone()
+        return str(row["created_at"]) if row else ""
+
+    def delete_learning_case(self, case_id: str) -> bool:
+        with self._connect() as connection:
+            cursor = connection.execute("DELETE FROM learning_cases WHERE id=?", (case_id,))
+        return cursor.rowcount > 0
+
     def research_rules(self) -> list[dict[str, object]]:
         with self._connect() as connection: rows = connection.execute("SELECT * FROM research_rules ORDER BY category, id").fetchall()
         return [dict(row) for row in rows]

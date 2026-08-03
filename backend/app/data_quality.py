@@ -11,12 +11,14 @@ def summarize_data_quality(*, has_quote: bool, daily_bar_count: int, total_asset
     degraded: list[str] = []
     if not has_quote:
         missing.append("quote.price")
+    # These fields reduce confidence or disable only the affected calculation;
+    # they must not stop qualitative research or a defensive review.
     if daily_bar_count < 60:
-        missing.append("daily_bars.minimum_60")
+        degraded.append("daily_bars.minimum_60")
     if not total_assets_available:
-        missing.append("account.total_assets")
+        degraded.append("account.total_assets")
     if not plan_enabled:
-        missing.append("trade_plan.enabled")
+        degraded.append("trade_plan.auto_draft")
     if not has_risk:
         degraded.append("risk")
     if not has_market_regime:

@@ -93,7 +93,7 @@ class DecisionContextBuilder:
             "account": account, "position": position, "quote": self._quote(quote),
             "daily_bars": self._daily_bars(bars), "technical": technical, "risk": self._risk(risk),
             "market_regime": market_regime, "relative_strength": relative_strength, "events": events,
-            "trade_plan": self._plan(plan), "personal_rule": self._rule(rule),
+            "trade_plan": self._plan(plan, symbol), "personal_rule": self._rule(rule),
             "instrument": self._instrument(instrument), "data_quality": quality,
             "source_versions": self._source_versions(),
         }
@@ -187,10 +187,20 @@ class DecisionContextBuilder:
         return RelativeStrengthSnapshot(status=str(value.get("status", "unknown")), benchmark_symbol=value.get("benchmark_symbol"), benchmark_name=value.get("benchmark_name"), label=value.get("label"))
 
     @staticmethod
-    def _plan(item):
+    def _plan(item, symbol: str):
         if not item:
-            return None
-        return TradePlanSnapshot(plan_id=str(item["id"]), horizon=str(item["horizon"]), thesis=str(item["thesis"]), entry_condition=str(item["entry_condition"]), add_condition=str(item["add_condition"]), reduce_condition=str(item["reduce_condition"]), exit_condition=str(item["exit_condition"]), max_position_percent=float(item["max_position_percent"]), risk_budget_percent=float(item["risk_budget_percent"]), invalidation_price=item.get("invalidation_price"), enabled=bool(item["enabled"]), version=int(item["version"]), structured_conditions=tuple(item.get("structured_conditions") or ()))
+            # A draft keeps analysis moving without silently enabling a trading plan.
+            return TradePlanSnapshot(
+                plan_id=f"draft:{symbol}", horizon="swing",
+                thesis="系统草稿：待用户确认持有依据、行业逻辑与估值假设。",
+                entry_condition="草稿未启用：不作为开仓或加仓条件。",
+                add_condition="草稿未启用：不作为加仓条件。",
+                reduce_condition="风险恶化或仓位超过上限时复核。",
+                exit_condition="核心逻辑失效、事实被证伪或触发风险边界时复核。",
+                max_position_percent=20.0, risk_budget_percent=1.0,
+                enabled=False, version=0, is_draft=True,
+            )
+        return TradePlanSnapshot(plan_id=str(item["id"]), horizon=str(item["horizon"]), thesis=str(item["thesis"]), entry_condition=str(item["entry_condition"]), add_condition=str(item["add_condition"]), reduce_condition=str(item["reduce_condition"]), exit_condition=str(item["exit_condition"]), max_position_percent=float(item["max_position_percent"]), risk_budget_percent=float(item["risk_budget_percent"]), invalidation_price=item.get("invalidation_price"), enabled=bool(item["enabled"]), version=int(item["version"]), structured_conditions=tuple(item.get("structured_conditions") or ()), is_draft=False)
 
     @staticmethod
     def _rule(item):

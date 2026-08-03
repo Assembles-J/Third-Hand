@@ -19,12 +19,15 @@ class ResearchChatRepository:
  def session(self,session_id):
   with self._connect() as c:r=c.execute("SELECT * FROM research_chat_sessions WHERE id=?",(session_id,)).fetchone()
   return ResearchChatSession.model_validate(dict(r)) if r else None
+ def update_session_title(self,session_id,title):
+  with self._connect() as c:c.execute("UPDATE research_chat_sessions SET title=?, updated_at=? WHERE id=?",(title[:120],beijing_now().isoformat(),session_id))
  def create_turn(self,session_id,request_id,model,prompt_version):
   with self._connect() as c:
    row=c.execute("SELECT * FROM research_chat_turns WHERE client_request_id=?",(request_id,)).fetchone()
    if row:return ResearchChatTurn.model_validate(dict(row)),False
    now=beijing_now(); item=ResearchChatTurn(id=str(uuid4()),session_id=session_id,client_request_id=request_id,status=ResearchTurnStatus.pending,model=model,prompt_version=prompt_version,created_at=now)
    c.execute("INSERT INTO research_chat_turns (id,session_id,client_request_id,status,model,prompt_version,created_at) VALUES (?,?,?,?,?,?,?)",(item.id,session_id,request_id,item.status.value,model,prompt_version,now.isoformat()))
+   c.execute("UPDATE research_chat_sessions SET updated_at=? WHERE id=?",(now.isoformat(),session_id))
   return item,True
  def turn(self,turn_id):
   with self._connect() as c:r=c.execute("SELECT * FROM research_chat_turns WHERE id=?",(turn_id,)).fetchone()
@@ -34,7 +37,10 @@ class ResearchChatRepository:
   columns=','.join(f"{key}=?" for key in updates); values=[value.value if hasattr(value,'value') else value for value in updates.values()]
   with self._connect() as c:c.execute(f"UPDATE research_chat_turns SET {columns} WHERE id=?",(*values,turn_id))
  def add_message(self,session_id,turn_id,role,content_type,content,metadata=None):
-  with self._connect() as c:c.execute("INSERT INTO research_chat_messages VALUES (?,?,?,?,?,?,?,?)",(str(uuid4()),session_id,turn_id,role,content_type,content,json.dumps(metadata or {},ensure_ascii=False),beijing_now().isoformat()))
+  now=beijing_now().isoformat()
+  with self._connect() as c:
+   c.execute("INSERT INTO research_chat_messages VALUES (?,?,?,?,?,?,?,?)",(str(uuid4()),session_id,turn_id,role,content_type,content,json.dumps(metadata or {},ensure_ascii=False),now))
+   c.execute("UPDATE research_chat_sessions SET updated_at=? WHERE id=?",(now,session_id))
  def history(self,session_id,limit=20):
   with self._connect() as c: rows=c.execute("SELECT role,content FROM research_chat_messages WHERE session_id=? AND content_type IN ('user_text','assistant_answer','clarification_answer') ORDER BY created_at DESC LIMIT ?",(session_id,limit)).fetchall()
   return [dict(x) for x in reversed(rows)]

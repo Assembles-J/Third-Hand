@@ -54,7 +54,7 @@ class ActionPolicyEngine:
     @staticmethod
     def _add_allowed(context: DecisionContext, ids: set[str]) -> bool:
         position, plan = context.position, context.trade_plan
-        if not position or not plan or not context.risk or "plan.add_condition_met" not in ids:
+        if not position or not plan or not plan.enabled or not context.risk or "plan.add_condition_met" not in ids:
             return False
         if position.position_percent is None or position.position_percent >= plan.max_position_percent:
             return False

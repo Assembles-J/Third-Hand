@@ -5,27 +5,33 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
+import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.lazy.LazyColumn
-import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
-import androidx.compose.material3.AssistChip
-import androidx.compose.material3.AssistChipDefaults
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.filled.ArrowBack
+import androidx.compose.material.icons.filled.Add
+import androidx.compose.material.icons.filled.Menu
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
-import androidx.compose.material3.DropdownMenuItem
-import androidx.compose.material3.ExposedDropdownMenuBox
-import androidx.compose.material3.ExposedDropdownMenuDefaults
-import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.HorizontalDivider
+import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.MenuAnchorType
+import androidx.compose.material3.ModalBottomSheet
+import androidx.compose.material3.ModalDrawerSheet
+import androidx.compose.material3.ModalNavigationDrawer
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
+import androidx.compose.material3.rememberDrawerState
+import androidx.compose.material3.DrawerValue
+import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
@@ -38,158 +44,149 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import com.thirdhand.app.ApiClient
 import com.thirdhand.app.EndpointStore
 import com.thirdhand.app.HoldingDto
 import kotlinx.coroutines.launch
 
-private data class ChatLine(val user: Boolean, val text: String)
+data class ResearchChatLine(val user: Boolean, val text: String)
 
-private val researchPresets = listOf(
-    "分析当前行情、持仓成本、技术面和风险，说明现状与下一步关注点。",
-    "这只票当前趋势如何？请列出支持与削弱判断的关键证据。",
-    "我的持仓目前主要风险是什么？什么情况需要重新复核？",
-    "结合近期事件和市场环境，哪些变化最值得跟踪？",
+private val informationSources = listOf(
+    "选择分析对象" to "持仓、观察标的或组合",
+    "账户与持仓" to "成本、数量、现金与盈亏快照",
+    "行情与 K 线" to "行情、日线、技术指标与风险",
+    "交易计划与规则" to "已启用计划、仓位上限与风险边界",
+    "公司公告与业绩" to "财报、业绩预告、分红、减持与回购",
+    "新闻、事件与时间线" to "新闻、公告时间和风险事件",
+    "行业与市场环境" to "行业强弱、市场状态与相对表现",
+    "个人研究备注" to "后续支持文字、截图 OCR 与文件材料",
 )
-
-@Composable
-private fun ResearchChatStreamStatus(controller: ResearchChatController) {
-    val state by controller.state.collectAsState()
-    BackHandler(enabled = state is ResearchChatUiState.Streaming) { controller.cancel() }
-    val current = state as? ResearchChatUiState.Streaming ?: return
-    Text(current.phase.ifBlank { "正在进行研究分析" }, style = MaterialTheme.typography.labelLarge, fontWeight = FontWeight.SemiBold)
-    current.activity.takeLast(2).forEach { Text(it, style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant) }
-    if (current.answer.isNotBlank()) ResearchMarkdown(current.answer)
-    TextButton(onClick = controller::cancel) { Text("取消") }
-}
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-fun ResearchChatScreen() {
+fun ResearchChatScreen(
+    controller: ResearchChatController,
+    conversation: List<ResearchChatLine>,
+    onConversationChange: (List<ResearchChatLine>) -> Unit,
+    question: String,
+    onQuestionChange: (String) -> Unit,
+    onClose: () -> Unit,
+) {
     val context = LocalContext.current
-    val controller = remember { ResearchChatController() }
-    val state by controller.state.collectAsState()
     val scope = rememberCoroutineScope()
+    val state by controller.state.collectAsState()
+    val drawerState = rememberDrawerState(DrawerValue.Closed)
+    var sessions by remember { mutableStateOf<List<ResearchSessionSummary>>(emptyList()) }
     var holdings by remember { mutableStateOf<List<HoldingDto>>(emptyList()) }
-    var selectedSymbol by remember { mutableStateOf<String?>(null) }
-    var holdingsExpanded by remember { mutableStateOf(false) }
-    var question by remember { mutableStateOf("") }
+    var selectedSymbol by remember { mutableStateOf<String?>(controller.currentSymbol) }
+    var sourcePicker by remember { mutableStateOf(false) }
+    var targetPicker by remember { mutableStateOf(false) }
     var loadError by remember { mutableStateOf<String?>(null) }
-    var conversation by remember { mutableStateOf<List<ChatLine>>(emptyList()) }
     var recordedAnswer by remember { mutableStateOf<String?>(null) }
 
-    fun loadHoldings() = scope.launch {
-        loadError = null
-        runCatching { ApiClient.service(context).holdings() }
-            .onSuccess { loaded ->
-                holdings = loaded
-                if (selectedSymbol !in loaded.map { it.symbol }) selectedSymbol = loaded.firstOrNull()?.symbol
-            }
-            .onFailure { loadError = "无法读取持仓，请检查服务连接后重试。" }
+    fun refreshSessions() = controller.loadSessions(EndpointStore.baseUrl(context), { sessions = it }, { loadError = it })
+    fun restoreSession(item: ResearchSessionSummary) {
+        controller.selectSession(item.id, item.symbol)
+        selectedSymbol = item.symbol
+        controller.loadMessages(EndpointStore.baseUrl(context), item.id, { messages ->
+            onConversationChange(messages.map { ResearchChatLine(it.user, it.text) })
+            scope.launch { drawerState.close() }
+        }, { loadError = it })
     }
-    fun send(text: String) {
-        val value = text.trim()
+    fun send() {
+        val value = question.trim()
         if (value.isBlank() || selectedSymbol == null || state is ResearchChatUiState.Streaming) return
-        conversation = conversation + ChatLine(true, value)
-        question = ""
+        onConversationChange(conversation + ResearchChatLine(true, value))
+        onQuestionChange("")
         recordedAnswer = null
         controller.send(EndpointStore.baseUrl(context), value, selectedSymbol)
+        refreshSessions()
     }
 
-    LaunchedEffect(Unit) { loadHoldings() }
+    LaunchedEffect(Unit) {
+        runCatching { ApiClient.service(context).holdings() }.onSuccess { holdings = it }.onFailure { loadError = "无法读取持仓，请检查服务连接。" }
+        refreshSessions()
+    }
     LaunchedEffect(state) {
         when (val current = state) {
             is ResearchChatUiState.Completed -> if (current.answer.isNotBlank() && recordedAnswer != current.answer) {
-                conversation = conversation + ChatLine(false, current.answer)
-                recordedAnswer = current.answer
+                onConversationChange(conversation + ResearchChatLine(false, current.answer)); recordedAnswer = current.answer; refreshSessions()
             }
             is ResearchChatUiState.Failed -> if (recordedAnswer != current.message) {
-                conversation = conversation + ChatLine(false, "本次研究未完成：${current.message}")
-                recordedAnswer = current.message
+                onConversationChange(conversation + ResearchChatLine(false, "本次研究未完成：${current.message}")); recordedAnswer = current.message; refreshSessions()
             }
             else -> Unit
         }
     }
+    BackHandler(onBack = onClose)
 
-    val selectedHolding = holdings.firstOrNull { it.symbol == selectedSymbol }
-    Column(Modifier.fillMaxSize().background(MaterialTheme.colorScheme.surface)) {
-        Column(Modifier.padding(horizontal = 16.dp, vertical = 8.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
-            Text("持仓研究", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold)
-            ExposedDropdownMenuBox(expanded = holdingsExpanded, onExpandedChange = { holdingsExpanded = it }) {
-                OutlinedTextField(
-                    value = selectedHolding?.let { "${it.name} · ${it.symbol}" } ?: "请选择持仓",
-                    onValueChange = {},
-                    readOnly = true,
-                    modifier = Modifier.fillMaxWidth().menuAnchor(MenuAnchorType.PrimaryNotEditable),
-                    label = { Text("分析标的") },
-                    trailingIcon = { ExposedDropdownMenuDefaults.TrailingIcon(expanded = holdingsExpanded) },
-                )
-                ExposedDropdownMenu(expanded = holdingsExpanded, onDismissRequest = { holdingsExpanded = false }) {
-                    holdings.forEach { holding ->
-                        DropdownMenuItem(
-                            text = { Text("${holding.name} · ${holding.symbol}") },
-                            onClick = {
-                                selectedSymbol = holding.symbol
-                                holdingsExpanded = false
-                                controller.reset()
-                                conversation = emptyList()
-                            },
-                        )
+    ModalNavigationDrawer(
+        drawerState = drawerState,
+        drawerContent = {
+            ModalDrawerSheet {
+                Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                    Text("研究会话", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold)
+                    Button(onClick = {
+                        controller.beginNewResearch(); selectedSymbol = null; onConversationChange(emptyList()); onQuestionChange(""); scope.launch { drawerState.close() }
+                    }, modifier = Modifier.fillMaxWidth()) { Text("+ 新建研究") }
+                    HorizontalDivider()
+                    if (sessions.isEmpty()) Text("还没有已保存的研究会话。", color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    sessions.forEach { item ->
+                        TextButton(onClick = { restoreSession(item) }, modifier = Modifier.fillMaxWidth()) {
+                            Column(Modifier.fillMaxWidth()) {
+                                Text(item.title, maxLines = 2, overflow = TextOverflow.Ellipsis, fontWeight = if (item.id == controller.currentSessionId) FontWeight.Bold else FontWeight.Normal)
+                                Text("${item.symbol ?: "综合研究"} · ${item.updatedAt.replace("T", " ").take(16)}", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                            }
+                        }
                     }
                 }
             }
-            loadError?.let { Text(it, color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.labelSmall) }
-        }
-        HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
-
-        LazyColumn(Modifier.weight(1f), contentPadding = PaddingValues(horizontal = 16.dp, vertical = 10.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
-            if (conversation.isEmpty()) item {
-                LazyRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    items(researchPresets) { preset ->
-                        AssistChip(onClick = { question = preset }, label = { Text(preset, maxLines = 2) }, colors = AssistChipDefaults.assistChipColors(containerColor = MaterialTheme.colorScheme.surfaceVariant))
-                    }
+        },
+    ) {
+        Column(Modifier.fillMaxSize().background(MaterialTheme.colorScheme.surface)) {
+            Row(Modifier.fillMaxWidth().padding(horizontal = 8.dp, vertical = 6.dp), verticalAlignment = Alignment.CenterVertically) {
+                IconButton(onClick = onClose) { Icon(Icons.AutoMirrored.Filled.ArrowBack, "暂时关闭研究") }
+                Column(Modifier.weight(1f)) {
+                    Text("研究", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
+                    Text(selectedSymbol ?: "新建会话", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                }
+                IconButton(onClick = { scope.launch { drawerState.open() } }) { Icon(Icons.Filled.Menu, "管理历史会话") }
+            }
+            HorizontalDivider()
+            loadError?.let { Text(it, Modifier.padding(16.dp), color = MaterialTheme.colorScheme.error) }
+            LazyColumn(Modifier.weight(1f), contentPadding = PaddingValues(start = 16.dp, end = 16.dp, top = 12.dp, bottom = 112.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                if (conversation.isEmpty()) item { EmptyResearchHint(onChooseTarget = { targetPicker = true }) }
+                items(conversation) { ChatBubble(it) }
+                if (state is ResearchChatUiState.Streaming) item { StreamingCard(state as ResearchChatUiState.Streaming) }
+                (state as? ResearchChatUiState.Completed)?.takeIf { it.canContinue }?.let {
+                    item { Button(onClick = { controller.continueLast(EndpointStore.baseUrl(context), selectedSymbol) }, modifier = Modifier.fillMaxWidth()) { Text("继续生成") } }
                 }
             }
-            items(conversation) { line -> ChatBubble(line) }
-            val completed = state as? ResearchChatUiState.Completed
-            if (completed != null && (completed.promptTokens > 0 || completed.completionTokens > 0)) item {
-                Text("本段用量：输入 ${completed.promptTokens} · 输出 ${completed.completionTokens} tokens", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            HorizontalDivider()
+            Row(Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 8.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                IconButton(onClick = { sourcePicker = true }, enabled = state !is ResearchChatUiState.Streaming) { Icon(Icons.Filled.Add, "添加分析信息源") }
+                OutlinedTextField(question, onQuestionChange, Modifier.weight(1f), label = { Text(if (selectedSymbol == null) "先用 + 选择分析对象" else "继续提问") }, maxLines = 3, enabled = selectedSymbol != null && state !is ResearchChatUiState.Streaming)
+                Button(onClick = ::send, enabled = question.isNotBlank() && selectedSymbol != null && state !is ResearchChatUiState.Streaming) { Text("发送") }
             }
-            if (completed?.canContinue == true) item {
-                Button(onClick = { controller.continueLast(EndpointStore.baseUrl(context), selectedSymbol) }, modifier = Modifier.fillMaxWidth()) { Text("继续生成下一段") }
-            }
-            if (state is ResearchChatUiState.Streaming) item {
-                Card(colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.secondaryContainer)) {
-                    Column(Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) { ResearchChatStreamStatus(controller) }
+        }
+    }
+    if (sourcePicker) ModalBottomSheet(onDismissRequest = { sourcePicker = false }) {
+        Column(Modifier.padding(horizontal = 20.dp, vertical = 8.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+            Text("添加分析信息", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
+            informationSources.forEach { (title, detail) ->
+                TextButton(onClick = { if (title == "选择分析对象") targetPicker = true; sourcePicker = false }, modifier = Modifier.fillMaxWidth()) {
+                    Column(Modifier.fillMaxWidth()) { Text(title, fontWeight = FontWeight.SemiBold); Text(detail, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant) }
                 }
             }
         }
-
-        HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
-        Column(Modifier.padding(horizontal = 16.dp, vertical = 8.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
-            OutlinedTextField(
-                value = question,
-                onValueChange = { question = it },
-                modifier = Modifier.fillMaxWidth(),
-                minLines = 1,
-                maxLines = 2,
-                label = { Text(if (selectedHolding == null) "请先选择一只持仓" else "提问") },
-                enabled = selectedHolding != null && state !is ResearchChatUiState.Streaming,
-            )
-            Button(onClick = { send(question) }, enabled = question.isNotBlank() && selectedHolding != null && state !is ResearchChatUiState.Streaming, modifier = Modifier.fillMaxWidth()) { Text("发送") }
-        }
     }
+    if (targetPicker) AlertDialog(onDismissRequest = { targetPicker = false }, title = { Text("选择分析对象") }, text = {
+        Column { holdings.forEach { holding -> TextButton(onClick = { selectedSymbol = holding.symbol; controller.beginNewResearch(); onConversationChange(emptyList()); targetPicker = false }, modifier = Modifier.fillMaxWidth()) { Text("${holding.name} · ${holding.symbol}") } } }
+    }, confirmButton = { TextButton(onClick = { targetPicker = false }) { Text("取消") } })
 }
 
-@Composable
-private fun ChatBubble(line: ChatLine) {
-    val alignment = if (line.user) Alignment.End else Alignment.Start
-    val color = if (line.user) MaterialTheme.colorScheme.primaryContainer else MaterialTheme.colorScheme.surfaceVariant
-    Column(Modifier.fillMaxWidth(), horizontalAlignment = alignment) {
-        Card(colors = CardDefaults.cardColors(containerColor = color), modifier = Modifier.fillMaxWidth(0.92f)) {
-            if (line.user) Text(line.text, Modifier.padding(12.dp), style = MaterialTheme.typography.bodyMedium)
-            else ResearchMarkdown(line.text, Modifier.padding(12.dp))
-        }
-    }
-}
+@Composable private fun EmptyResearchHint(onChooseTarget: () -> Unit) = Card(colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant)) { Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) { Text("从一个研究问题开始", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold); Text("点 + 选择分析对象和需要带入的资料。系统会自动带入行情、K 线、持仓、交易计划、规则、公告和事件证据。", style = MaterialTheme.typography.bodyMedium); TextButton(onClick = onChooseTarget) { Text("选择分析对象") } } }
+@Composable private fun StreamingCard(state: ResearchChatUiState.Streaming) = Card(colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.secondaryContainer)) { Column(Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(5.dp)) { Text(state.phase.ifBlank { "正在后台分析…" }, fontWeight = FontWeight.SemiBold); state.activity.takeLast(2).forEach { Text(it, style = MaterialTheme.typography.labelSmall) }; if (state.answer.isNotBlank()) ResearchMarkdown(state.answer) } }
+@Composable private fun ChatBubble(line: ResearchChatLine) = Column(Modifier.fillMaxWidth(), horizontalAlignment = if (line.user) Alignment.End else Alignment.Start) { Card(colors = CardDefaults.cardColors(containerColor = if (line.user) MaterialTheme.colorScheme.primaryContainer else MaterialTheme.colorScheme.surfaceVariant), modifier = Modifier.fillMaxWidth(if (line.user) .9f else 1f)) { if (line.user) Text(line.text, Modifier.padding(14.dp)) else ResearchMarkdown(line.text, Modifier.padding(14.dp)) } }

@@ -26,3 +26,4 @@ releases/
 *.db
 *.sqlite
 *.sqlite3
+.superdesign/tmp/

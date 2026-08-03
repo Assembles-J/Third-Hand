@@ -40,12 +40,28 @@ def test_context_builder_has_stable_input_hash_and_does_not_need_an_action(tmp_p
     assert not hasattr(first, "action")
 
 
-def test_data_quality_blocks_missing_required_inputs_and_degrades_optional_inputs():
+def test_data_quality_blocks_only_missing_price_and_degrades_non_execution_inputs():
     result = summarize_data_quality(
         has_quote=False, daily_bar_count=59, total_assets_available=False, plan_enabled=False,
         has_risk=False, has_market_regime=False, has_relative_strength=False, has_events=False,
     )
 
     assert result.status == "blocked"
-    assert result.missing_fields == ("quote.price", "daily_bars.minimum_60", "account.total_assets", "trade_plan.enabled")
+    assert result.missing_fields == ("quote.price",)
+    assert "trade_plan.auto_draft unavailable" in result.warnings
     assert "risk unavailable" in result.warnings
+
+
+def test_missing_trade_plan_is_exposed_as_a_non_enabled_editable_draft(tmp_path):
+    store = PortfolioStore(tmp_path / "draft-plan.db")
+    store.add("holding-1", "600519", "test", 100, 10)
+    store.save_available_cash(1000)
+    store.save_quotes([{ "symbol": "600519", "price": 10, "currency": "CNY", "source": "test", "as_of": "2026-07-31", "retrieved_at": "2026-07-31T10:00:00+08:00" }])
+    store.save_daily_prices("600519", [{"trading_date": f"2026-06-{index + 1:02d}", "open": 10, "close": 10, "high": 11, "low": 9, "source": "test"} for index in range(60)])
+
+    context = DecisionContextBuilder(store).build("600519")
+
+    assert context.trade_plan is not None
+    assert context.trade_plan.is_draft is True
+    assert context.trade_plan.enabled is False
+    assert context.data_quality.status == "degraded"

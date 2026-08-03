@@ -1,40 +1,30 @@
-# Third-Hand Operations Console — Design System
+# Third-Hand Mobile Research Design System
 
-## Product and audience
+## Product context
 
-An internal administration console for the Third-Hand A-share information assistant. It is used by the system owner to see whether the remote backend is healthy, how much capacity is being consumed, where data is flowing, and to make bounded operational changes without exposing sensitive credentials.
-
-Primary jobs: diagnose service health at a glance; find a resource or quota problem before users are affected; review queued jobs and alerts; adjust safe configuration such as refresh cadence, notification thresholds, retention, and feature availability.
+Third-Hand is a mobile-first A-share research and review assistant. The research screen helps an investor return to saved conversations, understand evidence, and record follow-up questions without suggesting automatic trading.
 
 ## Visual direction
 
-**Name:** Control-room ledger. A dark, high-information operational surface that feels like a precise system instrument rather than a consumer analytics dashboard.
+Use the existing light orange Material 3 product language.
 
-- Canvas: graphite `#111614`; panel `#171E1B`; elevated panel `#1D2622`
-- Primary signal: mint `#9EFFBF`; operational teal `#4ED6C2`
-- Warning: gold `#F4D35E`; critical: coral `#FF8C69`; quiet text `#9DA9A3`
-- Divider: `rgba(202, 220, 208, 0.16)`; all separations use 1px hairlines, with no gradients and no glossy shadows.
-- Display/type: Space Grotesk for section headings; General Sans or system sans for body; JetBrains Mono for metrics, timestamps, IDs, controls and technical labels.
-- Corners are square or 2px. Use a 12-column desktop grid. Wide panels intentionally share borders, forming a dense command-center ledger.
+- Canvas and surface: warm ivory `#FFF8F3`; secondary surface `#F7E6DE`.
+- Brand: orange `#E45121`; brand container `#FFD9C9`; dark brand text `#4A1100`.
+- Text: `#261714`; subdued text: `#59413A`.
+- Positive: `#2D7A4A`; errors use the semantic Material error color.
+- Typography: Android system sans / Material 3 typography; medium and semibold only for hierarchy.
+- Spacing: use 4, 8, 10, 14, 16, 20 dp. Corners are 12-18 dp, with restrained elevation.
 
-## Layout and components
+## Research chat layout
 
-- Fixed left rail, 232px wide: product mark, environment selector, structured navigation. The active item carries a 3px mint rule and a compact count/status chip.
-- Top bar: breadcrumb, the last data-sync timestamp, a live system-status badge, notification control, and administrator profile.
-- Main title row: `系统总览` with subtitle `REMOTE BACKEND / CN-SHANGHAI-01`; right-aligned `刷新数据` and `进入维护模式` actions.
-- First row: four equal KPI cells for API availability, active users, task throughput, and daily LLM spend. Each uses a large numeric readout, small delta, and a tiny one-color sparkline.
-- Primary body: a large service topology / throughput panel with a 24-hour bar-and-line chart; beside it a compact alert queue ordered by severity.
-- Secondary body: resource capacity table (CPU, memory, PostgreSQL, Redis, object storage) with actual vs quota and projection; task queue table with status, latency, retry and owner.
-- Bottom strip: data-source health timeline and a configuration panel with real controls: refresh interval segmented control, alert threshold input, retention selector, safe-mode toggle and a `保存更改` button.
-- Use Chinese operational copy, specific realistic labels, timestamps and quantities. Never give investment advice or display individual user holdings.
+- Mobile screen: a compact header with a session switcher and a new-chat button. A modal navigation drawer shows saved sessions with symbol, short title, latest time, and the active-session marker.
+- Conversation: content scrolls above a fixed composer; reserve bottom padding so the final assistant card never sits behind the composer or system navigation.
+- Assistant analysis: replace dense prose with a clear summary card followed by short evidence/action chips. Show `结论`, `支持`, `风险`, `待确认` as separate labeled rows. Chips must wrap instead of clipping.
+- Composer: a single compact text field, send button, and visible background-analysis state. Do not obscure message content.
 
-## Interaction and accessibility
+## Accessibility and interaction
 
-- Status always combines icon, text and color. Critical states also have a clear action such as `查看日志` or `暂停任务`.
-- All controls are native-looking buttons, inputs, switches and selects with visible labels and keyboard focus states.
-- Data-heavy panels collapse in a single column on tablet; on mobile show the health strip and alert queue before charts/tables.
-- Motion is limited to a subtle live-status pulse and chart update transition; disable both under reduced motion.
-
-## Signature detail
-
-Use a fine, non-decorative topology trace: short routed lines connect `API`, `Worker`, `PostgreSQL`, `Redis`, and `LLM` markers in the main throughput panel. The trace uses mint for healthy segments and coral for the single delayed segment, so the architecture also communicates current operational state.
+- Every icon action has a text label or content description.
+- Status always uses text in addition to color.
+- Session rows have at least a 44 dp touch target; long titles truncate to two lines.
+- Use native Material controls and no gradients or decorative motion.

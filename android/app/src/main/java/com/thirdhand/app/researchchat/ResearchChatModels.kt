@@ -6,6 +6,15 @@ data class ResearchSseEvent(
     val data: Map<String, String>,
 )
 
+data class ResearchSessionSummary(
+    val id: String,
+    val title: String,
+    val symbol: String?,
+    val updatedAt: String,
+)
+
+data class ResearchStoredMessage(val user: Boolean, val text: String)
+
 sealed interface ResearchChatUiState {
     data object Idle : ResearchChatUiState
     data class Streaming(

@@ -119,6 +119,8 @@ class EvidenceEngine:
         if not plan or not quote:
             return []
         result = []
+        if plan.is_draft:
+            result.append(_item("plan.auto_draft", "plan", "uncertain", .35, "系统已生成交易计划草稿", "草稿用于补齐分析上下文，尚未启用，不会触发开仓或加仓条件；可在之后编辑确认。", source="decision_context", as_of=context.generated_at, fresh=True, rule_id=plan.plan_id))
         for condition in plan.structured_conditions:
             trigger, field, operator, value = condition.get("trigger"), condition.get("field"), condition.get("operator"), condition.get("value")
             if field != "close" or not isinstance(trigger, str):

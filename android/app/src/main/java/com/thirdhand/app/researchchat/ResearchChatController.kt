@@ -14,6 +14,24 @@ class ResearchChatController(httpClient: OkHttpClient = OkHttpClient()) {
     private var source: EventSource? = null
     private var activeSessionId: String? = null
     private var activeSymbol: String? = null
+    val currentSessionId: String? get() = activeSessionId
+    val currentSymbol: String? get() = activeSymbol
+
+    fun loadSessions(baseUrl: String, onReady: (List<ResearchSessionSummary>) -> Unit, onFailure: (String) -> Unit) = repository.sessions(baseUrl, onReady, onFailure)
+
+    fun loadMessages(baseUrl: String, sessionId: String, onReady: (List<ResearchStoredMessage>) -> Unit, onFailure: (String) -> Unit) = repository.messages(baseUrl, sessionId, onReady, onFailure)
+
+    fun selectSession(sessionId: String, symbol: String?) {
+        activeSessionId = sessionId
+        activeSymbol = symbol
+        mutableState.value = ResearchChatUiState.Idle
+    }
+
+    fun beginNewResearch() {
+        activeSessionId = null
+        activeSymbol = null
+        mutableState.value = ResearchChatUiState.Idle
+    }
 
     fun send(baseUrl: String, message: String, symbol: String?) {
         if (activeSessionId != null && activeSymbol == symbol) {

@@ -11,8 +11,38 @@ import okhttp3.sse.EventSource
 import okhttp3.sse.EventSourceListener
 import okhttp3.sse.EventSources
 import org.json.JSONObject
+import org.json.JSONArray
 
 class ResearchChatRepository(private val httpClient: OkHttpClient) {
+    fun sessions(baseUrl: String, onReady: (List<ResearchSessionSummary>) -> Unit, onFailure: (String) -> Unit) {
+        getJson("${baseUrl.trimEnd('/')}/v1/research-chat/sessions", { body ->
+            val items = JSONArray(body)
+            onReady((0 until items.length()).map { index ->
+                val item = items.getJSONObject(index)
+                ResearchSessionSummary(item.getString("id"), item.optString("title", "研究会话"), item.optString("primary_symbol").ifBlank { null }, item.optString("updated_at"))
+            })
+        }, onFailure)
+    }
+
+    fun messages(baseUrl: String, sessionId: String, onReady: (List<ResearchStoredMessage>) -> Unit, onFailure: (String) -> Unit) {
+        getJson("${baseUrl.trimEnd('/')}/v1/research-chat/sessions/$sessionId/messages", { body ->
+            val items = JSONArray(body)
+            onReady((0 until items.length()).map { index ->
+                val item = items.getJSONObject(index)
+                ResearchStoredMessage(item.optString("role") == "user", item.optString("content"))
+            })
+        }, onFailure)
+    }
+
+    private fun getJson(url: String, onReady: (String) -> Unit, onFailure: (String) -> Unit) {
+        httpClient.newCall(Request.Builder().url(url).get().build()).enqueue(object : Callback {
+            override fun onFailure(call: Call, e: java.io.IOException) = onFailure(e.message ?: "网络连接失败")
+            override fun onResponse(call: Call, response: Response) = response.use {
+                val body = it.body?.string().orEmpty()
+                if (it.isSuccessful) onReady(body) else onFailure("读取研究记录失败（HTTP ${it.code}）")
+            }
+        })
+    }
     fun createSession(baseUrl: String, title: String, symbol: String?, onReady: (String) -> Unit, onFailure: (String) -> Unit) {
         val payload = JSONObject().put("title", title)
         if (!symbol.isNullOrBlank()) payload.put("primary_symbol", symbol)

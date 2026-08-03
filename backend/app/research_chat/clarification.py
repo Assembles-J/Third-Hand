@@ -1,5 +1,12 @@
 from __future__ import annotations
-def needs_clarification(context,message):
- # Ask only if the user explicitly seeks a personal action and the shared data is incomplete.
- critical=("买" in message or "卖" in message or "加仓" in message or "减仓" in message) and context.data_quality.status=="blocked"
- return ["你希望研究的持仓期限和可承受的最大损失是多少？"] if critical else []
+
+
+def needs_clarification(context, message):
+    """Keep research flowing; missing non-execution data becomes an editable draft.
+
+    The deterministic policy and position-sizing layers still reject unsafe
+    quantities when mandatory inputs are absent.  Research chat must not pause
+    merely because an industry thesis, event interpretation, or plan detail is
+    incomplete.
+    """
+    return []
