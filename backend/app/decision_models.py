@@ -239,6 +239,9 @@ class DecisionReport(DecisionModel):
     ai_assessment: AiResearchAssessment | None = None
     ai_status: Literal["succeeded", "failed", "skipped", "disabled"] = "disabled"
     ai_error_code: str | None = None
+    market_price: float | None = None
+    market_change_percent: float | None = None
+    market_as_of: str | None = None
     sizing: PositionSizingResult | None = None
     policy_version: str
     prompt_version: str | None = None

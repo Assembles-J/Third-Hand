@@ -225,6 +225,7 @@ class PortfolioStore:
                 """)
                 connection.execute("CREATE INDEX IF NOT EXISTS idx_sale_records_symbol_time ON sale_records(symbol, sold_at DESC)")
                 connection.execute("CREATE TABLE IF NOT EXISTS research_recommendations (id TEXT PRIMARY KEY, symbol TEXT NOT NULL, payload TEXT NOT NULL, created_at TEXT NOT NULL)")
+                connection.execute("CREATE TABLE IF NOT EXISTS daily_reviews (id TEXT PRIMARY KEY, review_date TEXT NOT NULL UNIQUE, payload TEXT NOT NULL, created_at TEXT NOT NULL, updated_at TEXT NOT NULL)")
                 connection.execute("CREATE TABLE IF NOT EXISTS recommendation_evaluations (recommendation_id TEXT NOT NULL, horizon INTEGER NOT NULL, payload TEXT NOT NULL, PRIMARY KEY(recommendation_id, horizon))")
                 connection.execute("CREATE TABLE IF NOT EXISTS recommendation_events (id INTEGER PRIMARY KEY AUTOINCREMENT, recommendation_id TEXT NOT NULL, event_type TEXT NOT NULL, trading_date TEXT, trigger_price REAL, payload TEXT NOT NULL)")
                 connection.execute("CREATE TABLE IF NOT EXISTS paper_positions (recommendation_id TEXT PRIMARY KEY, symbol TEXT NOT NULL, action TEXT NOT NULL, quantity REAL NOT NULL, fill_price REAL NOT NULL, fill_date TEXT NOT NULL, status TEXT NOT NULL, updated_at TEXT NOT NULL)")
@@ -949,6 +950,27 @@ class PortfolioStore:
     def save_recommendation(self, item: dict[str, object]) -> None:
         with self._connect() as connection:
             connection.execute("INSERT INTO research_recommendations VALUES (?, ?, ?, ?)", (item["id"], item["symbol"], json.dumps(item, ensure_ascii=False), beijing_now().isoformat()))
+
+    def save_daily_review(self, item: dict[str, object]) -> dict[str, object]:
+        """Persist one immutable end-of-day plan with later execution and outcome updates."""
+        now = beijing_now().isoformat()
+        with self._connect() as connection:
+            connection.execute(
+                "INSERT INTO daily_reviews (id, review_date, payload, created_at, updated_at) VALUES (?, ?, ?, ?, ?) "
+                "ON CONFLICT(review_date) DO UPDATE SET id=excluded.id, payload=excluded.payload, updated_at=excluded.updated_at",
+                (str(item["id"]), str(item["review_date"]), json.dumps(item, ensure_ascii=False, default=str), now, now),
+            )
+        return item
+
+    def daily_reviews(self, limit: int = 60) -> list[dict[str, object]]:
+        with self._connect() as connection:
+            rows = connection.execute("SELECT payload FROM daily_reviews ORDER BY review_date DESC LIMIT ?", (limit,)).fetchall()
+        return [json.loads(str(row["payload"])) for row in rows]
+
+    def daily_review(self, review_id: str) -> dict[str, object] | None:
+        with self._connect() as connection:
+            row = connection.execute("SELECT payload FROM daily_reviews WHERE id=?", (review_id,)).fetchone()
+        return json.loads(str(row["payload"])) if row else None
 
     def available_cash(self) -> dict[str, object]:
         with self._connect() as connection:

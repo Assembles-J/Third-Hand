@@ -56,6 +56,9 @@ import androidx.compose.material.icons.filled.Search
 import androidx.compose.material.icons.filled.SystemUpdateAlt
 import androidx.compose.material.icons.filled.Wallet
 import androidx.compose.material.icons.automirrored.filled.Article
+import androidx.compose.material.icons.automirrored.filled.TrendingDown
+import androidx.compose.material.icons.automirrored.filled.TrendingFlat
+import androidx.compose.material.icons.automirrored.filled.TrendingUp
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
@@ -709,6 +712,7 @@ private fun DecisionReportRoute(report: DecisionReportDto, onViewHistory: (() ->
             )
             Text(report.summary, style = MaterialTheme.typography.bodyMedium)
             Text("生成于 ${beijingTimestamp(report.generated_at)} · 策略 ${report.policy_version}", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            report.market_change_percent?.let { change -> MarketMovementBadge(change, report.market_price, report.market_as_of) }
 
             report.action_candidates.forEachIndexed { index, candidate ->
                 HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
@@ -747,7 +751,10 @@ private fun DecisionReportRoute(report: DecisionReportDto, onViewHistory: (() ->
 
             report.ai_assessment?.let { ai ->
                 HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
-                Text("AI 帮你读这份分析", style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.SemiBold)
+                Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Text("AI 帮你读这份分析", modifier = Modifier.weight(1f), style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.SemiBold)
+                    AiSentimentBadge(ai.preferred_action, ai.thesis_status)
+                }
                 Text("原来的判断：${thesisStatusLabel(ai.thesis_status)} · 把握程度：${uncertaintyLabel(ai.uncertainty)}", style = MaterialTheme.typography.bodySmall, fontWeight = FontWeight.Medium)
                 Text(ai.summary, style = MaterialTheme.typography.bodySmall)
                 ai.reasoning_steps.forEach { step -> Text("${aiReasoningStageLabel(step.stage)}：${step.summary}", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant) }
@@ -769,6 +776,67 @@ private fun DecisionReportRoute(report: DecisionReportDto, onViewHistory: (() ->
             onViewHistory?.let { TextButton(onClick = it, modifier = Modifier.align(Alignment.End)) { Text("查看历史报告与回放") } }
             Text("报告仅用于研究与复核，不构成交易指令，也不会自动执行。", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
         }
+    }
+}
+
+@Composable
+private fun AiSentimentBadge(action: String, thesisStatus: String) {
+    val bullish = action in setOf("OPEN", "ADD") || thesisStatus == "strengthened"
+    val bearish = action in setOf("REDUCE", "EXIT") || thesisStatus in setOf("weakened", "invalidated")
+    val icon = when {
+        bullish -> Icons.AutoMirrored.Filled.TrendingUp
+        bearish -> Icons.AutoMirrored.Filled.TrendingDown
+        else -> Icons.AutoMirrored.Filled.TrendingFlat
+    }
+    val label = when {
+        bullish -> "AI 倾向：积极看涨"
+        bearish -> "AI 倾向：谨慎看跌"
+        else -> "AI 倾向：中性观察"
+    }
+    val color = when {
+        bullish -> MaterialTheme.colorScheme.tertiary
+        bearish -> MaterialTheme.colorScheme.error
+        else -> MaterialTheme.colorScheme.onSurfaceVariant
+    }
+    Row(
+        modifier = Modifier.clip(RoundedCornerShape(10.dp)).background(color.copy(alpha = 0.12f)).padding(horizontal = 8.dp, vertical = 4.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Icon(icon, contentDescription = label, tint = color, modifier = Modifier.height(16.dp))
+        Text(label, modifier = Modifier.padding(start = 4.dp), color = color, style = MaterialTheme.typography.labelSmall, fontWeight = FontWeight.SemiBold)
+    }
+}
+
+@Composable
+private fun MarketMovementBadge(changePercent: Double, price: Double?, asOf: String?) {
+    val rising = changePercent > 0
+    val falling = changePercent < 0
+    val icon = when {
+        rising -> Icons.AutoMirrored.Filled.TrendingUp
+        falling -> Icons.AutoMirrored.Filled.TrendingDown
+        else -> Icons.AutoMirrored.Filled.TrendingFlat
+    }
+    val label = when {
+        rising -> "上涨"
+        falling -> "下跌"
+        else -> "平稳"
+    }
+    val color = when {
+        rising -> MaterialTheme.colorScheme.tertiary
+        falling -> MaterialTheme.colorScheme.error
+        else -> MaterialTheme.colorScheme.onSurfaceVariant
+    }
+    Row(
+        modifier = Modifier.clip(RoundedCornerShape(10.dp)).background(color.copy(alpha = 0.12f)).padding(horizontal = 10.dp, vertical = 6.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Icon(icon, contentDescription = "行情$label", tint = color, modifier = Modifier.height(18.dp))
+        Text(
+            "相对昨收$label ${if (changePercent > 0) "+" else ""}${formatPositionValue(changePercent)}%" +
+                (price?.let { " · 现价 ${marketNumber(it)}" } ?: "") +
+                (asOf?.take(10)?.let { " · $it" } ?: ""),
+            modifier = Modifier.padding(start = 6.dp), color = color, style = MaterialTheme.typography.labelMedium, fontWeight = FontWeight.SemiBold,
+        )
     }
 }
 
@@ -2454,6 +2522,9 @@ fun ProfileScreen(themeMode: ThemeMode, onThemeModeChange: (ThemeMode) -> Unit) 
     var learningCases by remember { mutableStateOf<List<LearningCaseDto>>(emptyList()) }
     var learningAnalysis by remember { mutableStateOf<LearningCaseAnalysisDto?>(null) }
     var analyzingLearning by remember { mutableStateOf(false) }
+    var dailyReviews by remember { mutableStateOf<List<DailyReviewDto>>(emptyList()) }
+    var generatingDailyReview by remember { mutableStateOf(false) }
+    var recordingReviewItem by remember { mutableStateOf<Pair<DailyReviewDto, DailyReviewItemDto>?>(null) }
     var researchStatus by remember { mutableStateOf<String?>(null) }
     var showRuleDialog by remember { mutableStateOf(false) }
     var showLearningDialog by remember { mutableStateOf(false) }
@@ -2462,6 +2533,7 @@ fun ProfileScreen(themeMode: ThemeMode, onThemeModeChange: (ThemeMode) -> Unit) 
             try {
                 personalRules = api.personalRules()
                 learningCases = api.learningCases()
+                dailyReviews = api.dailyReviews()
                 researchStatus = null
             } catch (_: Exception) {
                 researchStatus = "个人研究数据暂时不可用"
@@ -2518,6 +2590,30 @@ fun ProfileScreen(themeMode: ThemeMode, onThemeModeChange: (ThemeMode) -> Unit) 
     LaunchedEffect(Unit) {
         checkForUpdate()
         refreshResearchData()
+    }
+    fun generateDailyReview() {
+        scope.launch {
+            generatingDailyReview = true
+            researchStatus = null
+            try {
+                api.generateDailyReview()
+                dailyReviews = api.dailyReviews()
+            } catch (exception: Exception) {
+                researchStatus = "盘后计划生成失败：${exception.message ?: "请先补齐行情、日线和交易计划"}"
+            } finally {
+                generatingDailyReview = false
+            }
+        }
+    }
+    fun evaluateDailyReview(review: DailyReviewDto) {
+        scope.launch {
+            try {
+                api.evaluateDailyReview(review.id)
+                dailyReviews = api.dailyReviews()
+            } catch (exception: Exception) {
+                researchStatus = "暂不能生成结果复盘：${exception.message ?: "等待下一交易日收盘数据"}"
+            }
+        }
     }
     LaunchedEffect(monitoringDownload) {
         if (!monitoringDownload) return@LaunchedEffect
@@ -2606,6 +2702,15 @@ fun ProfileScreen(themeMode: ThemeMode, onThemeModeChange: (ThemeMode) -> Unit) 
                 },
             )
         }
+        item {
+            DailyReviewCard(
+                review = dailyReviews.firstOrNull(),
+                generating = generatingDailyReview,
+                onGenerate = ::generateDailyReview,
+                onEvaluate = ::evaluateDailyReview,
+                onRecordExecution = { review, item -> recordingReviewItem = review to item },
+            )
+        }
         item { Text("个人复核规则", modifier = Modifier.padding(horizontal = 20.dp), style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold) }
         item {
             Column(Modifier.padding(horizontal = 20.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
@@ -2673,6 +2778,23 @@ fun ProfileScreen(themeMode: ThemeMode, onThemeModeChange: (ThemeMode) -> Unit) 
             },
         )
     }
+    recordingReviewItem?.let { (review, item) ->
+        DailyReviewExecutionDialog(
+            item = item,
+            onDismiss = { recordingReviewItem = null },
+            onSave = { input ->
+                scope.launch {
+                    try {
+                        api.recordDailyReviewExecution(review.id, item.symbol, input)
+                        recordingReviewItem = null
+                        dailyReviews = api.dailyReviews()
+                    } catch (_: Exception) {
+                        researchStatus = "执行记录保存失败，请检查成交数量和价格。"
+                    }
+                }
+            },
+        )
+    }
 }
 
 @Composable
@@ -2709,6 +2831,71 @@ private fun LearningCaseCard(item: LearningCaseDto) =
             Text(beijingTimestamp(item.created_at), style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
         }
     }
+
+@Composable
+private fun DailyReviewCard(
+    review: DailyReviewDto?,
+    generating: Boolean,
+    onGenerate: () -> Unit,
+    onEvaluate: (DailyReviewDto) -> Unit,
+    onRecordExecution: (DailyReviewDto, DailyReviewItemDto) -> Unit,
+) = Card(Modifier.padding(horizontal = 20.dp).fillMaxWidth()) {
+    Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+        Text("盘后计划与自动复盘", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
+        Text("收盘后生成研究快照；录入实际成交后，下一交易日收盘可自动对比计划与实际结果。不会自动下单。", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+        if (review == null) {
+            Text("尚未生成盘后计划。需要行情、60 根日线与已启用交易计划。", style = MaterialTheme.typography.bodySmall)
+        } else {
+            Text("${review.review_date} · ${review.suggested_position_band}", style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.primary)
+            review.items.forEach { item ->
+                Column(verticalArrangement = Arrangement.spacedBy(3.dp)) {
+                    Text("${item.symbol} · ${if (item.action == "add") "关注加仓" else "关注减仓"}", fontWeight = FontWeight.SemiBold)
+                    Text("参考价 ${item.reference_price} · 建议数量 ${item.suggested_quantity ?: "待确认"} · 执行：${item.execution_status}", style = MaterialTheme.typography.bodySmall)
+                    if (item.execution_status == "pending") {
+                        TextButton(onClick = { onRecordExecution(review, item) }) { Text("录入实际执行") }
+                    }
+                }
+            }
+            if (review.status == "evaluated") {
+                Text("理论盈亏 ${review.theoretical_pnl ?: 0.0} · 实际盈亏 ${review.actual_pnl ?: 0.0}", style = MaterialTheme.typography.bodySmall, fontWeight = FontWeight.SemiBold)
+                review.highlights.take(2).forEach { Text("亮点：$it", style = MaterialTheme.typography.bodySmall) }
+                review.mistakes.take(2).forEach { Text("复核：$it", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.error) }
+            } else {
+                TextButton(onClick = { onEvaluate(review) }) { Text("生成次日收盘复盘") }
+            }
+        }
+        TextButton(onClick = onGenerate, enabled = !generating) { Text(if (generating) "正在生成…" else "生成今日盘后计划") }
+    }
+}
+
+@Composable
+private fun DailyReviewExecutionDialog(
+    item: DailyReviewItemDto,
+    onDismiss: () -> Unit,
+    onSave: (DailyReviewExecutionInputDto) -> Unit,
+) {
+    var quantity by remember(item.symbol) { mutableStateOf(item.suggested_quantity?.toString() ?: "") }
+    var price by remember(item.symbol) { mutableStateOf(item.reference_price.toString()) }
+    var note by remember(item.symbol) { mutableStateOf("") }
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text("记录 ${item.symbol} 的实际执行") },
+        text = {
+            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                Text("请填写实际成交数据，用于和计划快照分开评价。", style = MaterialTheme.typography.bodySmall)
+                OutlinedTextField(quantity, { quantity = it }, label = { Text("实际成交数量") }, modifier = Modifier.fillMaxWidth())
+                OutlinedTextField(price, { price = it }, label = { Text("实际成交价格") }, modifier = Modifier.fillMaxWidth())
+                OutlinedTextField(note, { note = it }, label = { Text("执行备注（可选）") }, modifier = Modifier.fillMaxWidth())
+            }
+        },
+        confirmButton = {
+            Button(onClick = {
+                onSave(DailyReviewExecutionInputDto("executed", quantity.toDoubleOrNull() ?: 0.0, price.toDoubleOrNull(), note))
+            }) { Text("保存执行记录") }
+        },
+        dismissButton = { TextButton(onClick = onDismiss) { Text("取消") } },
+    )
+}
 
 @Composable
 private fun PersonalRuleDialog(

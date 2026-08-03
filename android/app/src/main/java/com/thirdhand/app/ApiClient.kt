@@ -130,6 +130,20 @@ data class AvailableCashDto(val available_cash: Double, val updated_at: String =
 data class AvailableCashInputDto(val available_cash: Double)
 data class ResearchRecommendationDto(val id: String, val symbol: String, val status: String, val action: String? = null, val price_zone: Map<String, Double>? = null, val invalidation_price: Double? = null, val suggested_quantity: Double? = null, val quantity_status: String? = null, val blocked_reasons: List<String> = emptyList())
 data class RecommendationEvaluationDto(val horizon: Int, val evaluation_date: String, val net_pnl: Double, val return_percent: Double, val mfe_percent: Double, val mae_percent: Double)
+data class DailyReviewGenerateRequestDto(val symbols: List<String>? = null)
+data class DailyReviewExecutionInputDto(val execution_status: String, val executed_quantity: Double, val executed_price: Double? = null, val note: String = "")
+data class DailyReviewItemDto(
+    val symbol: String, val name: String = "", val action: String, val suggested_quantity: Double? = null,
+    val price_zone: Map<String, Double>? = null, val invalidation_price: Double? = null, val rationale: String,
+    val reference_price: Double, val execution_status: String = "pending", val executed_quantity: Double? = null,
+    val executed_price: Double? = null, val execution_note: String = "", val theoretical_pnl: Double? = null, val actual_pnl: Double? = null,
+)
+data class DailyReviewDto(
+    val id: String, val review_date: String, val generated_at: String, val suggested_position_band: String,
+    val market_snapshot: Map<String, Any> = emptyMap(), val items: List<DailyReviewItemDto>, val status: String,
+    val evaluated_at: String? = null, val theoretical_pnl: Double? = null, val actual_pnl: Double? = null,
+    val highlights: List<String> = emptyList(), val mistakes: List<String> = emptyList(),
+)
 data class AiJobDto(val id: String, val target_id: String, val status: String, val attempts: Int, val max_attempts: Int, val error_message: String? = null, val updated_at: String)
 
 data class NewsItemDto(
@@ -250,6 +264,7 @@ data class DecisionReportDto(
     val action: String, val summary: String, val evidence: List<DecisionEvidenceDto> = emptyList(),
     val action_candidates: List<DecisionActionCandidateDto> = emptyList(), val ai_assessment: DecisionAiAssessmentDto? = null,
     val ai_status: String? = null, val ai_error_code: String? = null, val model: String? = null,
+    val market_price: Double? = null, val market_change_percent: Double? = null, val market_as_of: String? = null,
     val sizing: PositionSizingResultDto? = null, val policy_version: String, val prompt_version: String? = null,
     val input_hash: String, val automatic_execution: Boolean = false,
 )
@@ -367,6 +382,14 @@ interface ThirdHandApi {
     suspend fun recommendations(@Query("symbol") symbol: String? = null): List<ResearchRecommendationDto>
     @GET("v1/research-recommendations/{id}/evaluations")
     suspend fun recommendationEvaluations(@Path("id") id: String): List<RecommendationEvaluationDto>
+    @POST("v1/daily-reviews/generate")
+    suspend fun generateDailyReview(@Body request: DailyReviewGenerateRequestDto = DailyReviewGenerateRequestDto()): DailyReviewDto
+    @GET("v1/daily-reviews")
+    suspend fun dailyReviews(@Query("limit") limit: Int = 30): List<DailyReviewDto>
+    @PUT("v1/daily-reviews/{reviewId}/items/{symbol}/execution")
+    suspend fun recordDailyReviewExecution(@Path("reviewId") reviewId: String, @Path("symbol") symbol: String, @Body input: DailyReviewExecutionInputDto): DailyReviewDto
+    @POST("v1/daily-reviews/{reviewId}/evaluate")
+    suspend fun evaluateDailyReview(@Path("reviewId") reviewId: String): DailyReviewDto
     @GET("v1/ai-jobs")
     suspend fun aiJobs(@Query("target_id") targetId: String? = null): List<AiJobDto>
     @POST("v1/ai-jobs/{id}/retry")

@@ -16,7 +16,7 @@ import time
 from datetime import datetime
 from pathlib import Path
 from threading import Event, Lock, Thread
-from typing import Annotated
+from typing import Annotated, Literal
 from uuid import uuid4
 from fastapi import BackgroundTasks, FastAPI, HTTPException, Query, Response, status
 from fastapi.middleware.cors import CORSMiddleware
@@ -236,6 +236,50 @@ class ResearchRecommendation(BaseModel):
     automatic_execution: bool = False; evaluation_version: str | None = None
     generated_at: datetime | None = None; generated_trading_date: str | None = None
     evaluation_status: str | None = None
+
+
+class DailyReviewGenerateRequest(BaseModel):
+    symbols: list[str] | None = Field(default=None, max_length=50)
+
+
+class DailyReviewExecutionInput(BaseModel):
+    execution_status: Literal["executed", "partial", "skipped"]
+    executed_quantity: float = Field(ge=0)
+    executed_price: float | None = Field(default=None, gt=0)
+    note: str = Field(default="", max_length=500)
+
+
+class DailyReviewItem(BaseModel):
+    symbol: str
+    name: str = ""
+    action: Literal["add", "trim", "watch"]
+    suggested_quantity: float | None = None
+    price_zone: dict[str, float] | None = None
+    invalidation_price: float | None = None
+    rationale: str
+    reference_price: float
+    execution_status: Literal["pending", "executed", "partial", "skipped"] = "pending"
+    executed_quantity: float | None = None
+    executed_price: float | None = None
+    execution_note: str = ""
+    theoretical_pnl: float | None = None
+    actual_pnl: float | None = None
+
+
+class DailyReview(BaseModel):
+    id: str
+    review_date: str
+    generated_at: datetime
+    suggested_position_band: str
+    market_snapshot: dict[str, object]
+    items: list[DailyReviewItem]
+    status: Literal["pending", "evaluated"] = "pending"
+    evaluated_at: datetime | None = None
+    theoretical_pnl: float | None = None
+    actual_pnl: float | None = None
+    highlights: list[str] = Field(default_factory=list)
+    mistakes: list[str] = Field(default_factory=list)
+    disclaimer: str = DISCLAIMER
 
 
 class AiJob(BaseModel):
@@ -1444,6 +1488,115 @@ def market_history(symbol: str, limit: int = Query(default=120, ge=20, le=800)) 
 def market_intraday(symbol: str, limit: int = Query(default=500, ge=20, le=1500)) -> list[IntradayPrice]:
     """SQLite-only minute bars; collection occurs in the scheduler/background task."""
     return [IntradayPrice.model_validate(item) for item in store.intraday_prices(symbol.strip().upper(), limit)]
+
+
+@app.post("/v1/daily-reviews/generate", response_model=DailyReview, status_code=status.HTTP_201_CREATED)
+def generate_daily_review(payload: DailyReviewGenerateRequest) -> DailyReview:
+    """Create an end-of-day research plan snapshot; it never submits an order."""
+    holdings = {str(item["symbol"]): item for item in store.list()}
+    symbols = list(dict.fromkeys(item.strip().upper() for item in (payload.symbols or list(holdings))))
+    if not symbols:
+        raise HTTPException(status_code=422, detail="请先录入至少一个持仓，或指定要复盘的标的。")
+    quotes = {str(item["symbol"]): item for item in store.cached_quotes(symbols)}
+    cash = float(store.available_cash()["available_cash"])
+    items: list[dict[str, object]] = []
+    review_dates: list[str] = []
+    blocked = 0
+    for symbol in symbols:
+        bars = store.daily_prices(symbol)
+        if bars:
+            review_dates.append(str(bars[-1]["trading_date"]))
+        candidate = build_candidate(symbol, holdings.get(symbol), quotes.get(symbol), bars, store.trade_plan(symbol), cash)
+        if candidate.get("status") != "ready":
+            blocked += 1
+            continue
+        action = str(candidate.get("action"))
+        quote = quotes.get(symbol) or {}
+        reference_price = float(quote.get("price") or bars[-1]["close"])
+        items.append({
+            "symbol": symbol,
+            "name": str(holdings.get(symbol, {}).get("name", "")),
+            "action": action,
+            "suggested_quantity": candidate.get("suggested_quantity"),
+            "price_zone": candidate.get("price_zone"),
+            "invalidation_price": candidate.get("invalidation_price"),
+            "rationale": "基于日线区间、已启用交易计划、可用资金与仓位约束生成；需由用户自行确认。",
+            "reference_price": reference_price,
+        })
+    if not items:
+        raise HTTPException(status_code=422, detail="数据不足：需具备行情、至少 60 根日线，以及已启用的交易计划后才能生成盘后计划。")
+    review_date = max(review_dates) if review_dates else beijing_now().date().isoformat()
+    max_position = next((float(rule["max_position_percent"]) for rule in store.personal_rules() if rule.get("scope") == "global" and rule.get("enabled")), 20.0)
+    band = "防守 0–30%" if blocked else f"单标的上限 {max_position:.0f}%"
+    review = {
+        "id": str(uuid4()), "review_date": review_date, "generated_at": beijing_now().isoformat(),
+        "suggested_position_band": band,
+        "market_snapshot": {"symbols_considered": symbols, "ready_items": len(items), "blocked_items": blocked, "available_cash": cash, "data_basis": ["日线", "行情快照", "持仓", "交易计划", "个人仓位规则"]},
+        "items": items, "status": "pending", "highlights": [], "mistakes": [],
+    }
+    return DailyReview.model_validate(store.save_daily_review(review))
+
+
+@app.get("/v1/daily-reviews", response_model=list[DailyReview])
+def list_daily_reviews(limit: int = Query(default=30, ge=1, le=180)) -> list[DailyReview]:
+    return [DailyReview.model_validate(item) for item in store.daily_reviews(limit)]
+
+
+@app.put("/v1/daily-reviews/{review_id}/items/{symbol}/execution", response_model=DailyReview)
+def record_daily_review_execution(review_id: str, symbol: str, payload: DailyReviewExecutionInput) -> DailyReview:
+    review = store.daily_review(review_id)
+    if not review:
+        raise HTTPException(status_code=404, detail="未找到该盘后计划。")
+    normalized = symbol.strip().upper()
+    item = next((entry for entry in review["items"] if str(entry["symbol"]).upper() == normalized), None)
+    if not item:
+        raise HTTPException(status_code=404, detail="该计划中没有此标的。")
+    if payload.execution_status in {"executed", "partial"} and (payload.executed_quantity <= 0 or payload.executed_price is None):
+        raise HTTPException(status_code=422, detail="已执行或部分执行时，需要填写实际成交数量和价格。")
+    item.update({"execution_status": payload.execution_status, "executed_quantity": payload.executed_quantity, "executed_price": payload.executed_price, "execution_note": payload.note})
+    return DailyReview.model_validate(store.save_daily_review(review))
+
+
+@app.post("/v1/daily-reviews/{review_id}/evaluate", response_model=DailyReview)
+def evaluate_daily_review(review_id: str) -> DailyReview:
+    review = store.daily_review(review_id)
+    if not review:
+        raise HTTPException(status_code=404, detail="未找到该盘后计划。")
+    theoretical_total = actual_total = 0.0
+    completed = 0
+    highlights: list[str] = []
+    mistakes: list[str] = []
+    for item in review["items"]:
+        future = [bar for bar in store.daily_prices(str(item["symbol"])) if str(bar["trading_date"]) > str(review["review_date"])]
+        if not future:
+            continue
+        close = float(future[0]["close"])
+        direction = -1 if item["action"] == "trim" else 1
+        quantity = float(item.get("suggested_quantity") or 0)
+        planned = (close - float(item["reference_price"])) * quantity * direction
+        item["theoretical_pnl"] = round(planned, 2)
+        theoretical_total += planned
+        if item.get("execution_status") in {"executed", "partial"}:
+            actual = (close - float(item["executed_price"])) * float(item.get("executed_quantity") or 0) * direction
+            item["actual_pnl"] = round(actual, 2)
+            actual_total += actual
+            if (planned >= 0) == (actual >= 0):
+                highlights.append(f"{item['symbol']}：执行结果与计划方向一致。")
+            else:
+                mistakes.append(f"{item['symbol']}：实际成交价或数量使结果偏离计划，需要复核执行条件。")
+        elif item.get("execution_status") == "skipped":
+            mistakes.append(f"{item['symbol']}：计划未执行，已保留为执行偏差记录。")
+        else:
+            mistakes.append(f"{item['symbol']}：尚未录入是否执行，无法评价实际账户结果。")
+        completed += 1
+    if not completed:
+        raise HTTPException(status_code=422, detail="尚无下一交易日收盘数据，暂不能生成结果复盘。")
+    if theoretical_total >= 0:
+        highlights.insert(0, "计划组合按下一交易日收盘衡量为正收益；这仅是单日验证，不代表策略有效性。")
+    else:
+        mistakes.insert(0, "计划组合按下一交易日收盘衡量为负收益；应复核市场环境、条件触发与风险边界。")
+    review.update({"status": "evaluated", "evaluated_at": beijing_now().isoformat(), "theoretical_pnl": round(theoretical_total, 2), "actual_pnl": round(actual_total, 2), "highlights": highlights[:6], "mistakes": mistakes[:6]})
+    return DailyReview.model_validate(store.save_daily_review(review))
 
 
 @app.post("/v1/research-recommendations/generate", response_model=list[ResearchRecommendation])

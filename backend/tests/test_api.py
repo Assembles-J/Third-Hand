@@ -158,6 +158,28 @@ def test_recommendation_evaluation_uses_only_future_bars_and_marks_legacy_or_unt
     assert statuses == {"current": "filled", "legacy": "legacy_unverifiable", "untriggered": "untriggered"}
 
 
+def test_daily_review_closes_the_plan_execution_outcome_loop():
+    client.post("/v1/holdings", json={"symbol": "600519", "name": "test", "quantity": 100, "average_cost": 10})
+    store.save_available_cash(10000)
+    store.save_quotes([{ "symbol": "600519", "price": 10, "currency": "CNY", "source": "test", "as_of": "2026-07-30", "retrieved_at": "2026-07-30T15:00:00+08:00" }])
+    bars = [{"trading_date": f"2026-05-{day:02d}", "open": 10, "high": 11, "low": 9, "close": 10, "source": "test"} for day in range(1, 31)]
+    bars += [{"trading_date": f"2026-07-{day:02d}", "open": 10, "high": 11, "low": 9, "close": 10, "source": "test"} for day in range(1, 31)]
+    store.save_daily_prices("600519", bars)
+    store.save_trade_plan({"id": "plan-1", "symbol": "600519", "horizon": "swing", "thesis": "test", "market_expectation": "test", "catalysts": [], "entry_condition": "entry", "add_condition": "add", "reduce_condition": "reduce", "exit_condition": "exit", "max_position_percent": 15, "risk_budget_percent": 3, "enabled": True, "version": 1})
+
+    generated = client.post("/v1/daily-reviews/generate", json={"symbols": ["600519"]})
+    assert generated.status_code == 201
+    review = generated.json()
+    item = review["items"][0]
+    store.save_daily_prices("600519", bars + [{"trading_date": "2026-07-31", "open": 10, "high": 12, "low": 10, "close": 11, "source": "test"}])
+    recorded = client.put(f"/v1/daily-reviews/{review['id']}/items/600519/execution", json={"execution_status": "executed", "executed_quantity": item["suggested_quantity"], "executed_price": item["reference_price"]})
+    assert recorded.status_code == 200
+    result = client.post(f"/v1/daily-reviews/{review['id']}/evaluate")
+    assert result.status_code == 200
+    assert result.json()["status"] == "evaluated"
+    assert result.json()["items"][0]["theoretical_pnl"] is not None
+
+
 def test_decision_generation_is_async_idempotent_and_persists_a_report():
     client.post("/v1/holdings", json={"symbol": "600519", "name": "test", "quantity": 100, "average_cost": 10})
     store.save_quotes([{ "symbol": "600519", "price": 12, "currency": "CNY", "source": "test", "as_of": "2026-07-31", "retrieved_at": "2026-07-31T10:00:00+08:00"}])
