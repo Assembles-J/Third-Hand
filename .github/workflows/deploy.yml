@@ -245,6 +245,13 @@ jobs:
             update_env DECISION_SHADOW_MODE true
             update_env DECISION_SIZING_ENABLED true
             update_env DECISION_AI_ENABLED true
+            update_env RESEARCH_CHAT_ENABLED true
+            update_env RESEARCH_CHAT_SSE_ENABLED true
+            update_env RESEARCH_CHAT_REASONING_VISIBLE true
+            update_env RESEARCH_CHAT_TOOL_CALLING_ENABLED true
+            update_env RESEARCH_CHAT_CLARIFICATION_ENABLED true
+            update_env RESEARCH_CHAT_DECISION_OUTPUT_ENABLED true
+            update_env RESEARCH_CHAT_RAW_REASONING_PERSIST false
             update_env APP_PUBLIC_BASE_URL "$APP_PUBLIC_BASE_URL"
             update_env APP_UPDATE_PUBLIC_BASE_URL "$APP_UPDATE_PUBLIC_BASE_URL"
             update_env MARKET_REFRESH_ENABLED true
@@ -286,8 +293,18 @@ jobs:
             fi
 
             sleep 5
+            compose_cmd="docker compose"
+            if ! docker compose version >/dev/null 2>&1; then
+              compose_cmd="docker-compose"
+            fi
+            $compose_cmd exec -T api python -c 'import os; print("runtime_config decision_ai=%s research_chat=%s research_sse=%s tool_calling=%s key_configured=%s model=%s reasoning_model=%s" % (os.getenv("DECISION_AI_ENABLED"), os.getenv("RESEARCH_CHAT_ENABLED"), os.getenv("RESEARCH_CHAT_SSE_ENABLED"), os.getenv("RESEARCH_CHAT_TOOL_CALLING_ENABLED"), bool(os.getenv("DEEPSEEK_API_KEY", "").strip()), os.getenv("DEEPSEEK_MODEL"), os.getenv("DEEPSEEK_REASONING_MODEL")))'
             curl -fsS "http://127.0.0.1:${API_PORT:-8000}/health"
+            curl -fsS "http://127.0.0.1:${API_PORT:-8000}/v1/system/ai-capabilities"
             curl -fsS "http://127.0.0.1:${API_PORT:-8000}/v1/app-update"
+            curl -fsS "http://127.0.0.1:${API_PORT:-8000}/v1/research-chat/sessions" >/dev/null
+            # Validate the public Nginx rewrite too; a container-local success is insufficient for the app.
+            curl -fsS "${APP_PUBLIC_BASE_URL%/}/v1/system/ai-capabilities"
+            curl -fsS "${APP_PUBLIC_BASE_URL%/}/v1/research-chat/sessions" >/dev/null
 
       - name: Write deployment summary
         if: always()

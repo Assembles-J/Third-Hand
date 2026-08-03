@@ -555,6 +555,30 @@ def health() -> dict[str, str]:
     return {"status": "ok"}
 
 
+@app.get("/v1/system/ai-capabilities")
+def ai_capabilities() -> dict[str, object]:
+    """Expose effective AI switches without ever exposing the API key."""
+    enabled_values = {"1", "true", "yes", "on"}
+
+    def flag(name: str, default: str = "false") -> bool:
+        return os.getenv(name, default).strip().lower() in enabled_values
+
+    settings = decision_ai_service.client.settings
+    return {
+        "decision_ai_enabled": flag("DECISION_AI_ENABLED"),
+        "decision_ai_runtime_enabled": config.DECISION_AI_ENABLED,
+        "deepseek_key_configured": bool(settings.api_key),
+        "deepseek_model": settings.model,
+        "deepseek_reasoning_model": settings.reasoning_model,
+        "research_chat_enabled": flag("RESEARCH_CHAT_ENABLED"),
+        "research_chat_sse_enabled": flag("RESEARCH_CHAT_SSE_ENABLED"),
+        "research_chat_reasoning_visible": flag("RESEARCH_CHAT_REASONING_VISIBLE"),
+        "research_chat_tool_calling_enabled": flag("RESEARCH_CHAT_TOOL_CALLING_ENABLED"),
+        "research_chat_clarification_enabled": flag("RESEARCH_CHAT_CLARIFICATION_ENABLED"),
+        "research_chat_decision_output_enabled": flag("RESEARCH_CHAT_DECISION_OUTPUT_ENABLED"),
+    }
+
+
 def configured_release_apk() -> Path | None:
     """Return the configured APK only when it remains inside the releases directory."""
     filename = os.getenv("APP_UPDATE_APK_FILE", "").strip()
@@ -1115,7 +1139,9 @@ def decision_context(symbol: str) -> DecisionContext:
 def run_decision_job(job_id: str) -> None:
     job = store.decision_job(job_id)
     if not job:
+        logger.warning("decision job missing before execution job_id=%s", job_id)
         return
+    logger.info("decision job started job_id=%s context_id=%s symbol=%s", job_id, job["context_id"], job["symbol"])
     store.update_decision_job(job_id, "running")
     try:
         context_payload = store.decision_context(str(job["context_id"]))
@@ -1124,6 +1150,7 @@ def run_decision_job(job_id: str) -> None:
         report = decision_orchestrator.generate(DecisionContext.model_validate(context_payload))
         store.save_decision_report(report.model_dump(mode="json"))
         store.update_decision_job(job_id, "succeeded")
+        logger.info("decision job succeeded job_id=%s symbol=%s ai_status=%s ai_error_code=%s", job_id, report.symbol, report.ai_status, report.ai_error_code)
     except Exception as error:
         logger.exception("decision job failed job_id=%s", job_id)
         store.update_decision_job(job_id, "failed", str(error)[:500])
@@ -1138,6 +1165,7 @@ def generate_decisions(payload: DecisionGenerateRequest) -> dict[str, object]:
         input_hash = context.input_hash if not payload.force else f"{context.input_hash}:{uuid4()}"
         job = store.enqueue_decision_job({"job_id": str(uuid4()), "context_id": context.context_id, "symbol": context.symbol, "input_hash": input_hash})
         jobs.append({"symbol": context.symbol, "job_id": job["job_id"], "status": job["status"]})
+        logger.info("decision job %s job_id=%s context_id=%s symbol=%s", "enqueued" if job.get("is_new") else "reused", job["job_id"], context.context_id, context.symbol)
         if job["status"] == "pending" and job.get("is_new"):
             Thread(target=run_decision_job, args=(str(job["job_id"]),), daemon=True).start()
     return {"jobs": jobs}
@@ -1194,8 +1222,8 @@ def decision_shadow_report(symbol: str) -> ShadowDecisionReport:
         raise HTTPException(status_code=422, detail=str(error)) from error
     evidence = evidence_engine.build(context)
     candidates = action_policy_engine.evaluate(context, evidence)
-    ai_assessment = decision_ai_service.assess(context, evidence, candidates) if config.DECISION_AI_ENABLED else None
-    guarded_assessment = decision_guard.guard(candidates, ai_assessment)
+    ai_outcome = decision_ai_service.assess(context, evidence, candidates) if config.DECISION_AI_ENABLED else None
+    guarded_assessment = decision_guard.guard(candidates, ai_outcome.assessment if ai_outcome else None)
     report = ShadowDecisionReport(
         shadow_id=str(uuid4()), context_id=context.context_id, symbol=context.symbol,
         generated_at=beijing_now(),

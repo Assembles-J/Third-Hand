@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import logging
 import os
 import time
 
@@ -21,6 +22,8 @@ from .tool_executor import ToolExecutor
 from .tool_registry import definitions
 from .models import ResearchModelOutput
 from .guard import validate_output
+
+logger = logging.getLogger(__name__)
 
 
 def _flag(name: str) -> bool:
@@ -50,6 +53,7 @@ class ResearchChatOrchestrator:
         reasoning: list[str] = []
         usage: dict[str, object] = {}
         try:
+            logger.info("Research turn started turn_id=%s session_id=%s symbol=%s model=%s", turn.id, session.id, symbol or session.primary_symbol, self.stream_client.settings.reasoning_model)
             inc("research_chat_turn_total")
             self.repo.update_turn(turn.id, status=ResearchTurnStatus.building_context.value, started_at=beijing_now().isoformat())
             yield emit(ResearchSseEventType.session, {"session_id": session.id, "turn_id": turn.id})
@@ -106,13 +110,16 @@ class ResearchChatOrchestrator:
                 for call in calls.values():
                     function = call["function"]
                     name = function["name"]
+                    logger.info("Research tool started turn_id=%s tool=%s", turn.id, name)
                     yield emit(ResearchSseEventType.tool_started, {"tool_name": name})
                     try:
                         arguments = json.loads(function["arguments"] or "{}")
                         result = self.tools.execute(name, arguments, context)
                         self.repo.save_tool_call(turn.id, name, arguments, "completed", result)
+                        logger.info("Research tool completed turn_id=%s tool=%s", turn.id, name)
                     except Exception:
                         self.repo.save_tool_call(turn.id, name, {}, "failed", error="tool_invalid_arguments")
+                        logger.exception("Research tool failed turn_id=%s tool=%s", turn.id, name)
                         yield emit(ResearchSseEventType.tool_failed, {"tool_name": name, "error_code": "tool_invalid_arguments"})
                         raise
                     if result.get("clarification") and _flag("RESEARCH_CHAT_CLARIFICATION_ENABLED"):
@@ -148,6 +155,7 @@ class ResearchChatOrchestrator:
                     evidence=evidence,
                     action_candidates=candidates,
                     ai_assessment=assessment,
+                    ai_status="succeeded",
                     sizing=sizing,
                     policy_version=self.decision_orchestrator.policy_engine.version,
                     prompt_version="research-chat-decision-v1",
@@ -159,6 +167,7 @@ class ResearchChatOrchestrator:
                 yield emit(ResearchSseEventType.decision, {"decision_report": report.model_dump(mode="json")})
             self.repo.update_turn(turn.id, status=ResearchTurnStatus.completed.value, answer_text=final_answer, decision_report_id=decision_id, prompt_tokens=int(usage.get("prompt_tokens") or 0), completion_tokens=int(usage.get("completion_tokens") or 0), latency_ms=int((time.monotonic() - started) * 1000), completed_at=beijing_now().isoformat())
             inc("research_chat_turn_completed")
+            logger.info("Research turn completed turn_id=%s model=%s latency_ms=%s prompt_tokens=%s completion_tokens=%s", turn.id, self.stream_client.settings.reasoning_model, int((time.monotonic() - started) * 1000), int(usage.get("prompt_tokens") or 0), int(usage.get("completion_tokens") or 0))
             yield emit(ResearchSseEventType.usage, {"prompt_tokens": int(usage.get("prompt_tokens") or 0), "completion_tokens": int(usage.get("completion_tokens") or 0)})
             yield emit(ResearchSseEventType.done, {"status": "completed", "turn_id": turn.id, "automatic_execution": False})
         except asyncio.CancelledError:
@@ -168,11 +177,13 @@ class ResearchChatOrchestrator:
         except LlmClientError as error:
             inc("research_chat_upstream_errors_total")
             self.repo.update_turn(turn.id, status=ResearchTurnStatus.failed.value, error_code=error.code, error_message=str(error), completed_at=beijing_now().isoformat())
+            logger.warning("Research turn failed turn_id=%s model=%s code=%s status=%s", turn.id, self.stream_client.settings.reasoning_model, error.code, error.status_code)
             yield emit(ResearchSseEventType.error, {"code": error.code, "message": str(error)})
             yield emit(ResearchSseEventType.done, {"status": "failed", "turn_id": turn.id})
         except Exception:
             inc("research_chat_upstream_errors_total")
             self.repo.update_turn(turn.id, status=ResearchTurnStatus.failed.value, error_code="upstream_invalid_response", error_message="研究流处理失败", completed_at=beijing_now().isoformat())
+            logger.exception("Research turn crashed turn_id=%s model=%s", turn.id, self.stream_client.settings.reasoning_model)
             yield emit(ResearchSseEventType.error, {"code": "upstream_invalid_response", "message": "研究流处理失败"})
             yield emit(ResearchSseEventType.done, {"status": "failed", "turn_id": turn.id})
 

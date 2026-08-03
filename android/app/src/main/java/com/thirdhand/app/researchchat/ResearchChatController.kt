@@ -39,6 +39,10 @@ class ResearchChatController(httpClient: OkHttpClient = OkHttpClient()) {
         when (event.event) {
             "phase" -> mutableState.value = current.copy(phase = event.data["label"].orEmpty())
             "heartbeat" -> mutableState.value = current.copy(heartbeatSeen = true)
+            "tool_started" -> mutableState.value = current.copy(activity = current.activity + "正在读取：${event.data["tool_name"].orEmpty()}")
+            "tool_completed" -> mutableState.value = current.copy(activity = current.activity + "已完成：${event.data["tool_name"].orEmpty()}")
+            "tool_failed" -> mutableState.value = current.copy(activity = current.activity + "读取失败：${event.data["tool_name"].orEmpty()}")
+            "warning" -> mutableState.value = current.copy(activity = current.activity + (event.data["message"] ?: "研究警告"))
             "answer_delta" -> mutableState.value = current.copy(answer = current.answer + event.data["delta"].orEmpty())
             "done" -> mutableState.value = ResearchChatUiState.Completed(current.answer)
             "error" -> mutableState.value = ResearchChatUiState.Failed(event.data["message"] ?: "研究流失败")

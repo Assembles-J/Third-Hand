@@ -17,6 +17,19 @@ def test_health():
     assert client.get("/health").json() == {"status": "ok"}
 
 
+def test_ai_capabilities_are_sanitized(monkeypatch):
+    monkeypatch.setenv("DECISION_AI_ENABLED", "true")
+    monkeypatch.setenv("RESEARCH_CHAT_ENABLED", "true")
+    response = client.get("/v1/system/ai-capabilities")
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["decision_ai_enabled"] is True
+    assert payload["research_chat_enabled"] is True
+    assert "api_key" not in payload
+    assert "DEEPSEEK_API_KEY" not in response.text
+
+
 def test_app_update_exposes_download_integrity_metadata(monkeypatch, tmp_path):
     apk = tmp_path / "third-hand-0.3.0.apk"
     content = b"fake-signed-apk-for-metadata-test"

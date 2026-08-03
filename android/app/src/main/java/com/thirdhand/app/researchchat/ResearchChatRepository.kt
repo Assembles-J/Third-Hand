@@ -22,8 +22,12 @@ class ResearchChatRepository(private val httpClient: OkHttpClient) {
             override fun onFailure(call: Call, e: java.io.IOException) = onFailure(e.message ?: "无法创建研究会话")
             override fun onResponse(call: Call, response: Response) {
                 response.use {
-                    if (!it.isSuccessful) return onFailure("研究功能暂不可用（HTTP ${it.code}）")
-                    val id = runCatching { JSONObject(it.body?.string().orEmpty()).getString("id") }.getOrNull()
+                    val body = it.body?.string().orEmpty()
+                    if (!it.isSuccessful) {
+                        val detail = runCatching { JSONObject(body).opt("detail")?.toString() }.getOrNull()
+                        return onFailure("研究功能暂不可用（HTTP ${it.code}${detail?.let { value -> "：$value" } ?: ""}）")
+                    }
+                    val id = runCatching { JSONObject(body).getString("id") }.getOrNull()
                     if (id == null) onFailure("研究会话响应无效") else onReady(id)
                 }
             }

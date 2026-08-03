@@ -1,11 +1,15 @@
 """End-to-end auditable decision orchestration; never executes trades."""
 from __future__ import annotations
 
+import logging
 from uuid import uuid4
 
 from app import decision_config as config
+from app.decision_ai import DecisionAiOutcome
 from app.decision_models import DecisionReport
 from app.time_utils import beijing_now
+
+logger = logging.getLogger(__name__)
 
 
 class DecisionOrchestrator:
@@ -16,12 +20,27 @@ class DecisionOrchestrator:
     def generate(self, context) -> DecisionReport:
         evidence = self.evidence_engine.build(context)
         candidates = self.policy_engine.evaluate(context, evidence)
-        assessment = self.ai_service.assess(context, evidence, candidates) if config.DECISION_AI_ENABLED else None
-        assessment = self.guard.guard(candidates, assessment)
+        if config.DECISION_AI_ENABLED:
+            logger.info(
+                "Decision AI dispatch context_id=%s symbol=%s evidence_count=%s candidate_actions=%s",
+                context.context_id,
+                context.symbol,
+                len(evidence),
+                ",".join(candidate.action for candidate in candidates),
+            )
+            ai_outcome = self.ai_service.assess(context, evidence, candidates)
+        else:
+            logger.warning(
+                "Decision AI disabled context_id=%s symbol=%s code=feature_disabled",
+                context.context_id,
+                context.symbol,
+            )
+            ai_outcome = DecisionAiOutcome(None, "disabled", "feature_disabled")
+        assessment = self.guard.guard(candidates, ai_outcome.assessment)
         action = candidates[0].action
         sizing = self.sizing_engine.size(context, action) if config.DECISION_SIZING_ENABLED else None
         status = "BLOCKED" if context.data_quality.status == "blocked" else "DEGRADED" if context.data_quality.status == "degraded" else "READY"
-        return DecisionReport(decision_id=str(uuid4()), context_id=context.context_id, symbol=context.symbol, generated_at=beijing_now(), status=status, action=action, summary=self._summary(action, candidates[0].blocked_reasons), evidence=evidence, action_candidates=candidates, ai_assessment=assessment, sizing=sizing, policy_version=self.policy_engine.version, prompt_version=config.DECISION_RESEARCH_PROMPT_VERSION if assessment else None, input_hash=context.input_hash)
+        return DecisionReport(decision_id=str(uuid4()), context_id=context.context_id, symbol=context.symbol, generated_at=beijing_now(), status=status, action=action, summary=self._summary(action, candidates[0].blocked_reasons), evidence=evidence, action_candidates=candidates, ai_assessment=assessment, ai_status=ai_outcome.status, ai_error_code=ai_outcome.error_code, sizing=sizing, policy_version=self.policy_engine.version, prompt_version=config.DECISION_RESEARCH_PROMPT_VERSION if assessment else None, model=ai_outcome.model, input_hash=context.input_hash)
 
     @staticmethod
     def _summary(action, blocked_reasons) -> str:

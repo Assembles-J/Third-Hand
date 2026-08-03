@@ -25,6 +25,7 @@ fun ResearchChatStreamStatus(controller: ResearchChatController) {
         ResearchChatUiState.Idle -> Text("研究对话尚未开始")
         is ResearchChatUiState.Streaming -> {
             Text(current.phase.ifBlank { "正在连接研究流" })
+            current.activity.takeLast(4).forEach { Text(it) }
             if (current.answer.isNotBlank()) Text(current.answer)
             Button(onClick = controller::cancel) { Text("取消研究") }
         }

@@ -38,7 +38,8 @@ def test_ai_service_accepts_only_known_evidence_and_policy_candidate():
     store = Store()
     result = DecisionAiService(store, Client(json.dumps(payload))).assess(Context(), _evidence(), (_candidate(),))
 
-    assert result.preferred_action == "REDUCE"
+    assert result.status == "succeeded"
+    assert result.assessment.preferred_action == "REDUCE"
     assert store.runs[0]["status"] == "succeeded"
 
 
@@ -47,7 +48,9 @@ def test_ai_service_rejects_unknown_evidence_and_preserves_rule_fallback():
     store = Store()
     result = DecisionAiService(store, Client(json.dumps(payload))).assess(Context(), _evidence(), (_candidate(),))
 
-    assert result is None
+    assert result.assessment is None
+    assert result.status == "failed"
+    assert result.error_code == "invalid_ai_output"
     assert store.runs[-1]["status"] == "failed"
 
 

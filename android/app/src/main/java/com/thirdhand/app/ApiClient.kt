@@ -248,6 +248,7 @@ data class DecisionReportDto(
     val decision_id: String, val context_id: String, val symbol: String, val generated_at: String, val status: String,
     val action: String, val summary: String, val evidence: List<DecisionEvidenceDto> = emptyList(),
     val action_candidates: List<DecisionActionCandidateDto> = emptyList(), val ai_assessment: DecisionAiAssessmentDto? = null,
+    val ai_status: String? = null, val ai_error_code: String? = null, val model: String? = null,
     val sizing: PositionSizingResultDto? = null, val policy_version: String, val prompt_version: String? = null,
     val input_hash: String, val automatic_execution: Boolean = false,
 )

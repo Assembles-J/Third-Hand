@@ -759,7 +759,7 @@ private fun DecisionReportRoute(report: DecisionReportDto, onViewHistory: (() ->
             if (report.ai_assessment == null) {
                 HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
                 Text("AI 研究未参与本次报告", style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.SemiBold)
-                Text("当前结论完全来自确定性规则。请在后端配置 DEEPSEEK_API_KEY 并将 DECISION_AI_ENABLED=true，重新生成报告后才会出现针对该标的的 AI 证据权衡。", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                Text(decisionAiUnavailableMessage(report.ai_status, report.ai_error_code), style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
             }
 
             HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
@@ -773,6 +773,28 @@ private fun DecisionReportRoute(report: DecisionReportDto, onViewHistory: (() ->
             Text("报告仅用于研究与复核，不构成交易指令，也不会自动执行。", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
         }
     }
+}
+
+private fun decisionAiUnavailableMessage(status: String?, errorCode: String?): String {
+    val reason = when (errorCode) {
+        "not_configured" -> "容器内没有读到 DEEPSEEK_API_KEY"
+        "feature_disabled" -> "DECISION_AI_ENABLED 未开启"
+        "http_error" -> "DeepSeek API 返回了 HTTP 错误（请查看后端日志中的状态码）"
+        "transport_error" -> "服务器无法连接 DeepSeek API 或请求超时"
+        "local_rate_limited" -> "本地 DeepSeek 并发已满"
+        "circuit_open" -> "DeepSeek 连续失败后熔断器已开启"
+        "invalid_response" -> "DeepSeek 返回结构无法解析"
+        "empty_content" -> "DeepSeek 返回了空内容"
+        "output_truncated" -> "DeepSeek 输出被截断"
+        "invalid_ai_output" -> "AI 输出未通过报告结构或证据引用校验"
+        else -> when (status) {
+            "disabled" -> "决策 AI 功能未开启"
+            "skipped" -> "决策 AI 未满足调用条件"
+            "failed" -> "决策 AI 调用失败，请查看后端 Decision AI 日志"
+            else -> "后端未返回 AI 运行状态；请在升级服务后重新生成报告"
+        }
+    }
+    return "当前结论仅来自确定性规则。本次 AI 状态：$reason。"
 }
 
 @Composable
