@@ -2,6 +2,7 @@ plugins {
     id("com.android.application")
     id("org.jetbrains.kotlin.android")
     id("org.jetbrains.kotlin.plugin.compose")
+    id("com.android.compose.screenshot")
 }
 
 val releaseStorePath = System.getenv("ANDROID_KEYSTORE_FILE")
@@ -12,6 +13,7 @@ val configuredVersionCode = System.getenv("APP_VERSION_CODE")?.toIntOrNull() ?: 
 val configuredVersionName = System.getenv("APP_VERSION_NAME")?.takeIf { it.isNotBlank() } ?: "0.1.0"
 
 android { namespace = "com.thirdhand.app"; compileSdk = 35
+    experimentalProperties["android.experimental.enableScreenshotTest"] = true
     defaultConfig {
         applicationId = "com.thirdhand.app"
         minSdk = 26
@@ -76,7 +78,8 @@ dependencies {
     implementation("com.squareup.retrofit2:converter-gson:2.11.0")
     implementation("com.squareup.okhttp3:logging-interceptor:4.12.0")
     implementation("com.squareup.okhttp3:okhttp-sse:4.12.0")
-    implementation("com.mikepenz:multiplatform-markdown-renderer-m3-android:0.35.0")
     implementation("com.google.mlkit:text-recognition-chinese:16.0.1")
     debugImplementation("androidx.compose.ui:ui-tooling")
+    screenshotTestImplementation("com.android.tools.screenshot:screenshot-validation-api:0.0.1-alpha10")
+    screenshotTestImplementation("androidx.compose.ui:ui-tooling")
 }

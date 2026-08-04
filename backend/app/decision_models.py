@@ -181,6 +181,17 @@ class ReasoningStep(DecisionModel):
     evidence_ids: tuple[str, ...] = ()
 
 
+class RuleImprovementSuggestion(DecisionModel):
+    """A non-binding, user-confirmed adjustment proposed from the current snapshot."""
+    scope: Literal["global", "symbol"]
+    symbol: str | None = None
+    max_position_percent: float | None = Field(default=None, gt=0, le=100)
+    loss_review_percent: float | None = Field(default=None, gt=0, le=80)
+    volatility_review_percent: float | None = Field(default=None, gt=0, le=200)
+    rationale: str = Field(min_length=1, max_length=500)
+    risk_note: str = Field(min_length=1, max_length=300)
+
+
 class AiResearchAssessment(DecisionModel):
     thesis_status: Literal["strengthened", "unchanged", "weakened", "invalidated", "unknown"]
     preferred_action: Literal["OPEN", "ADD", "HOLD", "WATCH", "REDUCE", "EXIT", "BLOCKED"]
@@ -188,6 +199,7 @@ class AiResearchAssessment(DecisionModel):
     opposing_evidence_ids: tuple[str, ...] = ()
     missing_evidence: tuple[str, ...] = ()
     reasoning_steps: tuple[ReasoningStep, ...] = ()
+    rule_suggestions: tuple[RuleImprovementSuggestion, ...] = ()
     uncertainty: Literal["low", "medium", "high"]
     summary: str = Field(min_length=1, max_length=800)
 

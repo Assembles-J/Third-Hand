@@ -64,7 +64,7 @@ fun UnifiedCenterScreen(onOpenSaleHistory: () -> Unit) {
 @Composable
 fun AiLearningAnalysisCard(
     analysis: LearningCaseAnalysisDto?,
-    hasCases: Boolean,
+    caseCount: Int,
     loading: Boolean,
     onAnalyze: () -> Unit,
 ) = Card(
@@ -83,18 +83,26 @@ fun AiLearningAnalysisCard(
             analysis?.let { Text("${confidenceLabel(it.confidence)}置信", style = MaterialTheme.typography.labelSmall) }
         }
         when {
-            !hasCases -> Text("先记录一次判断、结果和教训；AI 会从你的记录中归纳重复模式。", style = MaterialTheme.typography.bodySmall)
+            caseCount == 0 -> {
+                Text("先保存 1 条完整复盘，AI 才有可归纳的内容。", style = MaterialTheme.typography.bodySmall)
+                Text("还缺：当时判断、后来结果、复盘教训。可在下方“记录一次复盘”中补齐。", style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onPrimaryContainer.copy(alpha = 0.72f))
+            }
             loading -> Text("正在梳理复盘记录中的重复模式…", style = MaterialTheme.typography.bodySmall)
             analysis != null -> {
                 Text(analysis.summary, style = MaterialTheme.typography.bodySmall)
                 analysis.recurring_patterns.take(2).forEach { Text("• $it", style = MaterialTheme.typography.labelMedium) }
                 analysis.next_review_focus.take(2).forEach { Text("下一次关注：$it", style = MaterialTheme.typography.labelMedium) }
             }
-            else -> Text("生成一份聚焦“重复模式与复盘重点”的总结，不提供买卖建议。", style = MaterialTheme.typography.bodySmall)
+            else -> Text("已有 $caseCount 条复盘记录，可归纳重复模式与下一次复盘重点；不提供买卖建议。", style = MaterialTheme.typography.bodySmall)
         }
-        TextButton(onClick = onAnalyze, enabled = hasCases && !loading) {
+        TextButton(onClick = onAnalyze, enabled = caseCount > 0 && !loading) {
             Icon(Icons.Filled.Refresh, contentDescription = null)
-            Text(if (analysis == null) "生成 AI 分析" else "重新生成")
+            Text(when {
+                loading -> "正在生成…"
+                caseCount == 0 -> "先记录复盘后可生成"
+                analysis == null -> "生成 AI 分析（$caseCount 条记录）"
+                else -> "重新生成"
+            })
         }
     }
 }

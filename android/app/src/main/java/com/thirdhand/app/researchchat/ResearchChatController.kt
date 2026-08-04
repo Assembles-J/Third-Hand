@@ -113,7 +113,7 @@ class ResearchChatController(httpClient: OkHttpClient = OkHttpClient.Builder()
                 val now = System.currentTimeMillis()
                 // Markdown parsing is intentionally batched. Rendering every token causes
                 // repeated full-layout passes that look like flickering on mobile.
-                if (now - lastAnswerPublishAt >= 90L) {
+                if (now - lastAnswerPublishAt >= 140L) {
                     lastAnswerPublishAt = now
                     mutableState.value = current.copy(answer = answerBuffer.toString())
                 }
@@ -133,9 +133,31 @@ class ResearchChatController(httpClient: OkHttpClient = OkHttpClient.Builder()
             }
             "done" -> {
                 source = null
-                mutableState.value = ResearchChatUiState.Completed(answerBuffer.toString(), event.data["can_continue"]?.toBoolean() == true, current.promptTokens, current.completionTokens, current.suggestedActions)
+                val answer = answerBuffer.toString()
+                mutableState.value = ResearchChatUiState.Completed(answer, event.data["can_continue"]?.toBoolean() == true, current.promptTokens, current.completionTokens, (current.suggestedActions + inferredActions(answer)).distinctBy { it.id })
             }
             "error" -> mutableState.value = ResearchChatUiState.Failed(event.data["message"] ?: "研究流失败")
+        }
+    }
+
+    private fun inferredActions(answer: String): List<ResearchSuggestedAction> = buildList {
+        // The model is asked to call tools, but a natural-language answer may
+        // still mention a safe next step without a tool call.  Surface only
+        // pre-approved UI actions; never infer a trade or data mutation.
+        if (answer.contains("request_daily_history_refresh") || answer.contains("日线") && answer.contains("拉取")) {
+            add(ResearchSuggestedAction("daily_history_refresh", "拉取 60 天日线", ""))
+        }
+        if (answer.contains("追加资金") || answer.contains("可用资金")) {
+            add(ResearchSuggestedAction("account_cash", "录入可用资金", ""))
+        }
+        if (answer.contains("公告") && answer.contains("新闻")) {
+            add(ResearchSuggestedAction("content_refresh", "刷新公告和新闻", ""))
+        }
+        if (answer.contains("交易计划") || answer.contains("thesis")) {
+            add(ResearchSuggestedAction("trade_plan", "确认交易计划", ""))
+        }
+        if (answer.contains("仓位规则") || answer.contains("max_position_percent") || answer.contains("个人规则")) {
+            add(ResearchSuggestedAction("personal_rules", "核对仓位规则", ""))
         }
     }
 }

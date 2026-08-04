@@ -1,4 +1,5 @@
 import hashlib
+import json
 import time
 
 from fastapi.testclient import TestClient
@@ -129,6 +130,7 @@ def test_daily_review_generation_returns_a_pending_review_when_data_is_incomplet
     payload = response.json()
     assert payload["items"][0]["action"] == "watch"
     assert "缺少实时行情" in payload["items"][0]["rationale"]
+    assert "共用决策规则" in payload["items"][0]["rationale"]
 
 
 def test_daily_review_generation_without_holdings_is_an_empty_pending_review():
@@ -231,7 +233,10 @@ def test_daily_review_closes_the_plan_execution_outcome_loop():
     review = generated.json()
     item = review["items"][0]
     store.save_daily_prices("600519", bars + [{"trading_date": "2026-07-31", "open": 10, "high": 12, "low": 10, "close": 11, "source": "test"}])
-    recorded = client.put(f"/v1/daily-reviews/{review['id']}/items/600519/execution", json={"execution_status": "executed", "executed_quantity": item["suggested_quantity"], "executed_price": item["reference_price"]})
+    # Missing risk inputs make the shared workbench policy choose WATCH; this
+    # must not manufacture a paper trade merely to make the daily page active.
+    assert item["action"] == "watch"
+    recorded = client.put(f"/v1/daily-reviews/{review['id']}/items/600519/execution", json={"execution_status": "skipped", "executed_quantity": 0})
     assert recorded.status_code == 200
     result = client.post(f"/v1/daily-reviews/{review['id']}/evaluate")
     assert result.status_code == 200
@@ -256,6 +261,38 @@ def test_decision_generation_is_async_idempotent_and_persists_a_report():
     assert first["job_id"] == second["job_id"]
     assert job["status"] == "succeeded"
     assert client.get("/v1/decisions/latest", params={"symbol": "600519"}).json()["automatic_execution"] is False
+
+
+def test_decision_history_deletes_incomplete_legacy_reports():
+    broken = {
+        "decision_id": "legacy-broken-report",
+        "context_id": "legacy-context",
+        "symbol": "600519",
+        "input_hash": "legacy-input",
+        "generated_at": "2026-08-04T00:00:00+08:00",
+        "evidence": [],
+        "action_candidates": [],
+        "operation_items": [],
+        "ai_assessment": {
+            "supporting_evidence_ids": [],
+            "opposing_evidence_ids": [],
+            "missing_evidence": [],
+            "reasoning_steps": [],
+            "rule_suggestions": None,
+        },
+    }
+    with store._connect() as connection:
+        connection.execute(
+            "INSERT INTO decision_reports VALUES (?,?,?,?,?,?)",
+            ("legacy-broken-report", "legacy-context", "600519", "legacy-input", json.dumps(broken), broken["generated_at"]),
+        )
+
+    response = client.get("/v1/decisions", params={"symbol": "600519"})
+
+    assert response.status_code == 200
+    assert response.json() == []
+    with store._connect() as connection:
+        assert connection.execute("SELECT COUNT(*) FROM decision_reports WHERE decision_id='legacy-broken-report'").fetchone()[0] == 0
 
 
 def test_learning_cases_can_be_created_and_listed():

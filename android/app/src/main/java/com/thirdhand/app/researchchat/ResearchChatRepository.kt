@@ -51,7 +51,7 @@ class ResearchChatRepository(private val httpClient: OkHttpClient) {
     fun dailyHistoryRefresh(baseUrl: String, sessionId: String, onReady: (DailyHistoryRefreshStatus) -> Unit, onFailure: (String) -> Unit) {
         getJson("${baseUrl.trimEnd('/')}/v1/research-chat/sessions/$sessionId/daily-history-refresh", { body ->
             val item = JSONObject(body)
-            onReady(DailyHistoryRefreshStatus(item.optString("symbol"), item.optInt("required_days", 60), item.optString("status"), item.optInt("bar_count"), item.optString("error_message").ifBlank { null }))
+            onReady(DailyHistoryRefreshStatus(item.optString("symbol"), item.optInt("required_days", 60), item.optString("status"), item.optInt("bar_count"), optionalString(item, "error_message")))
         }, onFailure)
     }
     fun requestDailyHistoryRefresh(baseUrl: String, sessionId: String, onReady: (DailyHistoryRefreshStatus) -> Unit, onFailure: (String) -> Unit) {
@@ -59,7 +59,7 @@ class ResearchChatRepository(private val httpClient: OkHttpClient) {
             .post("{}".toRequestBody("application/json".toMediaType())).build()
         httpClient.newCall(request).enqueue(object : Callback { override fun onFailure(call: Call, e: java.io.IOException) = onFailure(e.message ?: "日线拉取请求失败"); override fun onResponse(call: Call, response: Response) = response.use {
             val body = it.body?.string().orEmpty(); if (!it.isSuccessful) return onFailure("日线拉取请求失败（HTTP ${it.code}）")
-            val item = JSONObject(body); onReady(DailyHistoryRefreshStatus(item.optString("symbol"), item.optInt("required_days", 60), item.optString("status"), item.optInt("bar_count"), item.optString("error_message").ifBlank { null }))
+            val item = JSONObject(body); onReady(DailyHistoryRefreshStatus(item.optString("symbol"), item.optInt("required_days", 60), item.optString("status"), item.optInt("bar_count"), optionalString(item, "error_message")))
         } })
     }
 
@@ -72,6 +72,10 @@ class ResearchChatRepository(private val httpClient: OkHttpClient) {
             }
         })
     }
+    private fun optionalString(item: JSONObject, key: String): String? = item.opt(key)
+        ?.takeUnless { it == JSONObject.NULL }
+        ?.toString()
+        ?.takeUnless { it.isBlank() || it.equals("null", ignoreCase = true) }
     fun createSession(baseUrl: String, title: String, symbol: String?, onReady: (String) -> Unit, onFailure: (String) -> Unit) {
         val payload = JSONObject().put("title", title)
         if (!symbol.isNullOrBlank()) payload.put("primary_symbol", symbol)

@@ -3,8 +3,10 @@ import sqlite3
 import sys
 from types import SimpleNamespace
 
+import pytest
+
 from app.market_freshness import quote_freshness_status
-from app.price_history import PriceHistoryService
+from app.price_history import PriceHistoryService, PriceHistoryUnavailable
 from app.storage import PortfolioStore
 
 
@@ -108,3 +110,19 @@ def test_hk_refresh_uses_provider_date_column_and_replaces_legacy_row_indexes(mo
 
     assert PriceHistoryService().refresh(store, "01810") == 1
     assert [item["trading_date"] for item in store.daily_prices("01810")] == ["2026-07-30"]
+
+
+def test_daily_history_failure_logs_akshare_and_tushare_status(monkeypatch, tmp_path, caplog):
+    monkeypatch.setitem(sys.modules, "akshare", SimpleNamespace(
+        stock_zh_a_hist=lambda **_: (_ for _ in ()).throw(ConnectionError("upstream timed out")),
+    ))
+    monkeypatch.delenv("TUSHARE_TOKEN", raising=False)
+
+    with caplog.at_level("WARNING"):
+        with pytest.raises(PriceHistoryUnavailable, match="AKShare 失败"):
+            PriceHistoryService().refresh(PortfolioStore(tmp_path / "history.db"), "600519")
+
+    assert "provider=akshare" in caplog.text
+    assert "ConnectionError" in caplog.text
+    assert "provider=tushare" in caplog.text
+    assert "reason=tushare_token_missing" in caplog.text

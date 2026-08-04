@@ -1600,9 +1600,11 @@ def market_intraday(symbol: str, limit: int = Query(default=500, ge=20, le=1500)
 
 @app.post("/v1/daily-reviews/generate", response_model=DailyReview, status_code=status.HTTP_201_CREATED)
 def generate_daily_review(payload: DailyReviewGenerateRequest = DailyReviewGenerateRequest()) -> DailyReview:
-    """Create an end-of-day research plan snapshot; it never submits an order."""
+    """Create a daily snapshot through the same policy used by the workbench."""
     holdings = {str(item["symbol"]): item for item in store.list()}
-    symbols = list(dict.fromkeys(item.strip().upper() for item in (payload.symbols or list(holdings))))
+    watchlist = {str(item["symbol"]): item for item in store.watchlist()}
+    default_symbols = [*holdings, *(symbol for symbol in watchlist if symbol not in holdings)]
+    symbols = list(dict.fromkeys(item.strip().upper() for item in (payload.symbols or default_symbols)))
     if not symbols:
         review = {
             "id": str(uuid4()), "review_date": beijing_now().date().isoformat(), "generated_at": beijing_now().isoformat(),
@@ -1618,39 +1620,47 @@ def generate_daily_review(payload: DailyReviewGenerateRequest = DailyReviewGener
     blocked = 0
     for symbol in symbols:
         bars = store.daily_prices(symbol)
-        if bars:
+        if bars and len(str(bars[-1].get("trading_date", ""))) == 10:
             review_dates.append(str(bars[-1]["trading_date"]))
-        candidate = build_candidate(symbol, holdings.get(symbol), quotes.get(symbol), bars, store.trade_plan(symbol), cash)
-        if candidate.get("status") != "ready":
+        context = decision_context_builder.build(symbol)
+        evidence = evidence_engine.build(context)
+        policy = action_policy_engine.evaluate(context, evidence)[0]
+        policy_action = policy.action
+        action = {"ADD": "add", "OPEN": "add", "REDUCE": "trim", "EXIT": "trim"}.get(policy_action, "watch")
+        if action == "watch":
             blocked += 1
             reference_price = float((quotes.get(symbol) or {}).get("price") or (bars[-1]["close"] if bars else 0))
             items.append({
                 "symbol": symbol,
-                "name": str(holdings.get(symbol, {}).get("name", "")),
+                "name": str((holdings.get(symbol) or watchlist.get(symbol) or {}).get("name", "")),
                 "action": "watch",
                 "suggested_quantity": None,
                 "price_zone": None,
                 "invalidation_price": None,
-                "rationale": "暂不生成操作建议：缺少实时行情、至少 60 根日线或已启用的交易计划。请补齐后重新生成。",
+                "rationale": f"与工作台共用决策规则：当前为 {policy_action}，缺少实时行情或必要决策数据，暂不生成交易数量。",
                 "reference_price": reference_price,
             })
             continue
-        action = str(candidate.get("action"))
-        quote = quotes.get(symbol) or {}
-        reference_price = float(quote.get("price") or bars[-1]["close"])
+        sizing = position_sizing_engine.size(context, policy_action)
+        reference_price = float(context.quote.price) if context.quote else float(bars[-1]["close"])
         items.append({
             "symbol": symbol,
-            "name": str(holdings.get(symbol, {}).get("name", "")),
+            "name": str((holdings.get(symbol) or watchlist.get(symbol) or {}).get("name", "")),
             "action": action,
-            "suggested_quantity": candidate.get("suggested_quantity"),
-            "price_zone": candidate.get("price_zone"),
-            "invalidation_price": candidate.get("invalidation_price"),
-            "rationale": "基于日线区间、已启用交易计划、可用资金与仓位约束生成；需由用户自行确认。",
+            "suggested_quantity": sizing.suggested_quantity if sizing.status == "ready" else None,
+            "price_zone": None,
+            "invalidation_price": sizing.invalidation_price,
+            "rationale": f"与工作台共用决策规则：{policy_action}；数量由统一风控仓位计算（{sizing.status}）。",
             "reference_price": reference_price,
         })
     review_date = max(review_dates) if review_dates else beijing_now().date().isoformat()
     max_position = next((float(rule["max_position_percent"]) for rule in store.personal_rules() if rule.get("scope") == "global" and rule.get("enabled")), 20.0)
     band = "防守 0–30%" if blocked else f"单标的上限 {max_position:.0f}%"
+    # A partial data set is not a market call.  The former "0-30% defensive"
+    # label was only a fallback marker and was easily mistaken for a position
+    # instruction, so do not publish a numeric band in that state.
+    if blocked:
+        band = "Data incomplete: no portfolio band"
     review = {
         "id": str(uuid4()), "review_date": review_date, "generated_at": beijing_now().isoformat(),
         "suggested_position_band": band,

@@ -116,7 +116,7 @@ def _repair_instruction(error: Exception, evidence: tuple[EvidenceItem, ...], ca
     return (
         "Your previous JSON cannot be used: " + str(error) + ". Return ONE JSON object only, with no Markdown. "
         "Use exactly these keys: thesis_status, preferred_action, supporting_evidence_ids, opposing_evidence_ids, "
-        "missing_evidence, reasoning_steps, uncertainty, summary. Every evidence ID must be copied exactly from this list "
+        "missing_evidence, reasoning_steps, rule_suggestions, uncertainty, summary. Every evidence ID must be copied exactly from this list "
         f"(or use []): [{evidence_ids}]. preferred_action must be one of: [{actions}]. "
         "Each reasoning_steps item must be {stage: evidence|conflict|uncertainty, summary: short plain Chinese, evidence_ids: [...]}."
     )

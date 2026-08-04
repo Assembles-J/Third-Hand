@@ -6,7 +6,13 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.darkColorScheme
 import androidx.compose.material3.lightColorScheme
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.ui.graphics.Color
+import com.thirdhand.app.ui.theme.DarkMarketColors
+import com.thirdhand.app.ui.theme.LightMarketColors
+import com.thirdhand.app.ui.theme.LocalMarketColors
+import com.thirdhand.app.ui.theme.ThirdHandShapes
+import com.thirdhand.app.ui.theme.ThirdHandTypography
 
 enum class ThemeMode(val label: String) {
     SYSTEM("跟随系统"), LIGHT("浅色"), DARK("深色"),
@@ -57,5 +63,13 @@ fun ThirdHandTheme(mode: ThemeMode, content: @Composable () -> Unit) {
         ThemeMode.LIGHT -> false
         ThemeMode.DARK -> true
     }
-    MaterialTheme(colorScheme = if (dark) DarkColors else LightColors, content = content)
+    MaterialTheme(
+        colorScheme = if (dark) DarkColors else LightColors,
+        typography = ThirdHandTypography,
+        shapes = ThirdHandShapes,
+    ) {
+        CompositionLocalProvider(LocalMarketColors provides if (dark) DarkMarketColors else LightMarketColors) {
+            content()
+        }
+    }
 }

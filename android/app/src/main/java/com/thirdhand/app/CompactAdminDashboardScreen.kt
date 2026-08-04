@@ -99,7 +99,7 @@ fun CompactAdminDashboardScreen() {
             OutlinedTextField(
                 value = baseUrl,
                 onValueChange = { baseUrl = it },
-                label = { Text("服务地址，例如 http://192.168.1.10:8000/") },
+                label = { Text("服务地址，例如 http://192.168.1.10:8000/", color = Color.White) },
                 modifier = Modifier.fillMaxWidth().padding(top = 8.dp),
                 singleLine = true,
             )
@@ -128,7 +128,7 @@ fun CompactAdminDashboardScreen() {
                     availableUpdate?.let { update ->
                         updateStatus = when (AppUpdateManager.downloadAndInstall(context, update)) {
                             UpdateLaunchResult.DOWNLOAD_STARTED -> "正在后台下载 ${update.versionName}，完成后可再次点此安装"
-                            UpdateLaunchResult.INSTALLER_OPENED -> "已打开系统安装器"
+                            UpdateLaunchResult.INSTALLER_OPENED -> "已进入系统安装页；安装完成后点击“打开”即可直接进入新版"
                             UpdateLaunchResult.NEED_INSTALL_PERMISSION -> "请允许安装未知应用后重试"
                             UpdateLaunchResult.NEED_STORAGE_PERMISSION -> "请允许保存安装包后重试"
                             UpdateLaunchResult.SIGNATURE_MISMATCH -> AppUpdateManager.completedUpdateMessage(context)

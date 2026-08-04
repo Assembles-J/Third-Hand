@@ -270,7 +270,7 @@ private fun ThirdHandApp(resumeSignal: Int) {
                         label = "bottomNavigationPage",
                     ) { activeTab ->
                         when (activeTab) {
-                            0 -> TodayScreen(onOpenTradePlan = { tab = 3 })
+                            0 -> TodayScreen(onOpenTradePlan = { tab = 3 }, onOpenRules = { tab = 2 })
                             1 -> HoldingsScreen(onOpenDetail = { detailHolding = it })
                             2 -> UnifiedCenterScreen(onOpenSaleHistory = { tab = 6 })
                             3 -> TradePlanScreen()
@@ -281,6 +281,8 @@ private fun ThirdHandApp(resumeSignal: Int) {
                                 question = researchDraft,
                                 onQuestionChange = { researchDraft = it },
                                 onOpenTradePlan = { tab = 3 },
+                                onOpenPortfolio = { tab = 1 },
+                                onOpenRules = { tab = 2 },
                                 onClose = { tab = 0 },
                             )
                             5 -> WatchlistScreen(onOpenDetail = { detailStock = it }, onResearch = { target ->
@@ -290,7 +292,7 @@ private fun ThirdHandApp(resumeSignal: Int) {
                                 tab = 4
                             })
                             6 -> SaleHistoryScreen(onBack = { tab = 2 })
-                            else -> TodayScreen(onOpenTradePlan = { tab = 3 })
+                            else -> TodayScreen(onOpenTradePlan = { tab = 3 }, onOpenRules = { tab = 2 })
                         }
                     }
                 }
@@ -312,7 +314,7 @@ private fun ThirdHandApp(resumeSignal: Int) {
                                 updateMessage = "正在下载，完成后可在管理页面安装"
                             }
                             UpdateLaunchResult.INSTALLER_OPENED -> {
-                                updateMessage = "已重新打开系统安装器"
+                                updateMessage = "已进入系统安装页：完成安装后，点击“打开”即可直接进入新版"
                             }
                             UpdateLaunchResult.NEED_INSTALL_PERMISSION -> {
                                 updateMessage = "请允许此应用安装未知来源应用，返回后再次点击"
@@ -610,7 +612,7 @@ private fun impactColor(direction: String?): Color = when (direction) {
 }
 
 @Composable
-private fun TodayScreen(onOpenTradePlan: () -> Unit) {
+private fun TodayScreen(onOpenTradePlan: () -> Unit, onOpenRules: () -> Unit) {
     val context = LocalContext.current
     val api = ApiClient.service(context)
     var holdings by remember { mutableStateOf<List<HoldingDto>>(emptyList()) }
@@ -621,7 +623,7 @@ private fun TodayScreen(onOpenTradePlan: () -> Unit) {
     var error by remember { mutableStateOf<String?>(null) }
     var statusMessage by remember { mutableStateOf<String?>(null) }
     var analyzing by remember { mutableStateOf(false) }
-    var selectorExpanded by remember { mutableStateOf(false) }
+    var showSymbolPicker by remember { mutableStateOf(false) }
     var instrumentSetupSymbol by remember { mutableStateOf<String?>(null) }
     val scope = rememberCoroutineScope()
     fun load() = scope.launch {
@@ -668,7 +670,7 @@ private fun TodayScreen(onOpenTradePlan: () -> Unit) {
     val selectedHolding = holdings.firstOrNull { it.symbol == selectedSymbol }
     val selectedAnalysis = portfolioAnalysis.firstOrNull { it.symbol == selectedSymbol }
     LazyColumn(contentPadding = androidx.compose.foundation.layout.PaddingValues(bottom = 24.dp), verticalArrangement = Arrangement.spacedBy(14.dp)) {
-        item { AppHero("今日决策", "THIRD-HAND · 先核验，再判断", action = { HeroRefreshAction(::load, !analyzing) }) }
+        item { AppHero("今日决策", "规则负责约束，AI 负责复核解释") }
         item {
             Column(Modifier.padding(horizontal = 20.dp), verticalArrangement = Arrangement.spacedBy(5.dp)) {
                 Text("AI 决策工作台", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold)
@@ -678,42 +680,19 @@ private fun TodayScreen(onOpenTradePlan: () -> Unit) {
         error?.let { item { StatusCard(it, error = true) } }
         statusMessage?.let { item { StatusCard(it, positive = true) } }
         if (holdings.isEmpty()) item { StatusCard("先在“持仓”页添加第一只持仓，才能建立决策分析。") }
-        if (holdings.isNotEmpty()) stickyHeader {
-            Column(Modifier.fillMaxWidth().background(MaterialTheme.colorScheme.background).padding(horizontal = 20.dp, vertical = 8.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
-                    Column(Modifier.weight(1f)) {
-                        selectedHolding?.let { Text("当前分析 · ${it.name} (${it.symbol})", style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.Bold) }
-                        Text(if (selectorExpanded) "选择后将自动收起" else "报告浏览时也可随时切换", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                    }
-                    TextButton(onClick = { selectorExpanded = !selectorExpanded }) { Text(if (selectorExpanded) "收起" else "切换") }
+        selectedHolding?.let { holding -> item {
+            OutlinedButton(
+                onClick = { showSymbolPicker = true },
+                modifier = Modifier.padding(horizontal = 20.dp).fillMaxWidth(),
+                shape = RoundedCornerShape(14.dp),
+            ) {
+                Column(Modifier.weight(1f), horizontalAlignment = Alignment.Start) {
+                    Text("分析标的", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    Text("${holding.name} · ${holding.symbol}", fontWeight = FontWeight.SemiBold)
                 }
-                if (selectorExpanded) {
-                Text("选择要分析的持仓", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
-                Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
-                    holdings.forEach { holding ->
-                    val selected = holding.symbol == selectedSymbol
-                    OutlinedButton(
-                        onClick = {
-                            selectedSymbol = holding.symbol
-                            decisionReport = null
-                            statusMessage = null
-                            selectorExpanded = false
-                            scope.launch { decisionReport = runCatching { api.latestDecision(holding.symbol) }.getOrNull() }
-                        },
-                        modifier = Modifier.fillMaxWidth(),
-                        shape = RoundedCornerShape(14.dp),
-                        colors = ButtonDefaults.outlinedButtonColors(containerColor = if (selected) MaterialTheme.colorScheme.primaryContainer else Color.Transparent),
-                    ) {
-                        Column(Modifier.fillMaxWidth()) {
-                            Text("${holding.name} · ${holding.symbol}", fontWeight = FontWeight.SemiBold)
-                            Text(if (selected) "当前分析对象" else "点击切换分析对象", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                        }
-                    }
-                    }
-                }
-                }
+                Text("切换")
             }
-        }
+        } }
         selectedHolding?.let { holding -> item {
             Card(
                 Modifier.padding(horizontal = 20.dp).fillMaxWidth(),
@@ -729,6 +708,7 @@ private fun TodayScreen(onOpenTradePlan: () -> Unit) {
             DecisionWorkbenchRoute(
                 report,
                 onViewHistory = { showDecisionHistory = true },
+                onOpenRules = onOpenRules,
                 onResolveBlocker = { code ->
                     if (code == "trade_plan.enabled" || code == "trade_plan.invalidation_price") onOpenTradePlan()
                     if (code == "instrument.lot_size") instrumentSetupSymbol = report.symbol
@@ -739,6 +719,28 @@ private fun TodayScreen(onOpenTradePlan: () -> Unit) {
         if (selectedHolding != null && decisionReport == null) item { StatusCard("尚未生成新版决策报告。点击主动分析后将在这里展示可追溯的证据与仓位结果。") }
     }
     instrumentSetupSymbol?.let { symbol -> InstrumentMetadataDialog(symbol, onDismiss = { instrumentSetupSymbol = null }) }
+    if (showSymbolPicker) AlertDialog(
+        onDismissRequest = { showSymbolPicker = false },
+        title = { Text("切换分析标的") },
+        text = { LazyColumn(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+            items(holdings, key = { it.symbol }) { holding ->
+                val selected = holding.symbol == selectedSymbol
+                TextButton(onClick = {
+                    selectedSymbol = holding.symbol
+                    decisionReport = null
+                    statusMessage = null
+                    showSymbolPicker = false
+                    scope.launch { decisionReport = runCatching { api.latestDecision(holding.symbol) }.getOrNull() }
+                }, modifier = Modifier.fillMaxWidth()) {
+                    Column(Modifier.fillMaxWidth()) {
+                        Text("${holding.name} · ${holding.symbol}", fontWeight = if (selected) FontWeight.Bold else FontWeight.Normal)
+                        Text(if (selected) "当前分析对象" else "切换到此标的", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    }
+                }
+            }
+        } },
+        confirmButton = { TextButton(onClick = { showSymbolPicker = false }) { Text("关闭") } },
+    )
     if (showDecisionHistory && selectedSymbol != null) DecisionHistoryDialog(selectedSymbol!!, onDismiss = { showDecisionHistory = false })
 }
 
@@ -815,13 +817,20 @@ private fun InstrumentMetadataDialog(symbol: String, onDismiss: () -> Unit) {
 }
 
 @Composable
-private fun DecisionWorkbenchRoute(report: DecisionReportDto, onViewHistory: (() -> Unit)? = null, onResolveBlocker: ((String) -> Unit)? = null) {
+private fun DecisionWorkbenchRoute(
+    report: DecisionReportDto,
+    onViewHistory: (() -> Unit)? = null,
+    onOpenRules: (() -> Unit)? = null,
+    onResolveBlocker: ((String) -> Unit)? = null,
+) {
+    var showAnalysisDetail by remember(report.decision_id) { mutableStateOf(false) }
     Column(Modifier.padding(horizontal = 20.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
         Text("待执行", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
-        if (report.operation_items.isEmpty()) {
+        val operationItems = report.operation_items.orEmpty()
+        if (operationItems.isEmpty()) {
             StatusCard("本次结果没有可执行项目；请先完成待补全项后重新生成。")
         }
-        report.operation_items.forEach { item ->
+        operationItems.forEach { item ->
             val blocked = item.status == "needs_input"
             Card(
                 Modifier.fillMaxWidth(), shape = RoundedCornerShape(16.dp),
@@ -835,7 +844,7 @@ private fun DecisionWorkbenchRoute(report: DecisionReportDto, onViewHistory: (()
                         item.suggested_quantity?.let { Text("建议本次数量 ${formatPositionValue(it)} 股", style = MaterialTheme.typography.bodySmall, fontWeight = FontWeight.SemiBold) }
                         item.target_quantity?.let { Text("建议目标持仓 ${formatPositionValue(it)} 股", style = MaterialTheme.typography.bodySmall) }
                         item.invalidation_price?.let { Text("失效价 ${marketNumber(it)}", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.error) }
-                    } else item.blockers.forEach { code ->
+                    } else item.blockers.orEmpty().forEach { code ->
                         val guidance = blockerGuidance(code)
                         Text(guidance.title, color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.bodySmall, fontWeight = FontWeight.SemiBold)
                         Text(guidance.nextStep, style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
@@ -851,14 +860,30 @@ private fun DecisionWorkbenchRoute(report: DecisionReportDto, onViewHistory: (()
                     Text("研究细则、证据与推理请在“研究”中查看。", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
                 }
                 onViewHistory?.let { TextButton(onClick = it) { Text("历史") } }
+                TextButton(onClick = { showAnalysisDetail = !showAnalysisDetail }) { Text(if (showAnalysisDetail) "收起详情" else "分析详情") }
             }
         }
+        if (showAnalysisDetail) DecisionReportRoute(
+            report = report,
+            onOpenRules = onOpenRules,
+            onResolveBlocker = onResolveBlocker,
+        )
         Text("仅供研究和模拟复核，不会自动执行交易。", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
     }
 }
 
 @Composable
-private fun DecisionReportRoute(report: DecisionReportDto, onViewHistory: (() -> Unit)? = null, onResolveBlocker: ((String) -> Unit)? = null) {
+private fun DecisionReportRoute(
+    report: DecisionReportDto,
+    onViewHistory: (() -> Unit)? = null,
+    onOpenRules: (() -> Unit)? = null,
+    onResolveBlocker: ((String) -> Unit)? = null,
+) {
+    // Gson assigns an explicit JSON null directly to Kotlin properties despite their
+    // non-null declarations. Keep this report view resilient while older or partial
+    // server responses are still present in the cache.
+    val evidence = report.evidence.orEmpty()
+    val actionCandidates = report.action_candidates.orEmpty()
     Card(Modifier.padding(horizontal = 20.dp).fillMaxWidth(), shape = RoundedCornerShape(18.dp)) {
         Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
             Text("本次决策报告", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
@@ -870,12 +895,12 @@ private fun DecisionReportRoute(report: DecisionReportDto, onViewHistory: (() ->
             Text("生成于 ${beijingTimestamp(report.generated_at)} · 策略 ${report.policy_version}", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
             report.market_change_percent?.let { change -> MarketMovementBadge(change, report.market_price, report.market_as_of) }
 
-            report.action_candidates.forEachIndexed { index, candidate ->
+            actionCandidates.forEachIndexed { index, candidate ->
                 HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
-                if (candidate.blocked_reasons.isNotEmpty()) {
+                if (candidate.blocked_reasons.orEmpty().isNotEmpty()) {
                     Text(if (index == 0) "解除阻断" else "备选动作：${decisionActionLabel(candidate.action)}", style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.SemiBold)
                     Text("本次未生成操作结论。请先完成以下项目，再重新分析。", style = MaterialTheme.typography.bodySmall)
-                    candidate.blocked_reasons.forEach { code ->
+                    candidate.blocked_reasons.orEmpty().forEach { code ->
                         val guidance = blockerGuidance(code)
                         Text(guidance.title, color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.bodySmall, fontWeight = FontWeight.SemiBold)
                         Text(guidance.nextStep, style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
@@ -886,8 +911,8 @@ private fun DecisionReportRoute(report: DecisionReportDto, onViewHistory: (() ->
                 } else {
                     Text(if (index == 0) "首选规则候选" else "备选动作", style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.SemiBold)
                     Text("${decisionActionLabel(candidate.action)} · 优先级 ${candidate.priority} · 规则评分 ${(candidate.policy_score * 100).toInt()}%", style = MaterialTheme.typography.bodySmall)
-                    candidate.supporting_evidence_ids.mapNotNull { id -> report.evidence.firstOrNull { it.evidence_id == id }?.title }.takeIf { it.isNotEmpty() }?.let { Text("支持：${it.joinToString("、")}", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant) }
-                    candidate.opposing_evidence_ids.mapNotNull { id -> report.evidence.firstOrNull { it.evidence_id == id }?.title }.takeIf { it.isNotEmpty() }?.let { Text("反对：${it.joinToString("、")}", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant) }
+                    candidate.supporting_evidence_ids.orEmpty().mapNotNull { id -> evidence.firstOrNull { it.evidence_id == id }?.title }.takeIf { it.isNotEmpty() }?.let { Text("支持：${it.joinToString("、")}", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant) }
+                    candidate.opposing_evidence_ids.orEmpty().mapNotNull { id -> evidence.firstOrNull { it.evidence_id == id }?.title }.takeIf { it.isNotEmpty() }?.let { Text("反对：${it.joinToString("、")}", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant) }
                 }
             }
 
@@ -906,7 +931,7 @@ private fun DecisionReportRoute(report: DecisionReportDto, onViewHistory: (() ->
                     sizing.quantity_by_cash?.let { "资金上限 ${formatPositionValue(it)} 股" },
                     sizing.quantity_by_position_cap?.let { "仓位上限 ${formatPositionValue(it)} 股" },
                 ).takeIf { it.isNotEmpty() }?.let { Text(it.joinToString(" · "), style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant) }
-                sizing.blocked_reasons.map(::blockerGuidance).forEach { guidance -> Text("需处理：${guidance.title}", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.error) }
+                sizing.blocked_reasons.orEmpty().map(::blockerGuidance).forEach { guidance -> Text("需处理：${guidance.title}", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.error) }
             }
 
             report.sizing?.blocked_reasons
@@ -923,8 +948,24 @@ private fun DecisionReportRoute(report: DecisionReportDto, onViewHistory: (() ->
                 }
                 Text("原来的判断：${thesisStatusLabel(ai.thesis_status)} · 把握程度：${uncertaintyLabel(ai.uncertainty)}", style = MaterialTheme.typography.bodySmall, fontWeight = FontWeight.Medium)
                 Text(ai.summary, style = MaterialTheme.typography.bodySmall)
-                ai.reasoning_steps.forEach { step -> Text("${aiReasoningStageLabel(step.stage)}：${step.summary}", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant) }
-                ai.missing_evidence.forEach { missing -> Text("还需要确认：$missing", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant) }
+                ai.reasoning_steps.orEmpty().forEach { step -> Text("${aiReasoningStageLabel(step.stage)}：${step.summary}", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant) }
+                ai.missing_evidence.orEmpty().forEach { missing -> Text("还需要确认：$missing", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant) }
+                ai.rule_suggestions.orEmpty().forEach { suggestion ->
+                    Card(colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.secondaryContainer)) {
+                        Column(Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                            Text("AI 规则优化建议 · ${if (suggestion.scope == "symbol") suggestion.symbol ?: "个股" else "全局"}", fontWeight = FontWeight.SemiBold, style = MaterialTheme.typography.bodySmall)
+                            listOfNotNull(
+                                suggestion.max_position_percent?.let { "单标的上限 ${formatPositionValue(it)}%" },
+                                suggestion.loss_review_percent?.let { "亏损复核 ${formatPositionValue(it)}%" },
+                                suggestion.volatility_review_percent?.let { "波动复核 ${formatPositionValue(it)}%" },
+                            ).takeIf { it.isNotEmpty() }?.let { Text(it.joinToString(" · "), style = MaterialTheme.typography.labelSmall) }
+                            Text(suggestion.rationale, style = MaterialTheme.typography.bodySmall)
+                            Text("风险提示：${suggestion.risk_note}", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                            Text("这是待确认建议，请在规则页编辑后保存。", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.primary)
+                            onOpenRules?.let { TextButton(onClick = it) { Text("查看并调整规则") } }
+                        }
+                    }
+                }
             }
             if (report.ai_assessment == null) {
                 HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
@@ -934,8 +975,8 @@ private fun DecisionReportRoute(report: DecisionReportDto, onViewHistory: (() ->
 
             HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
             Text("关键证据", style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.SemiBold)
-            if (report.evidence.isEmpty()) Text("本次没有可展示的结构化证据。", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
-            report.evidence.sortedByDescending { it.strength }.take(5).forEach { evidence ->
+            if (evidence.isEmpty()) Text("本次没有可展示的结构化证据。", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            evidence.sortedByDescending { it.strength }.take(5).forEach { evidence ->
                 Text("${evidenceDirectionLabel(evidence.direction)} ${evidence.title}", color = evidenceDirectionColor(evidence.direction), style = MaterialTheme.typography.bodySmall, fontWeight = FontWeight.SemiBold)
                 Text(evidence.description, style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
             }
@@ -1037,7 +1078,7 @@ private fun DecisionHistoryDialog(symbol: String, onDismiss: () -> Unit) {
     var selectedId by remember(symbol) { mutableStateOf<String?>(null) }
     LaunchedEffect(symbol) {
         runCatching { api.decisionHistory(symbol) }
-            .onSuccess { reports = it; selectedId = it.firstOrNull()?.decision_id }
+            .onSuccess { reports = it; selectedId = null }
             .onFailure { error = "无法读取历史报告：${it.message ?: "请稍后重试"}" }
         loading = false
     }
@@ -1053,8 +1094,8 @@ private fun DecisionHistoryDialog(symbol: String, onDismiss: () -> Unit) {
                 if (!loading && error == null) LazyColumn(verticalArrangement = Arrangement.spacedBy(6.dp)) {
                     items(reports, key = { it.decision_id }) { report ->
                         val selected = report.decision_id == selectedId
-                        OutlinedButton(onClick = { selectedId = report.decision_id }, modifier = Modifier.fillMaxWidth(), colors = ButtonDefaults.outlinedButtonColors(containerColor = if (selected) MaterialTheme.colorScheme.primaryContainer else Color.Transparent)) {
-                            Column(Modifier.fillMaxWidth()) { Text("${decisionActionLabel(report.action)} · ${decisionStatusLabel(report.status)}", fontWeight = FontWeight.SemiBold); Text(beijingTimestamp(report.generated_at), style = MaterialTheme.typography.labelSmall) }
+                        OutlinedButton(onClick = { selectedId = if (selected) null else report.decision_id }, modifier = Modifier.fillMaxWidth(), colors = ButtonDefaults.outlinedButtonColors(containerColor = if (selected) MaterialTheme.colorScheme.primaryContainer else Color.Transparent)) {
+                            Column(Modifier.fillMaxWidth()) { Text("${decisionActionLabel(report.action)} · ${decisionStatusLabel(report.status)}", fontWeight = FontWeight.SemiBold); Text("${beijingTimestamp(report.generated_at)} · ${if (selected) "收起详情" else "查看摘要与证据"}", style = MaterialTheme.typography.labelSmall) }
                         }
                         if (selected) DecisionReportRoute(report)
                     }
@@ -1404,8 +1445,15 @@ private fun UpdateCenterCard(
                 Button(onClick = onInstall, modifier = Modifier.fillMaxWidth().heightIn(min = 48.dp)) {
                     Icon(Icons.Filled.SystemUpdateAlt, contentDescription = null)
                     Spacer(Modifier.width(8.dp))
-                    Text("现在安装 ${update?.versionName.orEmpty()}")
+                    Text("前往系统安装 ${update?.versionName.orEmpty()}")
                 }
+                Text(
+                    "在系统安装完成页点击“打开”，即可直接启动新版应用。",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    textAlign = TextAlign.Center,
+                    modifier = Modifier.fillMaxWidth(),
+                )
             } else {
                 OutlinedButton(onClick = onCheck, enabled = !checking, modifier = Modifier.fillMaxWidth().heightIn(min = 48.dp)) {
                     Icon(Icons.Filled.Refresh, contentDescription = null)
@@ -1438,7 +1486,7 @@ private fun isUpdateStatusError(status: String): Boolean =
     status.contains("失败") || status.contains("不可用") || status.contains("无法")
 
 private fun installResultMessage(result: UpdateLaunchResult, context: android.content.Context): String = when (result) {
-    UpdateLaunchResult.INSTALLER_OPENED -> "已打开系统安装器，请确认安装"
+    UpdateLaunchResult.INSTALLER_OPENED -> "已进入系统安装页；安装完成后点击“打开”即可直接进入新版"
     UpdateLaunchResult.NEED_INSTALL_PERMISSION -> "请允许“安装未知应用”后返回，再次点击安装"
     UpdateLaunchResult.SIGNATURE_MISMATCH -> AppUpdateManager.completedUpdateMessage(context) ?: "安装包签名不一致"
     UpdateLaunchResult.DOWNLOAD_UNAVAILABLE -> "安装包不可用，请重新检查更新"
@@ -1555,7 +1603,7 @@ private fun HoldingMetric(label: String, value: String, modifier: Modifier = Mod
 @Composable
 private fun HoldingCard(holding: HoldingDto, onDelete: () -> Unit) = Card(
     modifier = Modifier.padding(horizontal = 20.dp).fillMaxWidth(),
-    shape = RoundedCornerShape(14.dp),
+    shape = MaterialTheme.shapes.medium,
     colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
     elevation = CardDefaults.cardElevation(defaultElevation = 2.dp),
 ) {
@@ -1583,10 +1631,10 @@ private fun HoldingCard(holding: HoldingDto, onDelete: () -> Unit) = Card(
 
 @Composable
 private fun DraftHoldingCard(draft: HoldingDraftDto, onComplete: () -> Unit, onDelete: () -> Unit) = Card(
-    modifier = Modifier.padding(horizontal = 20.dp).fillMaxWidth(),
-    shape = RoundedCornerShape(14.dp),
+    modifier = Modifier.padding(horizontal = 14.dp).fillMaxWidth(),
+    shape = MaterialTheme.shapes.medium,
     colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.secondaryContainer),
-    elevation = CardDefaults.cardElevation(defaultElevation = 3.dp),
+    elevation = CardDefaults.cardElevation(defaultElevation = com.thirdhand.app.ui.theme.AppElevation.raised),
 ) {
     val statusText = when (draft.lookup_status.orEmpty()) {
         "pending", "querying" -> "查询中"
@@ -1595,8 +1643,8 @@ private fun DraftHoldingCard(draft: HoldingDraftDto, onComplete: () -> Unit, onD
         "not_found" -> "未找到"
         else -> "待补全"
     }
-    Column(Modifier.padding(horizontal = 14.dp, vertical = 12.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-        Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+    Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+        Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
             Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(1.dp)) {
                 Text(draft.name, style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.ExtraBold, maxLines = 1, overflow = TextOverflow.Ellipsis)
                 Text(draft.lookup_message.orEmpty(), style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSecondaryContainer, maxLines = 1, overflow = TextOverflow.Ellipsis)
@@ -1673,6 +1721,7 @@ private fun StockDetailScreen(target: ResearchTargetDto, onBack: () -> Unit, onR
     var history by remember(target.symbol) { mutableStateOf<List<DailyPriceDto>>(emptyList()) }
     var sales by remember(target.symbol) { mutableStateOf<List<SaleRecordDto>>(emptyList()) }
     var error by remember(target.symbol) { mutableStateOf<String?>(null) }
+    var clearHistoryRequested by remember(target.symbol) { mutableStateOf(false) }
     fun load() = scope.launch {
         error = null
         runCatching { ApiClient.marketQuotes(api, MarketQuoteBatchRequestDto(listOf(target.symbol))) }
@@ -1696,9 +1745,12 @@ private fun StockDetailScreen(target: ResearchTargetDto, onBack: () -> Unit, onR
             Text(quote?.let { "${it.source} · ${it.freshness_note}" } ?: "行情正在准备中", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
         } } }
         item { Card(Modifier.padding(horizontal = 20.dp).fillMaxWidth()) { Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-            Text("近期收盘", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
-            if (history.isEmpty()) Text("暂无历史价格数据。", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
-            else history.takeLast(5).reversed().forEach { bar -> Text("${bar.trading_date}   ${formatPositionValue(bar.close)}", style = MaterialTheme.typography.bodySmall) }
+            Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+                Text("日线 K 线", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold, modifier = Modifier.weight(1f))
+                TextButton(onClick = { clearHistoryRequested = true }, enabled = history.isNotEmpty()) { Text("清理缓存") }
+            }
+            if (history.size < 2) Text("日线数据正在准备中；清理后会由后台重新拉取。", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            else KLineChart(history.takeLast(60))
         } } }
         item { Card(Modifier.padding(horizontal = 20.dp).fillMaxWidth()) { Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
             Text("出售历史", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
@@ -1706,6 +1758,17 @@ private fun StockDetailScreen(target: ResearchTargetDto, onBack: () -> Unit, onR
             else sales.take(5).forEach { sale -> Text("${beijingTimestamp(sale.sold_at)} · ${sale.quantity} 股 · ${signedPositionValue(sale.realized_pnl)}", style = MaterialTheme.typography.bodySmall) }
         } } }
     }
+    if (clearHistoryRequested) AlertDialog(
+        onDismissRequest = { clearHistoryRequested = false },
+        title = { Text("清理 ${target.name} 的日线缓存？") },
+        text = { Text("仅删除本地缓存的日线数据，不会删除持仓、自选或成交记录。下次刷新会重新从行情源获取。") },
+        confirmButton = { Button(onClick = { scope.launch {
+            runCatching { api.deleteMarketHistory(target.symbol) }
+                .onSuccess { history = emptyList(); clearHistoryRequested = false; load() }
+                .onFailure { error = "清理日线缓存失败，请稍后重试。" }
+        } }) { Text("确认清理") } },
+        dismissButton = { TextButton(onClick = { clearHistoryRequested = false }) { Text("取消") } },
+    )
 }
 
 @Composable
@@ -1885,32 +1948,28 @@ private fun HoldingsScreen(onOpenDetail: (HoldingDto) -> Unit) {
     }
     LaunchedEffect(Unit) { refresh() }
     LazyColumn(contentPadding = androidx.compose.foundation.layout.PaddingValues(bottom = 24.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-        item { Card(Modifier.padding(horizontal = 20.dp).fillMaxWidth()) {
-            Row(Modifier.padding(14.dp), verticalAlignment = Alignment.CenterVertically) {
-                Column(Modifier.weight(1f)) {
-                    Text("可用资金", style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                    Text(formatPositionValue(availableCash?.available_cash ?: 0.0), style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold)
-                }
-                TextButton(onClick = { showCashEditor = true }) { Text("录入/修改") }
-            }
-        } }
+        item {
+            com.thirdhand.app.ui.components.PortfolioCashCard(
+                availableCash = formatPositionValue(availableCash?.available_cash ?: 0.0),
+                onEdit = { showCashEditor = true },
+                modifier = Modifier.padding(horizontal = 14.dp),
+            )
+        }
         item { AppHero("我的持仓", "资产根系 · 记录每一次成长") }
         item {
-            Row(Modifier.padding(horizontal = 14.dp).fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
-                val pricedHoldings = holdings.mapNotNull { holding -> quotesBySymbol[holding.symbol]?.price?.let { price -> holding to price } }
-                val totalMarketValue = pricedHoldings.sumOf { (holding, price) -> holding.quantity * price }
-                val totalPnl = pricedHoldings.sumOf { (holding, price) -> holding.quantity * (price - holding.average_cost) }
-                Column(Modifier.weight(1f)) {
-                    Text("${holdings.size} 只持仓 · ${drafts.size} 条待补全", style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                    Text(
-                        if (pricedHoldings.isEmpty()) "等待行情更新" else "市值 ${formatPositionValue(totalMarketValue)} · 浮盈 ${signedPositionValue(totalPnl)}",
-                        style = MaterialTheme.typography.bodySmall,
-                        color = if (totalPnl >= 0) Color(0xFFD32F2F) else Color(0xFF178A4B),
-                    )
-                }
-                TextButton(onClick = { showAdd = true }) { Icon(Icons.Filled.Add, null); Text("添加") }
-                TextButton(onClick = { imagePicker.launch(arrayOf("image/*")) }) { Icon(Icons.Filled.CameraAlt, null); Text("导入") }
-            }
+            val pricedHoldings = holdings.mapNotNull { holding -> quotesBySymbol[holding.symbol]?.price?.let { price -> holding to price } }
+            val totalMarketValue = pricedHoldings.sumOf { (holding, price) -> holding.quantity * price }
+            val totalPnl = pricedHoldings.sumOf { (holding, price) -> holding.quantity * (price - holding.average_cost) }
+            com.thirdhand.app.ui.components.HoldingSummaryCard(
+                holdingCount = holdings.size,
+                pendingCount = drafts.size,
+                marketValue = totalMarketValue.takeIf { pricedHoldings.isNotEmpty() }?.let(::formatPositionValue),
+                totalPnl = totalPnl.takeIf { pricedHoldings.isNotEmpty() }?.let(::signedPositionValue),
+                totalPnlIsPositive = totalPnl >= 0,
+                onAdd = { showAdd = true },
+                onImport = { imagePicker.launch(arrayOf("image/*")) },
+                modifier = Modifier.padding(horizontal = 14.dp),
+            )
         }
         item {
             MarketStatusEntry(
@@ -1941,10 +2000,19 @@ private fun HoldingsScreen(onOpenDetail: (HoldingDto) -> Unit) {
             }
         }
         items(watchlist, key = { "watch-${it.symbol}" }) { item ->
-            Card(Modifier.padding(horizontal = 20.dp).fillMaxWidth()) {
-                Row(Modifier.padding(horizontal = 14.dp, vertical = 10.dp), verticalAlignment = Alignment.CenterVertically) {
+            Card(
+                modifier = Modifier.padding(horizontal = 14.dp).fillMaxWidth(),
+                shape = MaterialTheme.shapes.medium,
+                colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceContainerLow),
+                elevation = CardDefaults.cardElevation(defaultElevation = 1.dp),
+            ) {
+                Row(Modifier.padding(horizontal = 16.dp, vertical = 12.dp), verticalAlignment = Alignment.CenterVertically) {
                     Column(Modifier.weight(1f)) {
                         Text(item.name, fontWeight = FontWeight.SemiBold)
+                        com.thirdhand.app.ui.components.MarketTag(
+                            "观察中",
+                            modifier = Modifier.padding(top = 4.dp),
+                        )
                         Text("${item.symbol} · 研究与复盘持续跟踪", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
                     }
                     IconButton(onClick = { scope.launch { api.deleteWatchlistItem(item.symbol); refresh() } }) {
@@ -2306,7 +2374,11 @@ private fun KLineChart(
 @Composable
 private fun HoldingTableHeader() {
     Row(
-        Modifier.fillMaxWidth().padding(horizontal = 10.dp, vertical = 7.dp),
+        Modifier.fillMaxWidth()
+            .padding(horizontal = 14.dp, vertical = 4.dp)
+            .clip(RoundedCornerShape(12.dp))
+            .background(MaterialTheme.colorScheme.surfaceContainerHigh)
+            .padding(horizontal = 10.dp, vertical = 8.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
         PositionHeader("名称 / 市值", Modifier.weight(1.15f), TextAlign.Start)
@@ -2314,7 +2386,6 @@ private fun HoldingTableHeader() {
         PositionHeader("持仓 / 可用", Modifier.weight(.78f), TextAlign.End)
         PositionHeader("成本 / 现价", Modifier.weight(1f), TextAlign.End)
     }
-    HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
 }
 
 @Composable
@@ -2340,8 +2411,8 @@ private fun HoldingTableRow(
     val pnlPercent = currentPrice?.let { if (holding.average_cost == 0.0) null else (it - holding.average_cost) / holding.average_cost * 100 }
     val pnlColor = when {
         pnl == null -> MaterialTheme.colorScheme.onSurfaceVariant
-        pnl >= 0 -> Color(0xFFD32F2F)
-        else -> Color(0xFF178A4B)
+        pnl >= 0 -> com.thirdhand.app.ui.theme.LocalMarketColors.current.rise
+        else -> com.thirdhand.app.ui.theme.LocalMarketColors.current.fall
     }
     val deleteOffset by animateDpAsState(if (isDeleteRevealed) (-76).dp else 0.dp, label = "holdingDeleteOffset")
     var horizontalDrag by remember(holding.id) { mutableStateOf(0f) }
@@ -2378,7 +2449,7 @@ private fun HoldingTableRow(
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     Text(holding.name, modifier = Modifier.weight(1f, false), maxLines = 1, overflow = TextOverflow.Ellipsis, fontWeight = FontWeight.SemiBold, style = MaterialTheme.typography.bodySmall)
                     marketTag(currency)?.let { tag ->
-                        Text(tag, modifier = Modifier.padding(start = 3.dp), color = MaterialTheme.colorScheme.onSurfaceVariant, style = MaterialTheme.typography.labelSmall)
+                        com.thirdhand.app.ui.components.MarketTag(tag, modifier = Modifier.padding(start = 4.dp))
                     }
                 }
                 Text(marketValue?.let { "${formatCurrency(it, currency)} · ${rmbEstimate(it, currency)}" } ?: "市值待更新", color = MaterialTheme.colorScheme.onSurfaceVariant, style = MaterialTheme.typography.labelSmall, maxLines = 1)
@@ -3070,7 +3141,7 @@ fun ProfileScreen() {
         item {
             AiLearningAnalysisCard(
                 analysis = learningAnalysis,
-                hasCases = learningCases.isNotEmpty(),
+                caseCount = learningCases.size,
                 loading = analyzingLearning,
                 onAnalyze = { analyzeLearningCases() },
             )
@@ -3263,17 +3334,40 @@ private fun DailyReviewCard(
     Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
         Text("盘后计划与自动复盘", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
         Text("收盘后生成研究快照；录入实际成交后，下一交易日收盘可自动对比计划与实际结果。不会自动下单。", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+        Card(
+            modifier = Modifier.fillMaxWidth(),
+            colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.secondaryContainer),
+        ) {
+            Column(Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(3.dp)) {
+                Text("自动覆盖范围", style = MaterialTheme.typography.labelLarge, fontWeight = FontWeight.SemiBold)
+                Text("默认纳入已录入持仓和自选股；仅保存的交易计划不会自动加入。", style = MaterialTheme.typography.bodySmall)
+                val considered = (review?.market_snapshot?.get("symbols_considered") as? List<*>)?.size ?: 0
+                Text(
+                    if (review == null) "生成后会在这里显示本次纳入的持仓数量。" else "本次已纳入 $considered 个持仓标的",
+                    style = MaterialTheme.typography.labelMedium,
+                    color = MaterialTheme.colorScheme.primary,
+                )
+            }
+        }
         if (review == null) {
             Text("尚未生成盘后计划。即使数据未齐也可生成待补齐清单。", style = MaterialTheme.typography.bodySmall)
         } else {
-            Text("${review.review_date} · ${review.suggested_position_band}", style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.primary)
+            val blockedItems = (review.market_snapshot["blocked_items"] as? Number)?.toInt() ?: 0
+            val displayedBand = if (review.suggested_position_band == "Data incomplete: no portfolio band") "数据待补齐：暂不设置仓位区间" else review.suggested_position_band
+            Text("${review.review_date} · $displayedBand", style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.primary)
+            Text(
+                if (blockedItems == 0) "数据状态：本次标的已生成研究快照"
+                else "数据状态：$blockedItems 个标的资料不完整，已保留为“等待补齐数据”",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
             review.items.forEach { item ->
                 Column(verticalArrangement = Arrangement.spacedBy(3.dp)) {
                     Text(
                         "${item.name.ifBlank { item.symbol }} · ${item.symbol} · ${when (item.action) { "add" -> "关注加仓"; "trim" -> "关注减仓"; else -> "等待补齐数据" }}",
                         fontWeight = FontWeight.SemiBold,
                     )
-                    Text(if (item.action == "watch") item.rationale else "参考价 ${item.reference_price} · 建议数量 ${item.suggested_quantity ?: "待确认"} · 执行：${item.execution_status}", style = MaterialTheme.typography.bodySmall)
+                    Text(if (item.action == "watch") item.rationale else "参考价 ${item.reference_price} · 建议数量 ${item.suggested_quantity ?: "待确认"} · ${dailyReviewExecutionLabel(item.execution_status)}", style = MaterialTheme.typography.bodySmall)
                     if (item.execution_status == "pending" && item.action != "watch") {
                         TextButton(onClick = { onRecordExecution(review, item) }) { Text("录入实际执行") }
                     }
@@ -3289,6 +3383,13 @@ private fun DailyReviewCard(
         }
         TextButton(onClick = onGenerate, enabled = !generating) { Text(if (generating) "正在生成…" else "生成今日盘后计划") }
     }
+}
+
+private fun dailyReviewExecutionLabel(status: String): String = when (status) {
+    "executed" -> "已记录执行"
+    "partial" -> "已记录部分执行"
+    "skipped" -> "已跳过"
+    else -> "待录入实际执行"
 }
 
 @Composable

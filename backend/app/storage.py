@@ -725,18 +725,78 @@ class PortfolioStore:
             connection.execute("INSERT INTO decision_ai_runs (run_id,context_id,input_hash,status,error_code,payload,metadata,created_at) VALUES (?,?,?,?,?,?,?,?)", (str(item["run_id"]), str(item["context_id"]), str(item["input_hash"]), str(item["status"]), item.get("error_code"), json.dumps(item.get("payload", {}), ensure_ascii=False), json.dumps(item.get("metadata", {}), ensure_ascii=False), str(item["created_at"])))
 
     def save_decision_report(self, item: dict[str, object]) -> None:
+        if not self._is_valid_decision_report(item):
+            raise ValueError("refusing to persist an incomplete decision report")
         with self._connect() as connection:
             connection.execute("INSERT INTO decision_reports VALUES (?,?,?,?,?,?)", (str(item["decision_id"]), str(item["context_id"]), str(item["symbol"]), str(item["input_hash"]), json.dumps(item, ensure_ascii=False, default=str), str(item["generated_at"])))
 
     def decision_reports(self, symbol: str, limit: int = 50) -> list[dict[str, object]]:
         with self._connect() as connection:
+            self._purge_invalid_decision_reports(connection, symbol=symbol)
             rows = connection.execute("SELECT payload FROM decision_reports WHERE symbol=? ORDER BY created_at DESC LIMIT ?", (symbol.strip().upper(), max(1, limit))).fetchall()
         return [json.loads(str(row["payload"])) for row in rows]
 
     def decision_report(self, decision_id: str) -> dict[str, object] | None:
         with self._connect() as connection:
+            self._purge_invalid_decision_reports(connection, decision_id=decision_id)
             row = connection.execute("SELECT payload FROM decision_reports WHERE decision_id=?", (decision_id,)).fetchone()
         return json.loads(str(row["payload"])) if row else None
+
+    @staticmethod
+    def _is_valid_decision_report(item: object) -> bool:
+        if not isinstance(item, dict):
+            return False
+        root_collections = ("evidence", "action_candidates", "operation_items")
+        if not all(isinstance(item.get(field), list) for field in root_collections):
+            return False
+        assessment = item.get("ai_assessment")
+        if assessment is None:
+            return True
+        assessment_collections = (
+            "supporting_evidence_ids",
+            "opposing_evidence_ids",
+            "missing_evidence",
+            "reasoning_steps",
+            "rule_suggestions",
+        )
+        return isinstance(assessment, dict) and all(isinstance(assessment.get(field), list) for field in assessment_collections)
+
+    def _valid_decision_reports(self, rows: list[sqlite3.Row]) -> tuple[list[dict[str, object]], list[str]]:
+        reports: list[dict[str, object]] = []
+        invalid_ids: list[str] = []
+        for row in rows:
+            try:
+                report = json.loads(str(row["payload"]))
+            except (TypeError, ValueError, json.JSONDecodeError):
+                invalid_ids.append(str(row["decision_id"]))
+                continue
+            if self._is_valid_decision_report(report):
+                reports.append(report)
+            else:
+                invalid_ids.append(str(row["decision_id"]))
+        return reports, invalid_ids
+
+    def _purge_invalid_decision_reports(
+        self,
+        connection: sqlite3.Connection,
+        symbol: str | None = None,
+        decision_id: str | None = None,
+    ) -> None:
+        if symbol is not None:
+            rows = connection.execute(
+                "SELECT decision_id, payload FROM decision_reports WHERE symbol=?",
+                (symbol.strip().upper(),),
+            ).fetchall()
+        elif decision_id is not None:
+            rows = connection.execute(
+                "SELECT decision_id, payload FROM decision_reports WHERE decision_id=?",
+                (decision_id,),
+            ).fetchall()
+        else:
+            return
+        _, invalid_ids = self._valid_decision_reports(rows)
+        if invalid_ids:
+            connection.executemany("DELETE FROM decision_reports WHERE decision_id=?", ((report_id,) for report_id in invalid_ids))
 
     def enqueue_decision_job(self, item: dict[str, object]) -> dict[str, object]:
         now = beijing_now().isoformat()

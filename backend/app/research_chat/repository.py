@@ -14,7 +14,7 @@ class ResearchChatRepository:
   with self._connect() as c:c.execute("INSERT INTO research_chat_sessions VALUES (?,?,?,?,?,?)",(item.id,item.title,item.primary_symbol,item.status,item.created_at.isoformat(),item.updated_at.isoformat()))
   return item
  def sessions(self):
-  with self._connect() as c: rows=c.execute("SELECT * FROM research_chat_sessions ORDER BY updated_at DESC").fetchall()
+  with self._connect() as c: rows=c.execute("SELECT * FROM research_chat_sessions ORDER BY updated_at DESC, created_at DESC, id DESC").fetchall()
   return [ResearchChatSession.model_validate(dict(x)) for x in rows]
  def session(self,session_id):
   with self._connect() as c:r=c.execute("SELECT * FROM research_chat_sessions WHERE id=?",(session_id,)).fetchone()

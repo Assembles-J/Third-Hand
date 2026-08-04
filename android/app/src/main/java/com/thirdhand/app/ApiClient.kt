@@ -268,10 +268,15 @@ data class DecisionActionCandidateDto(
     val triggered_rule_ids: List<String> = emptyList(), val blocked_reasons: List<String> = emptyList(),
 )
 data class DecisionReasoningStepDto(val stage: String, val summary: String, val evidence_ids: List<String> = emptyList())
+data class RuleImprovementSuggestionDto(
+    val scope: String, val symbol: String? = null, val max_position_percent: Double? = null,
+    val loss_review_percent: Double? = null, val volatility_review_percent: Double? = null,
+    val rationale: String, val risk_note: String,
+)
 data class DecisionAiAssessmentDto(
     val thesis_status: String, val preferred_action: String, val supporting_evidence_ids: List<String> = emptyList(),
     val opposing_evidence_ids: List<String> = emptyList(), val missing_evidence: List<String> = emptyList(),
-    val reasoning_steps: List<DecisionReasoningStepDto> = emptyList(), val uncertainty: String, val summary: String,
+    val reasoning_steps: List<DecisionReasoningStepDto> = emptyList(), val rule_suggestions: List<RuleImprovementSuggestionDto> = emptyList(), val uncertainty: String, val summary: String,
 )
 data class PositionSizingResultDto(
     val status: String, val current_quantity: Double, val suggested_quantity: Double? = null, val target_quantity: Double? = null,
@@ -284,12 +289,12 @@ data class PositionSizingResultDto(
 data class OperationItemDto(
     val kind: String, val title: String, val trigger: String, val reference_price: Double? = null,
     val invalidation_price: Double? = null, val suggested_quantity: Double? = null, val target_quantity: Double? = null,
-    val status: String, val blockers: List<String> = emptyList(),
+    val status: String, val blockers: List<String>? = emptyList(),
 )
 data class DecisionReportDto(
     val decision_id: String, val context_id: String, val symbol: String, val generated_at: String, val status: String,
     val action: String, val summary: String, val evidence: List<DecisionEvidenceDto> = emptyList(),
-    val action_candidates: List<DecisionActionCandidateDto> = emptyList(), val operation_items: List<OperationItemDto> = emptyList(), val ai_assessment: DecisionAiAssessmentDto? = null,
+    val action_candidates: List<DecisionActionCandidateDto> = emptyList(), val operation_items: List<OperationItemDto>? = emptyList(), val ai_assessment: DecisionAiAssessmentDto? = null,
     val ai_status: String? = null, val ai_error_code: String? = null, val model: String? = null,
     val market_price: Double? = null, val market_change_percent: Double? = null, val market_as_of: String? = null,
     val sizing: PositionSizingResultDto? = null, val policy_version: String, val prompt_version: String? = null,
@@ -409,6 +414,8 @@ interface ThirdHandApi {
 
     @GET("v1/market/history/{symbol}")
     suspend fun marketHistory(@Path("symbol") symbol: String, @Query("limit") limit: Int = 120): List<DailyPriceDto>
+    @DELETE("v1/market/history/{symbol}")
+    suspend fun deleteMarketHistory(@Path("symbol") symbol: String)
     @GET("v1/market/intraday/{symbol}")
     suspend fun marketIntraday(@Path("symbol") symbol: String, @Query("limit") limit: Int = 500): List<IntradayPriceDto>
     @GET("v1/instruments/{symbol}/metadata")

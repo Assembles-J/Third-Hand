@@ -2,9 +2,13 @@
 from __future__ import annotations
 
 from datetime import date, timedelta, datetime
+import logging
 import os
 
 from app.decimal_utils import decimal_text
+
+
+logger = logging.getLogger(__name__)
 
 
 class PriceHistoryUnavailable(RuntimeError):
@@ -43,6 +47,7 @@ class PriceHistoryService:
             raise PriceHistoryUnavailable("未安装历史行情依赖。") from error
         start = (date.today() - timedelta(days=self.LOOKBACK_DAYS)).strftime("%Y%m%d")
         end = date.today().strftime("%Y%m%d")
+        akshare_error: Exception | None = None
         try:
             kind = self._kind(symbol)
             if kind == "hk":
@@ -83,12 +88,33 @@ class PriceHistoryService:
                     "turnover_rate": decimal_text(frame.iloc[index].get("换手率")),
                     "adjustment": "qfq", "source": "AKShare daily history",
                 })
-        except PriceHistoryUnavailable:
-            raise
+        except PriceHistoryUnavailable as error:
+            akshare_error = error
+            logger.warning(
+                "历史日线获取失败 provider=akshare symbol=%s reason=%s",
+                symbol,
+                error,
+            )
         except Exception as error:
+            akshare_error = error
+            logger.exception(
+                "历史日线获取失败 provider=akshare symbol=%s error_type=%s",
+                symbol,
+                type(error).__name__,
+            )
+        if akshare_error is not None:
             bars = self._tushare_bars(symbol, start)
             if not bars:
-                raise PriceHistoryUnavailable("历史行情源暂时不可用。") from error
+                raise PriceHistoryUnavailable(
+                    "历史日线不可用：AKShare 失败，Tushare 未返回可用数据；"
+                    "请查看两路 provider 日志。"
+                ) from akshare_error
+        else:
+            logger.info(
+                "历史日线获取成功 provider=akshare symbol=%s bar_count=%s",
+                symbol,
+                len(bars),
+            )
         if not bars:
             raise PriceHistoryUnavailable("行情源未返回可用的交易日期。")
         # A successful refresh is authoritative for one symbol. Replacing instead of
@@ -123,7 +149,17 @@ class PriceHistoryService:
     def _tushare_bars(self, symbol: str, start: str) -> list[dict[str, object]]:
         """Use end-of-day Tushare data when an AKShare public endpoint is unavailable."""
         token = os.getenv("TUSHARE_TOKEN", "").strip()
-        if not token or len(symbol) == 5:
+        if not token:
+            logger.warning(
+                "历史日线备用源跳过 provider=tushare symbol=%s reason=tushare_token_missing",
+                symbol,
+            )
+            return []
+        if len(symbol) == 5:
+            logger.warning(
+                "历史日线备用源跳过 provider=tushare symbol=%s reason=hk_not_supported",
+                symbol,
+            )
             return []
         try:
             import tushare as ts
@@ -132,13 +168,34 @@ class PriceHistoryService:
             is_etf = self._kind(symbol) == "etf"
             frame = (client.fund_daily if is_etf else client.daily)(ts_code=f"{symbol}.{exchange}", start_date=start)
             if frame is None or frame.empty:
+                logger.warning(
+                    "历史日线获取失败 provider=tushare symbol=%s reason=empty_response",
+                    symbol,
+                )
                 return []
-            return [{
+            bars = [{
                 "trading_date": str(row["trade_date"]), "open": decimal_text(row.get("open")),
                 "close": decimal_text(row.get("close")), "high": decimal_text(row.get("high")),
                 "low": decimal_text(row.get("low")), "volume": decimal_text(row.get("vol")),
                 "amount": decimal_text(row.get("amount")), "adjustment": "provider-default",
                 "source": "Tushare daily history",
             } for _, row in frame.iterrows() if decimal_text(row.get("close")) is not None]
-        except Exception:
+            if bars:
+                logger.info(
+                    "历史日线获取成功 provider=tushare symbol=%s bar_count=%s",
+                    symbol,
+                    len(bars),
+                )
+            else:
+                logger.warning(
+                    "历史日线获取失败 provider=tushare symbol=%s reason=no_usable_close",
+                    symbol,
+                )
+            return bars
+        except Exception as error:
+            logger.exception(
+                "历史日线获取失败 provider=tushare symbol=%s error_type=%s",
+                symbol,
+                type(error).__name__,
+            )
             return []
