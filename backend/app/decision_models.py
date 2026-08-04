@@ -228,6 +228,23 @@ class PositionSizingResult(DecisionModel):
     sizing_version: str
 
 
+class OperationItem(DecisionModel):
+    """A compact, actionable workbench item derived from policy and the trade plan.
+
+    It intentionally keeps the AI out of price/quantity invention: all numbers are
+    sourced from the current quote, the enabled plan, or the sizing engine.
+    """
+    kind: Literal["OPEN", "ADD", "HOLD", "WATCH", "REDUCE", "EXIT", "BLOCKED", "COMPLETE"]
+    title: str
+    trigger: str
+    reference_price: float | None = None
+    invalidation_price: float | None = None
+    suggested_quantity: float | None = None
+    target_quantity: float | None = None
+    status: Literal["ready", "needs_input"]
+    blockers: tuple[str, ...] = ()
+
+
 class DecisionReport(DecisionModel):
     decision_id: str
     context_id: str
@@ -238,6 +255,7 @@ class DecisionReport(DecisionModel):
     summary: str
     evidence: tuple[EvidenceItem, ...]
     action_candidates: tuple[ActionCandidate, ...]
+    operation_items: tuple[OperationItem, ...] = ()
     ai_assessment: AiResearchAssessment | None = None
     ai_status: Literal["succeeded", "failed", "skipped", "disabled"] = "disabled"
     ai_error_code: str | None = None

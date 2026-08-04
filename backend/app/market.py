@@ -339,7 +339,7 @@ class MarketDataService:
         return quotes
 
     def lookup_symbols(self, names: list[str]) -> list[dict[str, object]]:
-        """Find A-share and Hong Kong listings by a user-provided security name."""
+        """Find A-share and Hong Kong listings by a security name or code."""
         requested = list(dict.fromkeys(name.strip() for name in names if name.strip()))
         if not requested:
             return []
@@ -596,6 +596,7 @@ class MarketDataService:
                 "previous_close": record.get("昨收"),
                 "volume": record.get("成交量"),
                 "amount": record.get("成交额"),
+                "turnover_rate": record.get("换手率"),
                 "currency": currency,
                 "source": source,
 
@@ -636,9 +637,12 @@ class MarketDataService:
             normalized_query = MarketDataService._normalize_name(query)
             if not normalized_query:
                 continue
-            exact = data[data[name_column].astype(str).map(MarketDataService._normalize_name) == normalized_query]
+            # Support reverse lookup as well: a manually entered code fills the
+            # name, while a manually entered name fills the code.
+            exact_by_code = data[data[code_column].astype(str) == query.strip().zfill(width)]
+            exact = exact_by_code if not exact_by_code.empty else data[data[name_column].astype(str).map(MarketDataService._normalize_name) == normalized_query]
             candidates = exact
-            match_type = "exact"
+            match_type = "symbol" if not exact_by_code.empty else "exact"
             if candidates.empty:
                 candidates = data[data[name_column].astype(str).map(
                     lambda value: normalized_query in MarketDataService._normalize_name(value)

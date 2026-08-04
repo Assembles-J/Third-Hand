@@ -27,7 +27,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 
 @Composable
-fun UnifiedCenterScreen(themeMode: ThemeMode, onThemeModeChange: (ThemeMode) -> Unit) {
+fun UnifiedCenterScreen(onOpenSaleHistory: () -> Unit) {
     var selected by remember { mutableIntStateOf(0) }
     Column(Modifier.fillMaxWidth()) {
         Row(
@@ -47,7 +47,17 @@ fun UnifiedCenterScreen(themeMode: ThemeMode, onThemeModeChange: (ThemeMode) -> 
                 modifier = Modifier.weight(1f),
             )
         }
-        if (selected == 0) ProfileScreen(themeMode, onThemeModeChange) else CompactAdminDashboardScreen()
+        if (selected == 0) {
+            Column {
+                Card(Modifier.padding(horizontal = 20.dp, vertical = 4.dp).fillMaxWidth()) {
+                    Row(Modifier.padding(horizontal = 14.dp, vertical = 8.dp).fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+                        Column { Text("交易记录", fontWeight = FontWeight.SemiBold); Text("查询每笔出售与已实现盈亏", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant) }
+                        TextButton(onClick = onOpenSaleHistory) { Text("出售历史") }
+                    }
+                }
+                ProfileScreen()
+            }
+        } else CompactAdminDashboardScreen()
     }
 }
 

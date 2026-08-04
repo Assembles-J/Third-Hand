@@ -24,7 +24,22 @@ def test_daily_price_schema_migrates_and_persists_full_ohlcv(tmp_path):
     assert store.daily_prices("600519") == [{
         "trading_date": "2026-07-30", "open": "1500.10", "close": 1505.2, "high": 1510.0,
         "low": 1498.0, "volume": "123456", "amount": "1000000.50", "adjustment": "qfq", "source": "test",
+        "amplitude_percent": None, "change_percent": None, "change_amount": None, "turnover_rate": None,
     }]
+
+
+def test_daily_price_persists_market_activity_fields(tmp_path):
+    store = PortfolioStore(tmp_path / "activity.db")
+    store.save_daily_prices("600519", [{
+        "trading_date": "2026-07-30", "close": 10, "volume": 123, "amount": 456,
+        "amplitude_percent": 2.1, "change_percent": 1.2, "change_amount": 0.12,
+        "turnover_rate": 3.4, "source": "test",
+    }])
+    bar = store.daily_prices("600519")[0]
+    assert bar["amplitude_percent"] == "2.1"
+    assert bar["change_percent"] == "1.2"
+    assert bar["change_amount"] == "0.12"
+    assert bar["turnover_rate"] == "3.4"
 
 
 def test_instrument_metadata_keeps_unknown_lot_size_null(tmp_path):

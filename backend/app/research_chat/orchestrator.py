@@ -18,7 +18,7 @@ from .models import ResearchSseEvent, ResearchSseEventType, ResearchTurnStatus
 from .prompt_builder import build_messages
 from .sse import encode_event
 from .stream_client import DeepSeekStreamClient
-from .tool_executor import ToolExecutor
+from .mcp_service import ThirdHandMcpService
 from .tool_registry import definitions
 from .models import ResearchModelOutput
 from .guard import validate_output
@@ -52,7 +52,7 @@ class ResearchChatOrchestrator:
         self.decision_orchestrator = decision_orchestrator
         self.stream_client = DeepSeekStreamClient()
         self.json_client = DeepSeekClient()
-        self.tools = ToolExecutor(store)
+        self.tools = ThirdHandMcpService(store)
 
     async def stream(self, session, turn, user_message: str, symbol: str | None):
         event_id = 0
@@ -137,7 +137,7 @@ class ResearchChatOrchestrator:
                     yield emit(ResearchSseEventType.tool_started, {"tool_name": name})
                     try:
                         arguments = json.loads(function["arguments"] or "{}")
-                        result = self.tools.execute(name, arguments, context)
+                        result = self.tools.call_tool(name, arguments, context)
                         self.repo.save_tool_call(turn.id, name, arguments, "completed", result)
                         logger.info("Research tool completed turn_id=%s tool=%s", turn.id, name)
                     except Exception:

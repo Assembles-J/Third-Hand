@@ -231,6 +231,14 @@ class DailyPrice(BaseModel):
     close: float
     high: float | None = None
     low: float | None = None
+    volume: float | None = None
+    amount: float | None = None
+    turnover_rate: float | None = None
+    amplitude_percent: float | None = None
+    change_percent: float | None = None
+    change_amount: float | None = None
+    adjustment: str = "qfq"
+    source: str = ""
 
 
 class RecommendationRequest(BaseModel):
@@ -555,7 +563,7 @@ decision_ai_service = DecisionAiService(store)
 decision_guard = DecisionGuard()
 decision_orchestrator = DecisionOrchestrator(evidence_engine, action_policy_engine, position_sizing_engine, decision_ai_service, decision_guard)
 from app.research_chat.routes import build_router
-app.include_router(build_router(store, decision_context_builder, decision_orchestrator))
+app.include_router(build_router(store, decision_context_builder, decision_orchestrator, lambda symbol: price_history_service.refresh(store, symbol)))
 
 GLOSSARY = {
     "历史下行概率": GlossaryCard(term="历史下行概率", plain_explanation="在历史日线样本中，未来 5 个交易日累计下跌至少 5% 的出现频率。它是历史统计，不是未来发生概率的保证。", watch_for="先看统计窗口、下跌阈值和样本数量；样本不足时不应据此操作。"),
@@ -1578,12 +1586,18 @@ def market_intraday(symbol: str, limit: int = Query(default=500, ge=20, le=1500)
 
 
 @app.post("/v1/daily-reviews/generate", response_model=DailyReview, status_code=status.HTTP_201_CREATED)
-def generate_daily_review(payload: DailyReviewGenerateRequest) -> DailyReview:
+def generate_daily_review(payload: DailyReviewGenerateRequest = DailyReviewGenerateRequest()) -> DailyReview:
     """Create an end-of-day research plan snapshot; it never submits an order."""
     holdings = {str(item["symbol"]): item for item in store.list()}
     symbols = list(dict.fromkeys(item.strip().upper() for item in (payload.symbols or list(holdings))))
     if not symbols:
-        raise HTTPException(status_code=422, detail="请先录入至少一个持仓，或指定要复盘的标的。")
+        review = {
+            "id": str(uuid4()), "review_date": beijing_now().date().isoformat(), "generated_at": beijing_now().isoformat(),
+            "suggested_position_band": "等待录入持仓或选择标的",
+            "market_snapshot": {"symbols_considered": [], "ready_items": 0, "blocked_items": 0, "available_cash": float(store.available_cash()["available_cash"]), "data_basis": []},
+            "items": [], "status": "pending", "highlights": ["尚未选择复盘标的；录入持仓后可生成包含行情与计划核验的复盘。"], "mistakes": [],
+        }
+        return DailyReview.model_validate(store.save_daily_review(review))
     quotes = {str(item["symbol"]): item for item in store.cached_quotes(symbols)}
     cash = float(store.available_cash()["available_cash"])
     items: list[dict[str, object]] = []
@@ -1596,6 +1610,17 @@ def generate_daily_review(payload: DailyReviewGenerateRequest) -> DailyReview:
         candidate = build_candidate(symbol, holdings.get(symbol), quotes.get(symbol), bars, store.trade_plan(symbol), cash)
         if candidate.get("status") != "ready":
             blocked += 1
+            reference_price = float((quotes.get(symbol) or {}).get("price") or (bars[-1]["close"] if bars else 0))
+            items.append({
+                "symbol": symbol,
+                "name": str(holdings.get(symbol, {}).get("name", "")),
+                "action": "watch",
+                "suggested_quantity": None,
+                "price_zone": None,
+                "invalidation_price": None,
+                "rationale": "暂不生成操作建议：缺少实时行情、至少 60 根日线或已启用的交易计划。请补齐后重新生成。",
+                "reference_price": reference_price,
+            })
             continue
         action = str(candidate.get("action"))
         quote = quotes.get(symbol) or {}
@@ -1610,8 +1635,6 @@ def generate_daily_review(payload: DailyReviewGenerateRequest) -> DailyReview:
             "rationale": "基于日线区间、已启用交易计划、可用资金与仓位约束生成；需由用户自行确认。",
             "reference_price": reference_price,
         })
-    if not items:
-        raise HTTPException(status_code=422, detail="数据不足：需具备行情、至少 60 根日线，以及已启用的交易计划后才能生成盘后计划。")
     review_date = max(review_dates) if review_dates else beijing_now().date().isoformat()
     max_position = next((float(rule["max_position_percent"]) for rule in store.personal_rules() if rule.get("scope") == "global" and rule.get("enabled")), 20.0)
     band = "防守 0–30%" if blocked else f"单标的上限 {max_position:.0f}%"

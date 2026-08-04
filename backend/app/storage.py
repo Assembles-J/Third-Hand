@@ -164,6 +164,10 @@ class PortfolioStore:
                         low REAL,
                         volume TEXT,
                         amount TEXT,
+                        amplitude_percent TEXT,
+                        change_percent TEXT,
+                        change_amount TEXT,
+                        turnover_rate TEXT,
                         adjustment TEXT NOT NULL DEFAULT 'qfq',
                         source TEXT NOT NULL,
                         updated_at TEXT NOT NULL,
@@ -174,6 +178,10 @@ class PortfolioStore:
                 self._ensure_column(connection, "daily_price_cache", "open", "TEXT")
                 self._ensure_column(connection, "daily_price_cache", "volume", "TEXT")
                 self._ensure_column(connection, "daily_price_cache", "amount", "TEXT")
+                self._ensure_column(connection, "daily_price_cache", "amplitude_percent", "TEXT")
+                self._ensure_column(connection, "daily_price_cache", "change_percent", "TEXT")
+                self._ensure_column(connection, "daily_price_cache", "change_amount", "TEXT")
+                self._ensure_column(connection, "daily_price_cache", "turnover_rate", "TEXT")
                 self._ensure_column(connection, "daily_price_cache", "adjustment", "TEXT NOT NULL DEFAULT 'qfq'")
                 connection.execute(
                     "CREATE INDEX IF NOT EXISTS idx_daily_price_cache_symbol_date "
@@ -759,18 +767,19 @@ class PortfolioStore:
         now = beijing_now().isoformat()
         rows = [
             (symbol, str(bar["trading_date"]), decimal_text(bar.get("open")), decimal_text(bar["close"]), decimal_text(bar.get("high")), decimal_text(bar.get("low")),
-             decimal_text(bar.get("volume")), decimal_text(bar.get("amount")), str(bar.get("adjustment", "qfq")),
+             decimal_text(bar.get("volume")), decimal_text(bar.get("amount")), decimal_text(bar.get("amplitude_percent")), decimal_text(bar.get("change_percent")), decimal_text(bar.get("change_amount")), decimal_text(bar.get("turnover_rate")), str(bar.get("adjustment", "qfq")),
              str(bar.get("source", "public-market-data")), now)
             for bar in bars
         ]
         with self._connect() as connection:
             connection.executemany(
                 """INSERT INTO daily_price_cache
-                (symbol, trading_date, open, close, high, low, volume, amount, adjustment, source, updated_at)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                (symbol, trading_date, open, close, high, low, volume, amount, amplitude_percent, change_percent, change_amount, turnover_rate, adjustment, source, updated_at)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 ON CONFLICT(symbol, trading_date) DO UPDATE SET
                     open=excluded.open, close=excluded.close, high=excluded.high, low=excluded.low,
-                    volume=excluded.volume, amount=excluded.amount, adjustment=excluded.adjustment,
+                    volume=excluded.volume, amount=excluded.amount, amplitude_percent=excluded.amplitude_percent,
+                    change_percent=excluded.change_percent, change_amount=excluded.change_amount, turnover_rate=excluded.turnover_rate, adjustment=excluded.adjustment,
                     source=excluded.source, updated_at=excluded.updated_at""",
                 rows,
             )
@@ -783,7 +792,7 @@ class PortfolioStore:
         now = beijing_now().isoformat()
         rows = [
             (normalized_symbol, str(bar["trading_date"]), decimal_text(bar.get("open")), decimal_text(bar["close"]), decimal_text(bar.get("high")), decimal_text(bar.get("low")),
-             decimal_text(bar.get("volume")), decimal_text(bar.get("amount")), str(bar.get("adjustment", "qfq")),
+             decimal_text(bar.get("volume")), decimal_text(bar.get("amount")), decimal_text(bar.get("amplitude_percent")), decimal_text(bar.get("change_percent")), decimal_text(bar.get("change_amount")), decimal_text(bar.get("turnover_rate")), str(bar.get("adjustment", "qfq")),
              str(bar.get("source", "public-market-data")), now)
             for bar in bars
         ]
@@ -791,8 +800,8 @@ class PortfolioStore:
             connection.execute("DELETE FROM daily_price_cache WHERE symbol=?", (normalized_symbol,))
             connection.executemany(
                 """INSERT INTO daily_price_cache
-                (symbol, trading_date, open, close, high, low, volume, amount, adjustment, source, updated_at)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                (symbol, trading_date, open, close, high, low, volume, amount, amplitude_percent, change_percent, change_amount, turnover_rate, adjustment, source, updated_at)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
                 rows,
             )
 
@@ -805,7 +814,7 @@ class PortfolioStore:
     def daily_prices(self, symbol: str, limit: int = 800) -> list[dict[str, object]]:
         with self._connect() as connection:
             rows = connection.execute(
-                "SELECT trading_date, open, close, high, low, volume, amount, adjustment, source FROM daily_price_cache "
+                "SELECT trading_date, open, close, high, low, volume, amount, amplitude_percent, change_percent, change_amount, turnover_rate, adjustment, source FROM daily_price_cache "
                 "WHERE symbol=? AND length(trading_date)=10 AND substr(trading_date, 5, 1)='-' "
                 "AND substr(trading_date, 8, 1)='-' ORDER BY trading_date DESC LIMIT ?", (symbol, max(1, limit)),
             ).fetchall()
@@ -967,6 +976,16 @@ class PortfolioStore:
             pnl = proceeds - cost_basis
             item = {"id": sale_id, "holding_id": holding_id, "symbol": str(holding["symbol"]), "name": str(holding["name"]), "quantity": quantity, "sale_price": sale_price, "average_cost": cost, "proceeds": proceeds, "cost_basis": cost_basis, "realized_pnl": pnl, "realized_pnl_percent": pnl / cost_basis * 100 if cost_basis else 0.0, "remaining_quantity": remaining, "reason": reason, "analysis_snapshot": analysis_snapshot, "sold_at": beijing_now().isoformat()}
             connection.execute("""INSERT INTO sale_records VALUES (:id,:holding_id,:symbol,:name,:quantity,:sale_price,:average_cost,:proceeds,:cost_basis,:realized_pnl,:realized_pnl_percent,:remaining_quantity,:reason,:analysis_snapshot,:sold_at)""", {**item, "analysis_snapshot": json.dumps(analysis_snapshot, ensure_ascii=False, default=str)})
+            # A sale is one atomic account event: its proceeds must become
+            # available cash in the very same transaction as the sale record.
+            connection.execute(
+                """INSERT INTO account_cash (account_id, available_cash, updated_at)
+                VALUES ('default', ?, ?)
+                ON CONFLICT(account_id) DO UPDATE SET
+                    available_cash=account_cash.available_cash + excluded.available_cash,
+                    updated_at=excluded.updated_at""",
+                (proceeds, item["sold_at"]),
+            )
             if remaining <= 1e-9:
                 connection.execute("DELETE FROM holdings WHERE id=?", (holding_id,))
             else:

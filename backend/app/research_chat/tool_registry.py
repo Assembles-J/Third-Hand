@@ -8,6 +8,7 @@ ALLOWED_TOOLS = {
     "get_account_summary",
     "get_market_quote",
     "get_daily_price_summary",
+    "request_daily_history_refresh",
     "get_technical_snapshot",
     "get_risk_snapshot",
     "get_event_evidence",
@@ -21,6 +22,7 @@ ALLOWED_TOOLS = {
     "get_previous_decisions",
     "get_recommendation_evaluations",
     "request_user_input",
+    "propose_data_change",
 }
 
 _DESCRIPTIONS = {
@@ -30,6 +32,7 @@ _DESCRIPTIONS = {
     "get_account_summary": "Read available account cash used by deterministic position sizing.",
     "get_market_quote": "Read the latest cached quote for a symbol.",
     "get_daily_price_summary": "Read up to 60 recent daily price records for a symbol.",
+    "request_daily_history_refresh": "Offer the user a confirmation action to fetch daily history when fewer than 60 records are available. Never fetch automatically.",
     "get_technical_snapshot": "Read the normalized technical-analysis snapshot already present in the context.",
     "get_risk_snapshot": "Read the cached risk-analysis snapshot for a symbol.",
     "get_event_evidence": "Read normalized news and announcement evidence already present in the context.",
@@ -43,6 +46,7 @@ _DESCRIPTIONS = {
     "get_previous_decisions": "Read previous saved decision reports for a symbol.",
     "get_recommendation_evaluations": "Read historical recommendation evaluations for a symbol.",
     "request_user_input": "Ask one to three concise questions only when missing user information materially changes the conclusion.",
+    "propose_data_change": "Propose a create, update, or delete of a holding, trade plan, or personal rule. This never writes data: it creates a user-confirmation step.",
 }
 
 _NO_ARGUMENT_TOOLS = {"get_account_summary", "get_personal_rule"}
@@ -63,6 +67,8 @@ def _parameters(name: str) -> dict[str, object]:
             "required": ["questions"],
             "additionalProperties": False,
         }
+    if name == "propose_data_change":
+        return {"type":"object","properties":{"entity":{"type":"string","enum":["holding","trade_plan","personal_rule"]},"operation":{"type":"string","enum":["create","update","delete"]},"summary":{"type":"string","maxLength":500}},"required":["entity","operation","summary"],"additionalProperties":False}
     if name in _NO_ARGUMENT_TOOLS:
         return {"type": "object", "properties": {}, "additionalProperties": False}
     return {

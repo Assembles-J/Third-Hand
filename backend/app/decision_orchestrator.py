@@ -6,7 +6,7 @@ from uuid import uuid4
 
 from app import decision_config as config
 from app.decision_ai import DecisionAiOutcome
-from app.decision_models import DecisionReport
+from app.decision_models import DecisionReport, OperationItem
 from app.time_utils import beijing_now
 
 logger = logging.getLogger(__name__)
@@ -40,7 +40,34 @@ class DecisionOrchestrator:
         action = candidates[0].action
         sizing = self.sizing_engine.size(context, action) if config.DECISION_SIZING_ENABLED else None
         status = "BLOCKED" if context.data_quality.status == "blocked" else "DEGRADED" if context.data_quality.status == "degraded" else "READY"
-        return DecisionReport(decision_id=str(uuid4()), context_id=context.context_id, symbol=context.symbol, generated_at=beijing_now(), status=status, action=action, summary=self._summary(action, candidates[0].blocked_reasons), evidence=evidence, action_candidates=candidates, ai_assessment=assessment, ai_status=ai_outcome.status, ai_error_code=ai_outcome.error_code, market_price=context.quote.price if context.quote else None, market_change_percent=context.quote.change_percent if context.quote else None, market_as_of=context.quote.as_of if context.quote else None, sizing=sizing, policy_version=self.policy_engine.version, prompt_version=config.DECISION_RESEARCH_PROMPT_VERSION if assessment else None, model=ai_outcome.model, input_hash=context.input_hash)
+        return DecisionReport(decision_id=str(uuid4()), context_id=context.context_id, symbol=context.symbol, generated_at=beijing_now(), status=status, action=action, summary=self._summary(action, candidates[0].blocked_reasons), evidence=evidence, action_candidates=candidates, operation_items=self._operation_items(context, action, candidates[0].blocked_reasons, sizing), ai_assessment=assessment, ai_status=ai_outcome.status, ai_error_code=ai_outcome.error_code, market_price=context.quote.price if context.quote else None, market_change_percent=context.quote.change_percent if context.quote else None, market_as_of=context.quote.as_of if context.quote else None, sizing=sizing, policy_version=self.policy_engine.version, prompt_version=config.DECISION_RESEARCH_PROMPT_VERSION if assessment else None, model=ai_outcome.model, input_hash=context.input_hash)
+
+    @staticmethod
+    def _operation_items(context, action, candidate_blockers, sizing) -> tuple[OperationItem, ...]:
+        plan = context.trade_plan
+        quote_price = context.quote.price if context.quote else None
+        sizing_blockers = tuple(sizing.blocked_reasons) if sizing else ()
+        blockers = tuple(dict.fromkeys((*candidate_blockers, *sizing_blockers)))
+        if blockers:
+            return (OperationItem(kind="COMPLETE", title="先补全执行条件", trigger="完成下列必填项后重新生成工作台", status="needs_input", blockers=blockers),)
+        condition_by_action = {
+            "OPEN": getattr(plan, "entry_condition", ""),
+            "ADD": getattr(plan, "add_condition", ""),
+            "REDUCE": getattr(plan, "reduce_condition", ""),
+            "EXIT": getattr(plan, "exit_condition", ""),
+        }
+        title_by_action = {"OPEN": "建立仓位", "ADD": "满足条件后加仓", "REDUCE": "满足条件后减仓", "EXIT": "满足条件后退出", "HOLD": "继续持有", "WATCH": "继续观察"}
+        trigger = condition_by_action.get(action) or "当前无需执行交易；等待下一次规则或行情触发。"
+        return (OperationItem(
+            kind=action,
+            title=title_by_action.get(action, "暂不操作"),
+            trigger=trigger,
+            reference_price=quote_price,
+            invalidation_price=getattr(plan, "invalidation_price", None),
+            suggested_quantity=getattr(sizing, "suggested_quantity", None),
+            target_quantity=getattr(sizing, "target_quantity", None),
+            status="ready",
+        ),)
 
     @staticmethod
     def _summary(action, blocked_reasons) -> str:

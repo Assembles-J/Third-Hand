@@ -24,6 +24,7 @@ import androidx.compose.material3.FilterChip
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.Switch
@@ -63,6 +64,11 @@ fun CompactAdminDashboardScreen() {
     var config by remember { mutableStateOf<SystemConfigDto?>(null) }
     var error by remember { mutableStateOf<String?>(null) }
     var savingConfig by remember { mutableStateOf(false) }
+    var baseUrl by remember { mutableStateOf(EndpointStore.baseUrl(context)) }
+    var connectionStatus by remember { mutableStateOf<String?>(null) }
+    var updateStatus by remember { mutableStateOf<String?>(null) }
+    var checkingUpdate by remember { mutableStateOf(false) }
+    var availableUpdate by remember { mutableStateOf<AppUpdate?>(null) }
     val scope = rememberCoroutineScope()
     LaunchedEffect(refreshKey) {
         error = null
@@ -87,6 +93,53 @@ fun CompactAdminDashboardScreen() {
         MarketRefreshCard(overview)
         PendingReviewCard(overview)
         ApplicationDataGrid(overview)
+        CompactConsoleCard {
+            Text("服务与 APK 下载地址", color = CompactText, fontWeight = FontWeight.Bold)
+            Text("应用更新和 APK 下载均通过此服务地址的 /v1/app-update 获取。", color = CompactQuiet, style = MaterialTheme.typography.labelSmall)
+            OutlinedTextField(
+                value = baseUrl,
+                onValueChange = { baseUrl = it },
+                label = { Text("服务地址，例如 http://192.168.1.10:8000/") },
+                modifier = Modifier.fillMaxWidth().padding(top = 8.dp),
+                singleLine = true,
+            )
+            TextButton(onClick = {
+                EndpointStore.saveBaseUrl(context, baseUrl)
+                scope.launch {
+                    connectionStatus = runCatching { ApiClient.service(context).health().status }
+                        .fold({ if (it == "ok") "连接成功" else "服务返回：$it" }, { "连接失败：${it.message ?: "请检查地址和网络"}" })
+                }
+            }) { Text("保存并测试连接", color = CompactMint) }
+            connectionStatus?.let { Text(it, color = if (it == "连接成功") CompactMint else CompactCoral, style = MaterialTheme.typography.labelSmall) }
+        }
+        CompactConsoleCard {
+            Text("应用更新", color = CompactText, fontWeight = FontWeight.Bold)
+            Text("当前版本 v${BuildConfig.VERSION_NAME}。更新包由系统服务下发并校验签名。", color = CompactQuiet, style = MaterialTheme.typography.labelSmall)
+            TextButton(enabled = !checkingUpdate, onClick = {
+                scope.launch {
+                    checkingUpdate = true
+                    updateStatus = runCatching { AppUpdateManager.check(context) }.fold(
+                        onSuccess = { update ->
+                            availableUpdate = update
+                            if (update == null) "已是最新版本" else "发现 ${update.versionName}，正在开始下载"
+                        },
+                        onFailure = { "检查更新失败：${it.message ?: "请检查服务地址和网络"}" },
+                    )
+                    availableUpdate?.let { update ->
+                        updateStatus = when (AppUpdateManager.downloadAndInstall(context, update)) {
+                            UpdateLaunchResult.DOWNLOAD_STARTED -> "正在后台下载 ${update.versionName}，完成后可再次点此安装"
+                            UpdateLaunchResult.INSTALLER_OPENED -> "已打开系统安装器"
+                            UpdateLaunchResult.NEED_INSTALL_PERMISSION -> "请允许安装未知应用后重试"
+                            UpdateLaunchResult.NEED_STORAGE_PERMISSION -> "请允许保存安装包后重试"
+                            UpdateLaunchResult.SIGNATURE_MISMATCH -> AppUpdateManager.completedUpdateMessage(context)
+                            UpdateLaunchResult.DOWNLOAD_UNAVAILABLE -> "APK 下载地址不可用，请检查发布配置"
+                        }
+                    }
+                    checkingUpdate = false
+                }
+            }) { Text(if (checkingUpdate) "正在检查…" else if (availableUpdate != null) "下载或安装更新" else "检查更新", color = CompactMint) }
+            updateStatus?.let { Text(it, color = if (it.contains("失败") || it.contains("不可用")) CompactCoral else CompactTeal, style = MaterialTheme.typography.labelSmall) }
+        }
         FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
             CompactConsoleCard(Modifier.weight(1f).widthIn(min = 150.dp)) {
                 Text("资源容量", color = CompactText, fontWeight = FontWeight.Bold)

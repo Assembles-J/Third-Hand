@@ -13,7 +13,9 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyRow
+import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.interaction.collectIsDraggedAsState
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.Add
@@ -46,6 +48,7 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -79,11 +82,22 @@ fun ResearchChatScreen(
     onConversationChange: (List<ResearchChatLine>) -> Unit,
     question: String,
     onQuestionChange: (String) -> Unit,
+    onOpenTradePlan: () -> Unit,
     onClose: () -> Unit,
 ) {
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
     val state by controller.state.collectAsState()
+    val chatListState = rememberLazyListState()
+    val isDraggingChat by chatListState.interactionSource.collectIsDraggedAsState()
+    val isAtLatest by remember {
+        derivedStateOf {
+            val info = chatListState.layoutInfo
+            info.totalItemsCount == 0 || (info.visibleItemsInfo.lastOrNull()?.index ?: -1) >= info.totalItemsCount - 1
+        }
+    }
+    var followLatest by remember { mutableStateOf(true) }
+    var wasDraggingChat by remember { mutableStateOf(false) }
     val drawerState = rememberDrawerState(DrawerValue.Closed)
     var sessions by remember { mutableStateOf<List<ResearchSessionSummary>>(emptyList()) }
     var researchTargets by remember { mutableStateOf<List<ResearchTargetDto>>(emptyList()) }
@@ -93,6 +107,7 @@ fun ResearchChatScreen(
     var attachedSources by remember { mutableStateOf<List<ResearchAttachedSource>>(emptyList()) }
     var loadError by remember { mutableStateOf<String?>(null) }
     var recordedAnswer by remember { mutableStateOf<String?>(null) }
+    var dailyHistoryRefresh by remember { mutableStateOf<DailyHistoryRefreshStatus?>(null) }
 
     fun refreshSessions() = controller.loadSessions(EndpointStore.baseUrl(context), { sessions = it }, { loadError = it })
     fun restoreSession(item: ResearchSessionSummary) {
@@ -103,6 +118,7 @@ fun ResearchChatScreen(
             scope.launch { drawerState.close() }
         }, { loadError = it })
         controller.loadSources(EndpointStore.baseUrl(context), item.id, { attachedSources = it }, { loadError = it })
+        controller.loadDailyHistoryRefresh(EndpointStore.baseUrl(context), item.id, { dailyHistoryRefresh = it }, { loadError = it })
     }
     fun send() {
         val value = question.trim()
@@ -131,6 +147,17 @@ fun ResearchChatScreen(
             else -> Unit
         }
     }
+    LaunchedEffect(isDraggingChat) {
+        // A deliberate upward drag opts out of auto-follow. It resumes only when
+        // the reader manually returns to the newest message.
+        if (wasDraggingChat && !isDraggingChat) followLatest = isAtLatest
+        wasDraggingChat = isDraggingChat
+    }
+    LaunchedEffect(conversation.size, (state as? ResearchChatUiState.Streaming)?.answer?.length, state is ResearchChatUiState.Completed) {
+        if (followLatest && chatListState.layoutInfo.totalItemsCount > 0) {
+            chatListState.scrollToItem(chatListState.layoutInfo.totalItemsCount - 1)
+        }
+    }
     BackHandler(onBack = onClose)
 
     ModalNavigationDrawer(
@@ -144,12 +171,15 @@ fun ResearchChatScreen(
                     }, modifier = Modifier.fillMaxWidth()) { Text("+ 新建研究") }
                     HorizontalDivider()
                     if (sessions.isEmpty()) Text("还没有已保存的研究会话。", color = MaterialTheme.colorScheme.onSurfaceVariant)
-                    sessions.forEach { item ->
+                    sessions.groupBy { it.symbol ?: "综合研究" }.forEach { (symbol, groupedSessions) ->
+                        Text("标的 · $symbol", style = MaterialTheme.typography.labelMedium, fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.primary)
+                        groupedSessions.forEach { item ->
                         TextButton(onClick = { restoreSession(item) }, modifier = Modifier.fillMaxWidth()) {
                             Column(Modifier.fillMaxWidth()) {
                                 Text(item.title, maxLines = 2, overflow = TextOverflow.Ellipsis, fontWeight = if (item.id == controller.currentSessionId) FontWeight.Bold else FontWeight.Normal)
                                 Text("${item.symbol ?: "综合研究"} · ${item.updatedAt.replace("T", " ").take(16)}", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
                             }
+                        }
                         }
                     }
                 }
@@ -167,13 +197,29 @@ fun ResearchChatScreen(
             }
             HorizontalDivider()
             loadError?.let { Text(it, Modifier.padding(16.dp), color = MaterialTheme.colorScheme.error) }
-            LazyColumn(Modifier.weight(1f), contentPadding = PaddingValues(start = 16.dp, end = 16.dp, top = 12.dp, bottom = 112.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+            LazyColumn(Modifier.weight(1f), state = chatListState, contentPadding = PaddingValues(start = 16.dp, end = 16.dp, top = 12.dp, bottom = 112.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
                 if (conversation.isEmpty()) item { EmptyResearchHint(onChooseTarget = { targetPicker = true }, onPreset = onQuestionChange) }
                 items(conversation) { ChatBubble(it) }
                 if (state is ResearchChatUiState.Streaming) item { StreamingCard(state as ResearchChatUiState.Streaming) }
                 (state as? ResearchChatUiState.Completed)?.takeIf { it.canContinue }?.let {
                     item { Button(onClick = { controller.continueLast(EndpointStore.baseUrl(context), selectedSymbol) }, modifier = Modifier.fillMaxWidth()) { Text("继续生成") } }
                 }
+                (state as? ResearchChatUiState.Completed)?.suggestedActions?.takeIf { it.isNotEmpty() }?.let { actions ->
+                    item { SuggestedActionCard(actions, onQuestionChange, onOpenTradePlan) {
+                        controller.requestDailyHistoryRefresh(EndpointStore.baseUrl(context), { dailyHistoryRefresh = it }, { loadError = it })
+                    } }
+                }
+                dailyHistoryRefresh?.let { refresh -> item {
+                    DailyHistoryRefreshCard(refresh, onRequest = {
+                        val onReady = { item: DailyHistoryRefreshStatus -> dailyHistoryRefresh = item }
+                        if (refresh.status == "running" || refresh.status == "queued") controller.currentSessionId?.let { controller.loadDailyHistoryRefresh(EndpointStore.baseUrl(context), it, onReady, { loadError = it }) }
+                        else controller.requestDailyHistoryRefresh(EndpointStore.baseUrl(context), onReady, { loadError = it })
+                    }, onContinue = {
+                        val continuation = "日线补齐任务已完成，请基于最新的 60 天日线继续上一次研究，不要重复已有内容。"
+                        onConversationChange(conversation + ResearchChatLine(true, continuation))
+                        controller.send(EndpointStore.baseUrl(context), continuation, selectedSymbol)
+                    })
+                } }
             }
             HorizontalDivider()
             Column(Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 8.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
@@ -220,4 +266,7 @@ private fun researchTargetIcon(status: String) = when (status) {
 @OptIn(ExperimentalLayoutApi::class)
 @Composable private fun EmptyResearchHint(onChooseTarget: () -> Unit, onPreset: (String) -> Unit) = Card(colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant)) { Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) { Text("从一个研究问题开始", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold); Text("点 + 选择分析对象和需要带入的资料。系统会自动带入行情、K 线、持仓、交易计划、规则、公告和事件证据。", style = MaterialTheme.typography.bodyMedium); FlowRow(horizontalArrangement = Arrangement.spacedBy(6.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) { listOf("给出当前仓位与风险建议", "核验行业逻辑与业绩变化", "识别关键事件和时间窗口", "复盘交易计划是否仍成立").forEach { prompt -> AssistChip(onClick = { onPreset(prompt) }, label = { Text(prompt, maxLines = 1, overflow = TextOverflow.Ellipsis) }) } }; TextButton(onClick = onChooseTarget) { Text("选择分析对象") } } }
 @Composable private fun StreamingCard(state: ResearchChatUiState.Streaming) = Card(colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.secondaryContainer)) { Column(Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(5.dp)) { Text(state.phase.ifBlank { "正在后台分析…" }, fontWeight = FontWeight.SemiBold); state.activity.takeLast(2).forEach { Text(it, style = MaterialTheme.typography.labelSmall) }; if (state.answer.isNotBlank()) ResearchMarkdown(state.answer) } }
-@Composable private fun ChatBubble(line: ResearchChatLine) = Column(Modifier.fillMaxWidth(), horizontalAlignment = if (line.user) Alignment.End else Alignment.Start) { Card(colors = CardDefaults.cardColors(containerColor = if (line.user) MaterialTheme.colorScheme.primaryContainer else MaterialTheme.colorScheme.surfaceVariant), modifier = Modifier.fillMaxWidth(if (line.user) .9f else 1f)) { if (line.user) Text(line.text, Modifier.padding(14.dp)) else ResearchMarkdown(line.text, Modifier.padding(14.dp)) } }
+@Composable private fun ChatBubble(line: ResearchChatLine) = Column(Modifier.fillMaxWidth(), horizontalAlignment = if (line.user) Alignment.End else Alignment.Start) { Card(colors = CardDefaults.cardColors(containerColor = if (line.user) MaterialTheme.colorScheme.primaryContainer else MaterialTheme.colorScheme.surfaceVariant), modifier = Modifier.fillMaxWidth(if (line.user) .9f else 1f)) { if (line.user) Text(line.text, Modifier.padding(14.dp), style = MaterialTheme.typography.bodySmall) else ResearchMarkdown(line.text, Modifier.padding(14.dp)) } }
+@Composable private fun SuggestedActionCard(actions: List<ResearchSuggestedAction>, onQuestionChange: (String) -> Unit, onOpenTradePlan: () -> Unit, onRequestDailyHistory: () -> Unit) = Card(colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.tertiaryContainer)) { Column(Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) { Text("需要你确认", fontWeight = FontWeight.SemiBold); Text("AI 不会自动拉取数据或执行交易。", style = MaterialTheme.typography.bodySmall); actions.forEach { action -> TextButton(onClick = { when (action.id) { "trade_plan" -> onOpenTradePlan(); "daily_history_refresh" -> onRequestDailyHistory(); else -> onQuestionChange(action.prompt) } }, modifier = Modifier.fillMaxWidth()) { Text(action.label) } } } }
+
+@Composable private fun DailyHistoryRefreshCard(refresh: DailyHistoryRefreshStatus, onRequest: () -> Unit, onContinue: () -> Unit) = Card(colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.secondaryContainer)) { Column(Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) { Text("60 天日线补齐", fontWeight = FontWeight.SemiBold); Text("${refresh.symbol}：${refresh.barCount}/${refresh.requiredDays} 条 · ${when (refresh.status) { "completed" -> "已完成"; "running", "queued" -> "后台处理中，可退出后稍后回来"; "failed" -> "拉取失败，可重试"; else -> "尚未请求" }}", style = MaterialTheme.typography.bodySmall); refresh.errorMessage?.let { Text(it, color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.labelSmall) }; if (refresh.status == "completed") TextButton(onClick = onContinue) { Text("继续研究") } else TextButton(onClick = onRequest) { Text(if (refresh.status == "running" || refresh.status == "queued") "重新检查状态" else "拉取日线") } } }

@@ -11,6 +11,14 @@ class ToolExecutor:
    questions=args.get("questions") or []
    if not isinstance(questions,list) or not 1<=len(questions)<=3:raise ValueError("tool_invalid_arguments")
    return {"clarification":True,"questions":[str(q)[:240] for q in questions]}
+  if name=="propose_data_change":
+   entity=str(args.get("entity") or "")
+   operation=str(args.get("operation") or "")
+   if entity not in {"holding","trade_plan","personal_rule"} or operation not in {"create","update","delete"}:raise ValueError("tool_invalid_arguments")
+   return {"confirmation_required":True,"entity":entity,"operation":operation,"summary":str(args.get("summary") or "")[:500],"automatic_execution":False}
+  if name=="request_daily_history_refresh":
+   available=len(self.store.daily_prices(symbol,60))
+   return {"confirmation_required":available<60,"action":"daily_history_refresh","symbol":symbol,"required_days":60,"available_days":available,"summary":f"当前仅有 {available} 条日线，需要拉取至少 60 条后再继续研究。","automatic_execution":False}
   content=self.store.cached_content([symbol],limit=30)
   announcements=[item for item in content if str(item.get("id", "")).startswith("announcement-")]
   news=[item for item in content if str(item.get("id", "")).startswith("news-")]

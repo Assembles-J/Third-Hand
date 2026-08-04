@@ -69,6 +69,7 @@ data class MarketQuoteDto(
     val previous_close: Double? = null,
     val volume: Double? = null,
     val amount: Double? = null,
+    val turnover_rate: Double? = null,
     val currency: String,
     val source: String,
     val retrieved_at: String,
@@ -136,7 +137,13 @@ data class WatchlistItemDto(
     val created_at: String,
     val updated_at: String,
 )
-data class DailyPriceDto(val trading_date: String, val open: Double? = null, val close: Double, val high: Double? = null, val low: Double? = null, val volume: Double? = null, val amount: Double? = null, val adjustment: String? = "qfq")
+data class DailyPriceDto(
+    val trading_date: String, val open: Double? = null, val close: Double, val high: Double? = null,
+    val low: Double? = null, val volume: Double? = null, val amount: Double? = null,
+    val amplitude_percent: Double? = null, val change_percent: Double? = null,
+    val change_amount: Double? = null, val turnover_rate: Double? = null,
+    val adjustment: String? = "qfq", val source: String = "",
+)
 data class IntradayPriceDto(val bar_time: String, val open: Double, val close: Double, val high: Double, val low: Double, val volume: Double? = null, val amount: Double? = null, val average_price: Double? = null, val source: String, val updated_at: String)
 data class InstrumentMetadataDto(val symbol: String, val market: String, val currency: String, val lot_size: Int? = null, val price_tick: String? = null, val source: String, val as_of: String, val updated_at: String)
 data class InstrumentMetadataInputDto(val market: String, val currency: String, val lot_size: Int? = null, val price_tick: String? = null, val source: String, val as_of: String)
@@ -274,10 +281,15 @@ data class PositionSizingResultDto(
     val invalidation_price: Double? = null, val risk_per_share: Double? = null, val risk_capital: Double? = null,
     val blocked_reasons: List<String> = emptyList(), val sizing_version: String,
 )
+data class OperationItemDto(
+    val kind: String, val title: String, val trigger: String, val reference_price: Double? = null,
+    val invalidation_price: Double? = null, val suggested_quantity: Double? = null, val target_quantity: Double? = null,
+    val status: String, val blockers: List<String> = emptyList(),
+)
 data class DecisionReportDto(
     val decision_id: String, val context_id: String, val symbol: String, val generated_at: String, val status: String,
     val action: String, val summary: String, val evidence: List<DecisionEvidenceDto> = emptyList(),
-    val action_candidates: List<DecisionActionCandidateDto> = emptyList(), val ai_assessment: DecisionAiAssessmentDto? = null,
+    val action_candidates: List<DecisionActionCandidateDto> = emptyList(), val operation_items: List<OperationItemDto> = emptyList(), val ai_assessment: DecisionAiAssessmentDto? = null,
     val ai_status: String? = null, val ai_error_code: String? = null, val model: String? = null,
     val market_price: Double? = null, val market_change_percent: Double? = null, val market_as_of: String? = null,
     val sizing: PositionSizingResultDto? = null, val policy_version: String, val prompt_version: String? = null,

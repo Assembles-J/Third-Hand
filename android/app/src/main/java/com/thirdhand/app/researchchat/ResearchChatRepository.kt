@@ -48,6 +48,20 @@ class ResearchChatRepository(private val httpClient: OkHttpClient) {
             .put(JSONObject().put("sources", entries).toString().toRequestBody("application/json".toMediaType())).build()
         httpClient.newCall(request).enqueue(object : Callback { override fun onFailure(call: Call, e: java.io.IOException) = Unit; override fun onResponse(call: Call, response: Response) { response.close() } })
     }
+    fun dailyHistoryRefresh(baseUrl: String, sessionId: String, onReady: (DailyHistoryRefreshStatus) -> Unit, onFailure: (String) -> Unit) {
+        getJson("${baseUrl.trimEnd('/')}/v1/research-chat/sessions/$sessionId/daily-history-refresh", { body ->
+            val item = JSONObject(body)
+            onReady(DailyHistoryRefreshStatus(item.optString("symbol"), item.optInt("required_days", 60), item.optString("status"), item.optInt("bar_count"), item.optString("error_message").ifBlank { null }))
+        }, onFailure)
+    }
+    fun requestDailyHistoryRefresh(baseUrl: String, sessionId: String, onReady: (DailyHistoryRefreshStatus) -> Unit, onFailure: (String) -> Unit) {
+        val request = Request.Builder().url("${baseUrl.trimEnd('/')}/v1/research-chat/sessions/$sessionId/daily-history-refresh")
+            .post("{}".toRequestBody("application/json".toMediaType())).build()
+        httpClient.newCall(request).enqueue(object : Callback { override fun onFailure(call: Call, e: java.io.IOException) = onFailure(e.message ?: "日线拉取请求失败"); override fun onResponse(call: Call, response: Response) = response.use {
+            val body = it.body?.string().orEmpty(); if (!it.isSuccessful) return onFailure("日线拉取请求失败（HTTP ${it.code}）")
+            val item = JSONObject(body); onReady(DailyHistoryRefreshStatus(item.optString("symbol"), item.optInt("required_days", 60), item.optString("status"), item.optInt("bar_count"), item.optString("error_message").ifBlank { null }))
+        } })
+    }
 
     private fun getJson(url: String, onReady: (String) -> Unit, onFailure: (String) -> Unit) {
         httpClient.newCall(Request.Builder().url(url).get().build()).enqueue(object : Callback {

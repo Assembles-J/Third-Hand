@@ -98,6 +98,15 @@ def _create_research_chat_session_sources(connection: sqlite3.Connection) -> Non
     connection.execute("CREATE TABLE IF NOT EXISTS research_chat_session_sources (session_id TEXT NOT NULL, source_key TEXT NOT NULL, title TEXT NOT NULL, detail TEXT NOT NULL DEFAULT '', added_at TEXT NOT NULL, PRIMARY KEY(session_id, source_key))")
 
 
+def _create_research_daily_history_refreshes(connection: sqlite3.Connection) -> None:
+    connection.execute(
+        "CREATE TABLE IF NOT EXISTS research_daily_history_refreshes ("
+        "session_id TEXT PRIMARY KEY, symbol TEXT NOT NULL, required_days INTEGER NOT NULL, "
+        "status TEXT NOT NULL, bar_count INTEGER NOT NULL DEFAULT 0, error_message TEXT, "
+        "created_at TEXT NOT NULL, updated_at TEXT NOT NULL)"
+    )
+
+
 MIGRATIONS = (
     Migration("0001_legacy_schema_baseline", _record_legacy_schema_baseline),
     Migration("0002_decision_contexts", _create_decision_contexts),
@@ -107,6 +116,7 @@ MIGRATIONS = (
     Migration("0006_decision_reports_and_jobs", _create_decision_reports_and_jobs),
     Migration("0007_research_chat_sessions", _create_research_chat_tables),
     Migration("0008_research_chat_session_sources", _create_research_chat_session_sources),
+    Migration("0009_research_daily_history_refreshes", _create_research_daily_history_refreshes),
 )
 
 

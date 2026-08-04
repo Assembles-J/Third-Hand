@@ -59,6 +59,19 @@ class ResearchChatRepository:
   return self.sources(session_id)
  def save_tool_call(self,turn_id,name,args,status,result=None,error=None,duration=0):
   with self._connect() as c:c.execute("INSERT INTO research_tool_calls (id,turn_id,tool_name,tool_version,arguments_json,result_summary_json,status,duration_ms,error_code,created_at,completed_at) VALUES (?,?,?,?,?,?,?,?,?,?,?)",(str(uuid4()),turn_id,name,"v1",json.dumps(args,ensure_ascii=False),json.dumps(result,ensure_ascii=False,default=str) if result else None,status,duration,error,beijing_now().isoformat(),beijing_now().isoformat()))
+ def daily_history_refresh(self,session_id):
+  with self._connect() as c:r=c.execute("SELECT * FROM research_daily_history_refreshes WHERE session_id=?",(session_id,)).fetchone()
+  return dict(r) if r else None
+ def request_daily_history_refresh(self,session_id,symbol,required_days=60):
+  now=beijing_now().isoformat(); bar_count=len(self.store.daily_prices(symbol,required_days))
+  item={"session_id":session_id,"symbol":symbol,"required_days":required_days,"status":"completed" if bar_count>=required_days else "queued","bar_count":bar_count,"error_message":None,"created_at":now,"updated_at":now}
+  with self._connect() as c:c.execute("INSERT INTO research_daily_history_refreshes (session_id,symbol,required_days,status,bar_count,error_message,created_at,updated_at) VALUES (:session_id,:symbol,:required_days,:status,:bar_count,:error_message,:created_at,:updated_at) ON CONFLICT(session_id) DO UPDATE SET symbol=excluded.symbol,required_days=excluded.required_days,status=excluded.status,bar_count=excluded.bar_count,error_message=NULL,updated_at=excluded.updated_at",item)
+  return self.daily_history_refresh(session_id)
+ def update_daily_history_refresh(self,session_id,**updates):
+  if not updates:return
+  updates["updated_at"]=beijing_now().isoformat();columns=','.join(f"{key}=?" for key in updates);values=list(updates.values())
+  with self._connect() as c:c.execute(f"UPDATE research_daily_history_refreshes SET {columns} WHERE session_id=?",(*values,session_id))
+  return self.daily_history_refresh(session_id)
  def clarification(self,turn_id):
   with self._connect() as c:r=c.execute("SELECT * FROM research_clarifications WHERE turn_id=? AND status='waiting' ORDER BY created_at DESC LIMIT 1",(turn_id,)).fetchone()
   return dict(r) if r else None

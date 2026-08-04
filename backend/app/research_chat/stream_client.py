@@ -13,7 +13,9 @@ class DeepSeekStreamClient:
   if not self.enabled:raise LlmClientError("未配置 DEEPSEEK_API_KEY。",code="not_configured",retryable=False)
   payload={"model":self.settings.reasoning_model,"messages":messages,"stream":True,"stream_options":{"include_usage":True},"max_tokens":max_tokens,"thinking":{"type":"enabled"},"reasoning_effort":"high"}
   if tools:payload["tools"]=tools
-  timeout=httpx.Timeout(connect=10,read=90,write=10,pool=10)
+  # Reasoning/tool rounds can be quiet for longer than a normal HTTP request.
+  # The outer SSE route emits keep-alives while this awaits upstream output.
+  timeout=httpx.Timeout(connect=15,read=None,write=30,pool=30)
   client=self._http or httpx.AsyncClient(trust_env=self.settings.trust_environment_proxy,timeout=timeout)
   own=self._http is None
   try:

@@ -120,6 +120,38 @@ def test_portfolio_analysis_returns_a_review_payload():
     assert response.json()["items"] == []
 
 
+def test_daily_review_generation_returns_a_pending_review_when_data_is_incomplete():
+    store.add("holding-1", "600519", "贵州茅台", 100, 10)
+
+    response = client.post("/v1/daily-reviews/generate", json={})
+
+    assert response.status_code == 201
+    payload = response.json()
+    assert payload["items"][0]["action"] == "watch"
+    assert "缺少实时行情" in payload["items"][0]["rationale"]
+
+
+def test_daily_review_generation_without_holdings_is_an_empty_pending_review():
+    response = client.post("/v1/daily-reviews/generate")
+
+    assert response.status_code == 201
+    assert response.json()["items"] == []
+
+
+def test_research_session_daily_history_refresh_is_confirmed_and_persisted(monkeypatch):
+    monkeypatch.setenv("RESEARCH_CHAT_ENABLED", "true")
+    session = client.post("/v1/research-chat/sessions", json={"title": "日线补齐", "primary_symbol": "600519"}).json()
+
+    status = client.get(f"/v1/research-chat/sessions/{session['id']}/daily-history-refresh")
+    assert status.status_code == 200
+    assert status.json()["status"] == "not_requested"
+
+    monkeypatch.setattr(main.price_history_service, "refresh", lambda _store, _symbol: 0)
+    requested = client.post(f"/v1/research-chat/sessions/{session['id']}/daily-history-refresh")
+    assert requested.status_code == 202
+    assert requested.json()["status"] == "queued"
+
+
 def test_decision_context_debug_endpoint_persists_a_read_only_snapshot():
     client.post("/v1/holdings", json={"symbol": "600519", "name": "test", "quantity": 100, "average_cost": 10})
     client.put("/v1/account/cash", json={"available_cash": 1000})
@@ -302,6 +334,7 @@ def test_holding_lifecycle_and_feed():
 
 
 def test_sale_records_realized_profit_and_reduces_holding():
+    client.put("/v1/account/cash", json={"available_cash": 1000})
     holding = client.post("/v1/holdings", json={"symbol": "600519", "name": "贵州茅台", "quantity": 10, "average_cost": 1000}).json()
     response = client.post(f"/v1/holdings/{holding['id']}/sales", json={"quantity": 4, "sale_price": 1200, "reason": "达到预先设定的仓位上限"})
     assert response.status_code == 201
@@ -311,6 +344,7 @@ def test_sale_records_realized_profit_and_reduces_holding():
     assert sale["reason"]
     assert client.get("/v1/holdings").json()[0]["quantity"] == 6
     assert client.get("/v1/sales").json()[0]["id"] == sale["id"]
+    assert client.get("/v1/account/cash").json()["available_cash"] == 5800
 
 
 def test_full_sale_keeps_symbol_available_as_a_research_target_and_reentry_reuses_it():

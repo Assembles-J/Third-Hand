@@ -77,6 +77,10 @@ class PriceHistoryService:
                     "low": decimal_text(frame.iloc[index].get(columns["low"])),
                     "volume": decimal_text(frame.iloc[index].get(columns["volume"])),
                     "amount": decimal_text(frame.iloc[index].get(columns["amount"])),
+                    "amplitude_percent": decimal_text(frame.iloc[index].get("振幅")),
+                    "change_percent": decimal_text(frame.iloc[index].get("涨跌幅")),
+                    "change_amount": decimal_text(frame.iloc[index].get("涨跌额")),
+                    "turnover_rate": decimal_text(frame.iloc[index].get("换手率")),
                     "adjustment": "qfq", "source": "AKShare daily history",
                 })
         except PriceHistoryUnavailable:

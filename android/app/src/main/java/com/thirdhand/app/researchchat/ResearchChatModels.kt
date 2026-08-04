@@ -15,6 +15,8 @@ data class ResearchSessionSummary(
 
 data class ResearchStoredMessage(val user: Boolean, val text: String)
 data class ResearchAttachedSource(val key: String, val title: String, val detail: String = "")
+data class ResearchSuggestedAction(val id: String, val label: String, val prompt: String)
+data class DailyHistoryRefreshStatus(val symbol: String, val requiredDays: Int, val status: String, val barCount: Int, val errorMessage: String? = null)
 
 sealed interface ResearchChatUiState {
     data object Idle : ResearchChatUiState
@@ -25,7 +27,8 @@ sealed interface ResearchChatUiState {
         val activity: List<String> = emptyList(),
         val promptTokens: Int = 0,
         val completionTokens: Int = 0,
+        val suggestedActions: List<ResearchSuggestedAction> = emptyList(),
     ) : ResearchChatUiState
-    data class Completed(val answer: String, val canContinue: Boolean = false, val promptTokens: Int = 0, val completionTokens: Int = 0) : ResearchChatUiState
+    data class Completed(val answer: String, val canContinue: Boolean = false, val promptTokens: Int = 0, val completionTokens: Int = 0, val suggestedActions: List<ResearchSuggestedAction> = emptyList()) : ResearchChatUiState
     data class Failed(val message: String) : ResearchChatUiState
 }

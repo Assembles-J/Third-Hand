@@ -13,10 +13,10 @@ fun ResearchMarkdown(markdown: String, modifier: Modifier = Modifier) {
         content = markdown,
         modifier = modifier,
         typography = markdownTypography(
-            h1 = MaterialTheme.typography.headlineSmall,
-            h2 = MaterialTheme.typography.titleLarge,
-            h3 = MaterialTheme.typography.titleMedium,
-            h4 = MaterialTheme.typography.titleSmall,
+            h1 = MaterialTheme.typography.titleLarge,
+            h2 = MaterialTheme.typography.titleMedium,
+            h3 = MaterialTheme.typography.titleSmall,
+            h4 = MaterialTheme.typography.bodyLarge,
         ),
     )
 }
