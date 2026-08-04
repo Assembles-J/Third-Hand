@@ -83,6 +83,7 @@ def positive_environment_integer(name: str, default: int, minimum: int) -> int:
 
 MARKET_REFRESH_ENABLED = os.getenv("MARKET_REFRESH_ENABLED", "true").lower() not in {"0", "false", "no"}
 MARKET_REFRESH_INTERVAL_SECONDS = positive_environment_integer("MARKET_REFRESH_INTERVAL_SECONDS", 60, 30)
+DAILY_HISTORY_RETRY_SECONDS = positive_environment_integer("DAILY_HISTORY_RETRY_SECONDS", 300, 30)
 market_refresh_stop = Event()
 market_refresh_thread: Thread | None = None
 market_refresh_state_lock = Lock()
@@ -91,6 +92,7 @@ derived_refresh_lock = Lock()
 intraday_refresh_lock = Lock()
 daily_history_refreshed_for: dict[str, str] = {}
 daily_history_attempted_for: dict[str, str] = {}
+daily_history_retry_after: dict[str, float] = {}
 market_refresh_state: dict[str, object] = {
     "last_attempt_at": None,
     "last_success_at": None,
@@ -936,16 +938,35 @@ def refresh_derived_cache(symbols: list[str], trigger: str, force_history: bool 
         today = beijing_now().date().isoformat()
         for symbol in symbols:
             try:
-                if force_history or daily_history_attempted_for.get(symbol) != today:
+                retry_due = time.monotonic() >= daily_history_retry_after.get(symbol, 0.0)
+                if force_history or (
+                    daily_history_refreshed_for.get(symbol) != today and retry_due
+                ):
                     daily_history_attempted_for[symbol] = today
                     price_history_service.refresh(store, symbol)
                     daily_history_refreshed_for[symbol] = today
+                    daily_history_retry_after.pop(symbol, None)
                 bars = store.daily_prices(symbol)
                 if not bars:
-                    raise RiskDataUnavailable("未获取到可用的历史日线，暂无法生成风险评估。")
+                    logger.info(
+                        "派生数据等待历史日线 trigger=%s symbol=%s retry_after_seconds=%s",
+                        trigger,
+                        symbol,
+                        max(0, round(daily_history_retry_after.get(symbol, time.monotonic()) - time.monotonic())),
+                    )
+                    continue
                 item = risk_service.assess(symbol, names.get(symbol, symbol), [float(bar["close"]) for bar in bars], str(bars[-1]["trading_date"]))
                 store.save_risk(item)
-            except (PriceHistoryUnavailable, RiskDataUnavailable) as error:
+            except PriceHistoryUnavailable as error:
+                daily_history_retry_after[symbol] = time.monotonic() + DAILY_HISTORY_RETRY_SECONDS
+                logger.warning(
+                    "历史日线刷新失败 trigger=%s symbol=%s error=%s retry_after_seconds=%s",
+                    trigger,
+                    symbol,
+                    error,
+                    DAILY_HISTORY_RETRY_SECONDS,
+                )
+            except RiskDataUnavailable as error:
                 logger.warning("派生数据刷新失败 trigger=%s symbol=%s error=%s", trigger, symbol, error)
         holdings = store.list()
         symbols = [str(item["symbol"]) for item in holdings]
@@ -1583,6 +1604,33 @@ def delete_watchlist_item(symbol: str) -> Response:
 def market_history(symbol: str, limit: int = Query(default=120, ge=20, le=800)) -> list[DailyPrice]:
     """Persisted daily bars only; chart rendering never queries an upstream source."""
     return [DailyPrice.model_validate(item) for item in store.daily_prices(symbol.strip().upper(), limit)]
+
+
+@app.post("/v1/market/history/{symbol}/refresh", response_model=list[DailyPrice])
+def refresh_market_history(symbol: str) -> list[DailyPrice]:
+    """Manually retry one symbol's daily-history provider chain for mobile charts."""
+    normalized_symbol = symbol.strip().upper()
+    try:
+        bar_count = price_history_service.refresh(store, normalized_symbol)
+        daily_history_attempted_for[normalized_symbol] = beijing_now().date().isoformat()
+        daily_history_refreshed_for[normalized_symbol] = beijing_now().date().isoformat()
+        daily_history_retry_after.pop(normalized_symbol, None)
+        logger.info(
+            "历史日线手动刷新成功 symbol=%s bar_count=%s",
+            normalized_symbol,
+            bar_count,
+        )
+    except PriceHistoryUnavailable as error:
+        daily_history_retry_after[normalized_symbol] = time.monotonic() + DAILY_HISTORY_RETRY_SECONDS
+        logger.warning(
+            "历史日线手动刷新失败 symbol=%s error=%s retry_after_seconds=%s",
+            normalized_symbol,
+            error,
+            DAILY_HISTORY_RETRY_SECONDS,
+        )
+        raise HTTPException(status_code=503, detail=str(error)) from error
+    queue_background(refresh_derived_cache, [normalized_symbol], "manual-daily-history-refresh")
+    return [DailyPrice.model_validate(item) for item in store.daily_prices(normalized_symbol, 800)]
 
 
 @app.delete("/v1/market/history/{symbol}", status_code=status.HTTP_204_NO_CONTENT)

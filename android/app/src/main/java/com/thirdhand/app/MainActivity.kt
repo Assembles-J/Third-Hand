@@ -270,7 +270,7 @@ private fun ThirdHandApp(resumeSignal: Int) {
                         label = "bottomNavigationPage",
                     ) { activeTab ->
                         when (activeTab) {
-                            0 -> TodayScreen(onOpenTradePlan = { tab = 3 }, onOpenRules = { tab = 2 })
+                            0 -> TodayScreen(onOpenTradePlan = { tab = 3 }, onOpenRules = { tab = 2 }, onOpenPortfolio = { tab = 1 })
                             1 -> HoldingsScreen(onOpenDetail = { detailHolding = it })
                             2 -> UnifiedCenterScreen(onOpenSaleHistory = { tab = 6 })
                             3 -> TradePlanScreen()
@@ -292,7 +292,7 @@ private fun ThirdHandApp(resumeSignal: Int) {
                                 tab = 4
                             })
                             6 -> SaleHistoryScreen(onBack = { tab = 2 })
-                            else -> TodayScreen(onOpenTradePlan = { tab = 3 }, onOpenRules = { tab = 2 })
+                            else -> TodayScreen(onOpenTradePlan = { tab = 3 }, onOpenRules = { tab = 2 }, onOpenPortfolio = { tab = 1 })
                         }
                     }
                 }
@@ -612,7 +612,7 @@ private fun impactColor(direction: String?): Color = when (direction) {
 }
 
 @Composable
-private fun TodayScreen(onOpenTradePlan: () -> Unit, onOpenRules: () -> Unit) {
+private fun TodayScreen(onOpenTradePlan: () -> Unit, onOpenRules: () -> Unit, onOpenPortfolio: () -> Unit) {
     val context = LocalContext.current
     val api = ApiClient.service(context)
     var holdings by remember { mutableStateOf<List<HoldingDto>>(emptyList()) }
@@ -710,8 +710,11 @@ private fun TodayScreen(onOpenTradePlan: () -> Unit, onOpenRules: () -> Unit) {
                 onViewHistory = { showDecisionHistory = true },
                 onOpenRules = onOpenRules,
                 onResolveBlocker = { code ->
-                    if (code == "trade_plan.enabled" || code == "trade_plan.invalidation_price") onOpenTradePlan()
-                    if (code == "instrument.lot_size") instrumentSetupSymbol = report.symbol
+                    when (blockerTarget(code)) {
+                        "plan" -> onOpenTradePlan()
+                        "instrument" -> instrumentSetupSymbol = report.symbol
+                        else -> onOpenPortfolio()
+                    }
                 },
             )
         } }
@@ -848,7 +851,7 @@ private fun DecisionWorkbenchRoute(
                         val guidance = blockerGuidance(code)
                         Text(guidance.title, color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.bodySmall, fontWeight = FontWeight.SemiBold)
                         Text(guidance.nextStep, style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                        if (code in setOf("trade_plan.enabled", "trade_plan.invalidation_price", "instrument.lot_size")) TextButton(onClick = { onResolveBlocker?.invoke(code) }) { Text(blockerActionLabel(code)) }
+                        if (onResolveBlocker != null) TextButton(onClick = { onResolveBlocker(code) }) { Text(blockerActionLabel(code)) }
                     }
                 }
             }
@@ -1126,17 +1129,27 @@ private fun evidenceDirectionLabel(direction: String): String = when (direction)
 @Composable
 private fun evidenceDirectionColor(direction: String): Color = when (direction) { "negative" -> MaterialTheme.colorScheme.error; "positive" -> MaterialTheme.colorScheme.tertiary; else -> MaterialTheme.colorScheme.onSurfaceVariant }
 private data class BlockerGuidance(val title: String, val nextStep: String)
-private fun blockerActionLabel(code: String): String = when (code) {
-    "instrument.lot_size" -> "填写最小交易单位"
-    "trade_plan.enabled", "trade_plan.invalidation_price" -> "前往填写交易计划"
-    else -> "处理此项"
+private fun normalizedBlockerCode(code: String) = code.substringBefore(" unavailable").trim().lowercase()
+private fun blockerTarget(code: String): String = when (normalizedBlockerCode(code)) {
+    "instrument.lot_size" -> "instrument"
+    "trade_plan.enabled", "trade_plan.invalidation_price", "trade_plan.auto_draft" -> "plan"
+    else -> "portfolio"
 }
-private fun blockerGuidance(code: String): BlockerGuidance = when (code) {
+private fun blockerActionLabel(code: String): String = when (blockerTarget(code)) {
+    "instrument" -> "填写交易单位"
+    "plan" -> "填写交易计划"
+    else -> "前往持仓处理"
+}
+private fun blockerGuidance(code: String): BlockerGuidance = when (normalizedBlockerCode(code)) {
     "trade_plan.enabled" -> BlockerGuidance("缺少已启用的交易计划", "前往“管理”→“交易计划”，为该标的新增或启用计划，并填写入场、加仓、减仓、退出条件、仓位上限和风险预算；保存后回到此页重新分析。")
+    "trade_plan.auto_draft" -> BlockerGuidance("交易计划尚未准备好", "前往“管理”→“交易计划”，补充入场、加仓、减仓和退出条件后保存。")
+    "trade_plan.invalidation_price" -> BlockerGuidance("缺少失效价", "前往“管理”→“交易计划”，填写本次判断失效时的价格，再重新生成工作台。")
     "quote.price" -> BlockerGuidance("缺少可用行情价格", "前往“持仓”刷新行情；若仍失败，请核对证券代码、网络连接和行情服务状态。")
-    "daily_bars.minimum_60" -> BlockerGuidance("日线历史不足 60 个交易日", "保持网络连接并稍后重试，等待后端补齐历史日线；新上市或停牌标的可能暂时无法生成完整结论。")
+    "daily_bars.minimum_60" -> BlockerGuidance("需要补齐近期日线数据", "前往“持仓”刷新行情与日线数据；数据补齐后，重新生成工作台。")
+    "risk" -> BlockerGuidance("风险数据暂不可用", "前往“持仓”刷新行情和日线；系统会据此重新计算风险数据。")
+    "events" -> BlockerGuidance("事件信息暂不可用", "前往“持仓”刷新行情；稍后重新分析即可补充最新事件信息。")
     "account.total_assets" -> BlockerGuidance("无法计算组合总资产", "请确认所有持仓均有可用行情，并在“持仓”页录入可用资金；随后重新刷新行情。")
-    else -> BlockerGuidance("需要补充：$code", "请刷新行情并核对持仓、资金和交易计划信息后重新分析。")
+    else -> BlockerGuidance("需要更新分析所需数据", "前往“持仓”刷新行情并核对持仓资料；完成后重新生成工作台。")
 }
 
 private fun beijingTimestamp(value: String?): String {
@@ -1724,7 +1737,7 @@ private fun StockDetailScreen(target: ResearchTargetDto, onBack: () -> Unit, onR
     var clearHistoryRequested by remember(target.symbol) { mutableStateOf(false) }
     fun load() = scope.launch {
         error = null
-        runCatching { ApiClient.marketQuotes(api, MarketQuoteBatchRequestDto(listOf(target.symbol))) }
+        runCatching { ApiClient.latestMarketQuotes(api, listOf(target.symbol)) }
             .onSuccess { quote = it.firstOrNull() }
             .onFailure { error = "无法读取股票详情，请检查服务连接。" }
         history = runCatching { api.marketHistory(target.symbol, 30) }.getOrDefault(emptyList())
@@ -1925,9 +1938,9 @@ private fun HoldingsScreen(onOpenDetail: (HoldingDto) -> Unit) {
             quotesBySymbol = if (holdings.isEmpty()) emptyMap() else try {
                 val requestedSymbols = holdings.map { it.symbol }
                 Log.d("ThirdHandMarket", "HOLDINGS_REQUEST symbols=$requestedSymbols refresh=true")
-                // Do not block the holdings page on a full public-market snapshot.
-                // Cached results return immediately and the server refreshes them in the background.
-                val fetchedQuotes = ApiClient.marketQuotes(api, MarketQuoteBatchRequestDto(requestedSymbols))
+                // Start an immediate server-side refresh and wait only until its
+                // cache write is observable; never wait for the next scheduler tick.
+                val fetchedQuotes = ApiClient.latestMarketQuotes(api, requestedSymbols)
                 val failures = fetchedQuotes.filter { it.price == null || !it.error_code.isNullOrBlank() }
                 if (failures.isNotEmpty()) {
                     quoteError = failures.joinToString("；") { quote ->
@@ -2130,6 +2143,8 @@ private fun HoldingDetailScreen(holding: HoldingDto, onBack: () -> Unit) {
     var bars by remember(holding.id) { mutableStateOf<List<DailyPriceDto>>(emptyList()) }
     var intradayBars by remember(holding.id) { mutableStateOf<List<DailyPriceDto>>(emptyList()) }
     var intradayLoadError by remember(holding.id) { mutableStateOf<String?>(null) }
+    var dailyHistoryLoadError by remember(holding.id) { mutableStateOf<String?>(null) }
+    var refreshingDailyHistory by remember(holding.id) { mutableStateOf(false) }
     var sales by remember(holding.id) { mutableStateOf<List<SaleRecordDto>>(emptyList()) }
     var risk by remember(holding.id) { mutableStateOf<RiskAssessmentDto?>(null) }
     var quote by remember(holding.id) { mutableStateOf<MarketQuoteDto?>(null) }
@@ -2141,8 +2156,14 @@ private fun HoldingDetailScreen(holding: HoldingDto, onBack: () -> Unit) {
     var evaluations by remember(holding.id) { mutableStateOf<List<RecommendationEvaluationDto>>(emptyList()) }
     var period by remember { mutableStateOf("日线") }
     var sellOpen by remember { mutableStateOf(false) }
+    var editOpen by remember { mutableStateOf(false) }
+    var editError by remember { mutableStateOf<String?>(null) }
     LaunchedEffect(holding.id) {
-        bars = runCatching { api.marketHistory(holding.symbol) }.getOrDefault(emptyList())
+        val dailyHistoryResult = runCatching { api.marketHistory(holding.symbol) }
+        bars = dailyHistoryResult.getOrDefault(emptyList())
+        dailyHistoryLoadError = dailyHistoryResult.exceptionOrNull()?.let { error ->
+            "日线请求失败：${error.message ?: error.javaClass.simpleName}"
+        }
         val intradayResult = runCatching { api.marketIntraday(holding.symbol) }
         intradayBars = intradayResult.getOrDefault(emptyList()).map { bar ->
             DailyPriceDto(trading_date = bar.bar_time, open = bar.open, close = bar.close, high = bar.high, low = bar.low, volume = bar.volume, amount = bar.amount, adjustment = "1m")
@@ -2152,7 +2173,7 @@ private fun HoldingDetailScreen(holding: HoldingDto, onBack: () -> Unit) {
         }
         sales = runCatching { api.sales(holding.symbol) }.getOrDefault(emptyList())
         risk = runCatching { api.riskAssessments().firstOrNull { it.symbol == holding.symbol } }.getOrNull()
-        quote = runCatching { ApiClient.marketQuotes(api, MarketQuoteBatchRequestDto(listOf(holding.symbol))).firstOrNull() }.getOrNull()
+        quote = runCatching { ApiClient.latestMarketQuotes(api, listOf(holding.symbol)).firstOrNull() }.getOrNull()
         analysis = runCatching { api.portfolioAnalysis().items.firstOrNull { it.symbol == holding.symbol } }.getOrNull()
         tradePlan = runCatching { api.tradePlans().firstOrNull { it.symbol == holding.symbol } }.getOrNull()
         decisionReport = runCatching { api.latestDecision(holding.symbol) }.getOrNull()
@@ -2160,6 +2181,21 @@ private fun HoldingDetailScreen(holding: HoldingDto, onBack: () -> Unit) {
         recommendation?.let { item ->
             evaluations = runCatching { api.recommendationEvaluations(item.id) }.getOrDefault(emptyList())
         }
+    }
+    fun refreshDailyHistory() = scope.launch {
+        refreshingDailyHistory = true
+        dailyHistoryLoadError = null
+        runCatching { api.refreshMarketHistory(holding.symbol) }
+            .onSuccess { refreshed ->
+                bars = refreshed
+                if (refreshed.size < 2) {
+                    dailyHistoryLoadError = "服务端没有返回足够的日线；请查看服务端 provider=akshare 和 provider=tushare 日志。"
+                }
+            }
+            .onFailure { error ->
+                dailyHistoryLoadError = "日线刷新失败：${error.message ?: error.javaClass.simpleName}"
+            }
+        refreshingDailyHistory = false
     }
     val chartBars = when (period) {
         "今日" -> intradayBars
@@ -2170,12 +2206,18 @@ private fun HoldingDetailScreen(holding: HoldingDto, onBack: () -> Unit) {
         Row(Modifier.fillMaxWidth().padding(horizontal = 10.dp, vertical = 8.dp), verticalAlignment = Alignment.CenterVertically) {
             IconButton(onClick = onBack) { Icon(Icons.Filled.ArrowBack, "返回持仓") }
             Column(Modifier.weight(1f)) { Text(holding.name, fontWeight = FontWeight.Bold); Text(holding.symbol, style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant) }
+            TextButton(onClick = { editOpen = true }) { Text("编辑") }
             TextButton(onClick = { sellOpen = true }) { Text("出售", color = MaterialTheme.colorScheme.error) }
         }
         LazyColumn(contentPadding = androidx.compose.foundation.layout.PaddingValues(bottom = 24.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
             item { Column(Modifier.padding(horizontal = 20.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
             Text("持有 ${holding.quantity} · 成本 ${holding.average_cost} · 现价 ${quote?.price ?: "--"}", style = MaterialTheme.typography.bodySmall)
-            Text("行情 K 线", fontWeight = FontWeight.SemiBold)
+            Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+                Text("行情 K 线", modifier = Modifier.weight(1f), fontWeight = FontWeight.SemiBold)
+                TextButton(onClick = ::refreshDailyHistory, enabled = !refreshingDailyHistory) {
+                    Text(if (refreshingDailyHistory) "正在加载日线" else "重新加载日线")
+                }
+            }
             Text(
                 "日线是每个已结束交易日的一根 K 线；“今日”才是分钟 K 线。量为该周期累计成交量，额为累计成交金额；换手率反映当日流通筹码的交易比例。",
                 style = MaterialTheme.typography.labelSmall,
@@ -2189,10 +2231,13 @@ private fun HoldingDetailScreen(holding: HoldingDto, onBack: () -> Unit) {
             ) else Text(
                 when {
                     period == "今日" -> intradayLoadError ?: "暂无分钟行情缓存；请稍后刷新。"
-                    else -> "日线正在后台准备。"
+                    else -> dailyHistoryLoadError ?: "暂无可展示的日线；可点击“重新加载日线”立即重试。"
                 },
                 style = MaterialTheme.typography.bodySmall,
-                color = if (intradayLoadError != null && period == "今日") MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.onSurfaceVariant,
+                color = if (
+                    (intradayLoadError != null && period == "今日") ||
+                    (dailyHistoryLoadError != null && period != "今日")
+                ) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.onSurfaceVariant,
             )
             } }
             decisionReport?.let { report -> item { DecisionReportRoute(report) } }
@@ -2233,6 +2278,21 @@ private fun HoldingDetailScreen(holding: HoldingDto, onBack: () -> Unit) {
         // The record is persisted first; returning to holdings reveals the updated remainder.
         scope.launch { runCatching { api.sellHolding(holding.id, sale) }; sellOpen = false; onBack() }
     })
+    editError?.let { message -> AlertDialog(
+        onDismissRequest = { editError = null },
+        title = { Text("更新持仓失败") }, text = { Text(message) },
+        confirmButton = { TextButton(onClick = { editError = null }) { Text("知道了") } },
+    ) }
+    if (editOpen) AddHoldingDialog(
+        title = "编辑持仓",
+        initial = HoldingInputDto(holding.symbol, holding.name, holding.quantity, holding.average_cost),
+        onDismiss = { editOpen = false },
+        onSave = { input -> scope.launch {
+            runCatching { api.updateHolding(holding.id, input) }
+                .onSuccess { editOpen = false; onBack() }
+                .onFailure { editError = it.message ?: "请稍后重试。" }
+        } },
+    )
     if (planEditorOpen) TradePlanDialog(
         initial = tradePlan,
         initialSymbol = holding.symbol,

@@ -25,6 +25,7 @@ import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
+import androidx.compose.material3.OutlinedTextFieldDefaults
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.Switch
@@ -102,6 +103,17 @@ fun CompactAdminDashboardScreen() {
                 label = { Text("服务地址，例如 http://192.168.1.10:8000/", color = Color.White) },
                 modifier = Modifier.fillMaxWidth().padding(top = 8.dp),
                 singleLine = true,
+                colors = OutlinedTextFieldDefaults.colors(
+                    focusedTextColor = CompactText,
+                    unfocusedTextColor = CompactText,
+                    focusedLabelColor = CompactMint,
+                    unfocusedLabelColor = CompactQuiet,
+                    focusedBorderColor = CompactMint,
+                    unfocusedBorderColor = CompactQuiet,
+                    cursorColor = CompactMint,
+                    focusedContainerColor = CompactPanel,
+                    unfocusedContainerColor = CompactPanel,
+                ),
             )
             TextButton(onClick = {
                 EndpointStore.saveBaseUrl(context, baseUrl)

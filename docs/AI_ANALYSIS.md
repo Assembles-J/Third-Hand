@@ -1,5 +1,17 @@
 # DeepSeek AI 分析基础设施
 
+## DeepSeek Tool Calls 与 OpenAI SDK
+
+DeepSeek 的 `/chat/completions` 协议与 OpenAI Chat Completions 兼容；官方示例使用
+`openai.OpenAI` 只是一个可选的 SDK 封装。本项目使用 `httpx` 直接请求
+`https://api.deepseek.com/chat/completions`，因此代码中不需要、也不应仅为 Tool Calls
+引入 `OpenAI` 客户端。
+
+研究对话的协议循环是：发送 `messages` 与 `tools` → 保留模型返回的完整
+`assistant.tool_calls`（思考模式还包括 `reasoning_content`）→ 为每个调用追加带相同
+`tool_call_id` 的 `tool` 消息 → 再次请求直到没有 `tool_calls`。这些内部上下文记录不在
+UI 对话历史中显示，但必须在后续用户轮次回传给 DeepSeek。
+
 ## 当前范围
 
 本阶段只加固现有新闻与公告 AI 解读，不把持仓规则分析改成大模型判断，也不增加自动交易。

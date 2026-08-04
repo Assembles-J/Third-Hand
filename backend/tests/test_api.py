@@ -13,6 +13,9 @@ client = TestClient(app)
 
 def setup_function():
     store.clear_for_test()
+    main.daily_history_refreshed_for.clear()
+    main.daily_history_attempted_for.clear()
+    main.daily_history_retry_after.clear()
 
 
 def test_health():
@@ -26,12 +29,33 @@ def test_derived_refresh_skips_empty_daily_history_without_aborting(monkeypatch)
 
     store.add("holding-1", "600519", "test", 100, 10)
     main.daily_history_attempted_for["600519"] = beijing_now().date().isoformat()
+    main.daily_history_retry_after["600519"] = time.monotonic() + 60
     monkeypatch.setattr(main, "market_regime_service", MarketRegimeFixture())
 
     main.refresh_derived_cache(["600519"], "test-empty-history")
 
     assert store.daily_prices("600519") == []
     assert store.cached_portfolio_analysis() is not None
+
+
+def test_manual_daily_history_refresh_returns_fresh_bars(monkeypatch):
+    def refresh_history(target_store, symbol):
+        target_store.replace_daily_prices(symbol, [{
+            "trading_date": "2026-08-03", "open": 10, "close": 11,
+            "high": 12, "low": 9, "source": "test",
+        }, {
+            "trading_date": "2026-08-04", "open": 11, "close": 12,
+            "high": 13, "low": 10, "source": "test",
+        }])
+        return 2
+
+    monkeypatch.setattr(main.price_history_service, "refresh", refresh_history)
+    monkeypatch.setattr(main, "queue_background", lambda *_: None)
+
+    response = client.post("/v1/market/history/600519/refresh")
+
+    assert response.status_code == 200
+    assert [item["trading_date"] for item in response.json()] == ["2026-08-03", "2026-08-04"]
 
 
 def test_delete_market_history_purges_one_symbol_cache():

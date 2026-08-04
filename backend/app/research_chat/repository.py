@@ -1,4 +1,4 @@
-"""Auditable persistence; deliberately never stores raw reasoning text."""
+"""Auditable persistence for the user-visible transcript and tool-call context."""
 from __future__ import annotations
 import json, sqlite3
 from datetime import datetime
@@ -42,7 +42,10 @@ class ResearchChatRepository:
    c.execute("INSERT INTO research_chat_messages VALUES (?,?,?,?,?,?,?,?)",(str(uuid4()),session_id,turn_id,role,content_type,content,json.dumps(metadata or {},ensure_ascii=False),now))
    c.execute("UPDATE research_chat_sessions SET updated_at=? WHERE id=?",(now,session_id))
  def history(self,session_id,limit=20):
-  with self._connect() as c: rows=c.execute("SELECT role,content FROM research_chat_messages WHERE session_id=? AND content_type IN ('user_text','assistant_answer','clarification_answer') ORDER BY created_at DESC LIMIT ?",(session_id,limit)).fetchall()
+  # DeepSeek requires reasoning_content from an assistant tool-call message and
+  # its tool results to be replayed in later user turns.  These records are not
+  # exposed by messages(), but must remain in the model-facing transcript.
+  with self._connect() as c: rows=c.execute("SELECT role,content FROM research_chat_messages WHERE session_id=? AND content_type IN ('user_text','assistant_answer','clarification_answer','assistant_tool_context','tool_result_context') ORDER BY created_at DESC, rowid DESC LIMIT ?",(session_id,limit)).fetchall()
   return [dict(x) for x in reversed(rows)]
  def messages(self,session_id,limit=100):
   with self._connect() as c: rows=c.execute("SELECT role,content,content_type,created_at FROM research_chat_messages WHERE session_id=? AND content_type IN ('user_text','assistant_answer','clarification_answer') ORDER BY created_at ASC LIMIT ?",(session_id,max(1,min(limit,200)))).fetchall()

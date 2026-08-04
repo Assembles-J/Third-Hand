@@ -30,6 +30,15 @@ def _flag(name: str) -> bool:
     return os.getenv(name, "false").lower() in {"1", "true", "yes", "on"}
 
 
+def _positive_int_env(name: str, default: int) -> int:
+    """Read a bounded loop limit without allowing an invalid value to disable it."""
+    try:
+        return max(1, int(os.getenv(name, str(default))))
+    except ValueError:
+        logger.warning("Invalid %s; using default %s", name, default)
+        return default
+
+
 def _clarification_questions(result: object) -> list[str] | None:
     """Only the dedicated input tool may turn a tool result into a clarification.
 
@@ -69,6 +78,7 @@ class ResearchChatOrchestrator:
         completion_truncated = False
         answer_persisted = False
         final_answer = ""
+        tool_context_messages: list[dict[str, object]] = []
         try:
             logger.info("Research turn started turn_id=%s session_id=%s symbol=%s model=%s", turn.id, session.id, symbol or session.primary_symbol, self.stream_client.settings.reasoning_model)
             if not self.repo.history(session.id, limit=1):
@@ -94,10 +104,13 @@ class ResearchChatOrchestrator:
             messages = build_messages(context, self.repo.history(session.id), user_message)
             self.repo.update_turn(turn.id, status=ResearchTurnStatus.streaming.value)
             yield emit(ResearchSseEventType.phase, {"phase": "streaming", "label": "正在进行研究分析"})
-            tool_rounds = 0
+            tool_calls_used = 0
+            max_tool_calls = _positive_int_env("RESEARCH_CHAT_MAX_TOOL_CALLS", 6)
             while True:
                 calls: dict[int, dict[str, object]] = {}
                 round_truncated = False
+                round_answer: list[str] = []
+                round_reasoning: list[str] = []
                 async for chunk in self.stream_client.stream_chat(messages, tools=definitions() if _flag("RESEARCH_CHAT_TOOL_CALLING_ENABLED") else None):
                     current_turn = self.repo.turn(turn.id)
                     if current_turn and current_turn.status == ResearchTurnStatus.cancelled:
@@ -111,12 +124,16 @@ class ResearchChatOrchestrator:
                         round_truncated = True
                     delta = choices[0].get("delta") or {}
                     if delta.get("reasoning_content"):
-                        reasoning.append(str(delta["reasoning_content"]))
+                        reasoning_part = str(delta["reasoning_content"])
+                        reasoning.append(reasoning_part)
+                        round_reasoning.append(reasoning_part)
                         if _flag("RESEARCH_CHAT_REASONING_VISIBLE"):
-                            yield emit(ResearchSseEventType.reasoning_delta, {"delta": delta["reasoning_content"]})
+                            yield emit(ResearchSseEventType.reasoning_delta, {"delta": reasoning_part})
                     if delta.get("content"):
-                        answer.append(str(delta["content"]))
-                        yield emit(ResearchSseEventType.answer_delta, {"delta": delta["content"]})
+                        answer_part = str(delta["content"])
+                        answer.append(answer_part)
+                        round_answer.append(answer_part)
+                        yield emit(ResearchSseEventType.answer_delta, {"delta": answer_part})
                     for part in delta.get("tool_calls") or []:
                         index = int(part.get("index", 0))
                         call = calls.setdefault(index, {"id": str(part.get("id") or ""), "type": "function", "function": {"name": "", "arguments": ""}})
@@ -126,25 +143,49 @@ class ResearchChatOrchestrator:
                 if not calls:
                     completion_truncated = round_truncated
                     break
-                tool_rounds += 1
-                if tool_rounds > 4:
+                tool_calls_used += len(calls)
+                if tool_calls_used > max_tool_calls:
                     raise RuntimeError("tool_loop_limit")
-                messages.append({"role": "assistant", "content": "".join(answer) or None, "reasoning_content": "".join(reasoning), "tool_calls": list(calls.values())})
+                if any(
+                    not str(call.get("id") or "")
+                    or not str((call.get("function") or {}).get("name") or "")
+                    for call in calls.values()
+                ):
+                    raise LlmClientError(
+                        "DeepSeek returned an incomplete tool call.",
+                        code="invalid_response",
+                        retryable=True,
+                    )
+                # DeepSeek requires the exact assistant tool_calls message followed by
+                # one tool message per call.  Do not replay prior rounds' content here.
+                assistant_tool_message = {
+                    "role": "assistant",
+                    "content": "".join(round_answer) or None,
+                    "reasoning_content": "".join(round_reasoning) or None,
+                    "tool_calls": list(calls.values()),
+                }
+                messages.append(assistant_tool_message)
+                tool_context_messages.append(assistant_tool_message)
                 for call in calls.values():
                     function = call["function"]
-                    name = function["name"]
+                    tool_call_id = str(call.get("id") or "")
+                    name = str(function["name"])
                     logger.info("Research tool started turn_id=%s tool=%s", turn.id, name)
                     yield emit(ResearchSseEventType.tool_started, {"tool_name": name})
                     try:
                         arguments = json.loads(function["arguments"] or "{}")
+                        if not isinstance(arguments, dict):
+                            raise ValueError("tool_arguments_must_be_object")
                         result = self.tools.call_tool(name, arguments, context)
                         self.repo.save_tool_call(turn.id, name, arguments, "completed", result)
                         logger.info("Research tool completed turn_id=%s tool=%s", turn.id, name)
-                    except Exception:
+                    except Exception as error:
                         self.repo.save_tool_call(turn.id, name, {}, "failed", error="tool_invalid_arguments")
                         logger.exception("Research tool failed turn_id=%s tool=%s", turn.id, name)
                         yield emit(ResearchSseEventType.tool_failed, {"tool_name": name, "error_code": "tool_invalid_arguments"})
-                        raise
+                        # A tool result must still be returned against the model-issued
+                        # ID, allowing the model to repair its call on the next round.
+                        result = {"error": "tool_invalid_arguments", "message": str(error)[:240]}
                     questions = _clarification_questions(result)
                     if questions and _flag("RESEARCH_CHAT_CLARIFICATION_ENABLED"):
                         item = self.repo.create_clarification(turn.id, "模型需要补充", questions)
@@ -153,10 +194,15 @@ class ResearchChatOrchestrator:
                         yield emit(ResearchSseEventType.done, {"status": "waiting_user", "turn_id": turn.id})
                         return
                     yield emit(ResearchSseEventType.tool_completed, {"tool_name": name, "result": result})
-                    messages.append({"role": "tool", "tool_call_id": call["id"], "content": json.dumps(result, ensure_ascii=False, default=str)})
+                    tool_message = {"role": "tool", "tool_call_id": tool_call_id, "content": json.dumps(result, ensure_ascii=False, default=str)}
+                    messages.append(tool_message)
+                    tool_context_messages.append(tool_message)
 
             final_answer = "".join(answer).strip()
             self.repo.add_message(session.id, turn.id, "user", "user_text", user_message)
+            for message in tool_context_messages:
+                content_type = "assistant_tool_context" if message["role"] == "assistant" else "tool_result_context"
+                self.repo.add_message(session.id, turn.id, str(message["role"]), content_type, json.dumps(message, ensure_ascii=False, default=str))
             self.repo.add_message(session.id, turn.id, "assistant", "assistant_answer", final_answer)
             answer_persisted = True
             decision_id = None
