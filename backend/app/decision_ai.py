@@ -32,6 +32,8 @@ class DecisionAiService:
         self.store, self.client = store, client or DeepSeekClient()
 
     def assess(self, context: DecisionContext, evidence: tuple[EvidenceItem, ...], candidates: tuple[ActionCandidate, ...]) -> DecisionAiOutcome:
+        # The model is a constrained evidence interpreter, not an action engine:
+        # it may choose only among candidates already produced by hard rules.
         run = {"run_id": str(uuid4()), "context_id": context.context_id, "input_hash": context.input_hash, "prompt_version": config.DECISION_RESEARCH_PROMPT_VERSION, "created_at": beijing_now().isoformat()}
         if not self.client.enabled:
             self.store.save_decision_ai_run({**run, "status": "skipped", "error_code": "not_configured", "payload": {}})
@@ -63,6 +65,8 @@ class DecisionAiService:
 
     @staticmethod
     def _validate_references(assessment, evidence, candidates) -> None:
+        # Reject invented citations and invented actions before persisting model
+        # output.  This keeps every visible AI claim traceable to the snapshot.
         known = {item.evidence_id for item in evidence}
         referenced = set(assessment.supporting_evidence_ids) | set(assessment.opposing_evidence_ids)
         referenced |= {item_id for step in assessment.reasoning_steps for item_id in step.evidence_ids}

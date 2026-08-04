@@ -11,6 +11,8 @@ class ActionPolicyEngine:
     version = config.ACTION_POLICY_VERSION
 
     def evaluate(self, context: DecisionContext, evidence: tuple[EvidenceItem, ...]) -> tuple[ActionCandidate, ...]:
+        # Precedence is deliberate: data-quality blocks first, then exit/risk
+        # constraints, and only then add/open conditions.  AI cannot reorder it.
         by_id = {item.evidence_id: item for item in evidence}
         ids = set(by_id)
         if context.data_quality.status == "blocked":

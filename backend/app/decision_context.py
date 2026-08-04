@@ -47,6 +47,9 @@ class DecisionContextBuilder:
         )
 
     def build(self, symbol: str) -> DecisionContext:
+        # The context is a reproducible snapshot assembled from persisted
+        # caches.  Keep upstream fetching and LLM calls out of this boundary so
+        # a saved decision can be audited against stable input data.
         symbol = self._symbol(symbol)
         holdings = self.store.list()
         holding = next((item for item in holdings if str(item["symbol"]).strip().upper() == symbol), None)
@@ -101,6 +104,8 @@ class DecisionContextBuilder:
             "instrument": self._instrument(instrument), "data_quality": quality,
             "source_versions": self._source_versions(),
         }
+        # Reports retain this hash, allowing later comparisons to distinguish a
+        # changed conclusion from a changed input snapshot.
         input_hash = _canonical_hash({key: value.model_dump(mode="json") if hasattr(value, "model_dump") else value for key, value in payload.items()})
         return DecisionContext(
             context_id=str(uuid4()), generated_at=beijing_now(), input_hash=input_hash, **payload,
@@ -111,6 +116,8 @@ class DecisionContextBuilder:
         return next((item for item in payload.get("items", []) if str(item.get("symbol", "")).upper() == symbol), None)
 
     def _events(self, symbol: str) -> tuple[EventSnapshot, ...]:
+        # AI-derived event impact is evidence metadata only.  The decision
+        # policy still owns action selection and accepts uncertain output.
         results = []
         for item in self.store.cached_content([symbol], limit=10):
             ai = item.get("ai_analysis") or {}

@@ -15,6 +15,8 @@ class EvidenceEngine:
     version = config.EVIDENCE_VERSION
 
     def build(self, context: DecisionContext) -> tuple[EvidenceItem, ...]:
+        # Evidence is normalized before policy evaluation.  The stable IDs are
+        # also the only citations that downstream AI output may reference.
         evidence: list[EvidenceItem] = [self._data_quality(context)]
         evidence.extend(self._position(context))
         evidence.extend(self._technical(context))

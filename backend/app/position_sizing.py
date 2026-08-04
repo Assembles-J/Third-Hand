@@ -11,6 +11,9 @@ class PositionSizingEngine:
     version = config.SIZING_VERSION
 
     def size(self, context: DecisionContext, action: str) -> PositionSizingResult:
+        # Sizing is deterministic and runs after policy selection.  It can
+        # refuse a candidate when required constraints are missing; it never
+        # turns a blocked/observation action into an executable one.
         position = context.position
         current_quantity = position.quantity if position else 0.0
         common = dict(current_quantity=current_quantity, current_position_percent=position.position_percent if position else 0.0, sizing_version=self.version)
@@ -37,6 +40,8 @@ class PositionSizingEngine:
             return PositionSizingResult(status="blocked", blocked_reasons=("trade_plan.invalidation_price",), lot_size=lot, entry_price=entry, **common)
         if quote.volume is None or quote.volume <= 0:
             return PositionSizingResult(status="blocked", blocked_reasons=("quote.volume",), lot_size=lot, entry_price=entry, **common)
+        # The final quantity is capped by four independent constraints: loss
+        # budget, available cash, portfolio concentration, and market liquidity.
         risk_per_share = entry - plan.invalidation_price
         risk_capital = assets * plan.risk_budget_percent / 100
         quantity_by_risk = floor(risk_capital / risk_per_share)

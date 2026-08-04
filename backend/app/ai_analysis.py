@@ -135,6 +135,9 @@ class AiAnalysisService:
             return None
 
     def enrich(self, item: dict[str, object]) -> dict[str, object]:
+        # This method is intentionally best-effort.  The feed remains usable if
+        # the model, cache, or schema validation is unavailable; callers simply
+        # receive the original content without an `ai_analysis` field.
         if not self.client.enabled:
             return item
         context = self._build_context(item)
@@ -146,6 +149,9 @@ class AiAnalysisService:
             except ValidationError:
                 logger.warning("忽略无效 AI 分析缓存 cache_key=%s", context.cache_key)
 
+        # A content item can appear in more than one feed request.  Deduplicate
+        # only the active request in this process; durable reuse is handled by
+        # the versioned cache key below.
         with self._inflight_lock:
             if context.cache_key in self._inflight:
                 return item
@@ -260,6 +266,9 @@ class AiAnalysisService:
             "body_text": item.get("body_text"),
             "raw_content": item.get("raw_content"),
         }
+        # Every factor that can change the interpretation participates in the
+        # cache key.  This makes prompt/model/rule changes naturally invalidate
+        # prior output without deleting historical records.
         rules_hash = _sha256({"research_rules": research_rules, "personal_rules": personal_rules})
         user_context_hash = _sha256(cases)
         content_hash = _sha256(content)

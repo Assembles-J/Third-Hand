@@ -1468,6 +1468,8 @@ private val starterGlossaryTerms = listOf(
     "空头排列", "多头排列", "量价背离", "市盈率", "波动率",
     "历史下行概率", "年化波动", "中期复核", "波动复核", "亏损复核", "技术面中期偏强", "研究候选方案",
     "MA20", "MA60", "RSI", "MACD", "ATR", "回撤", "减持", "回购", "PE",
+    "中期偏弱", "现价相对成本", "亏损复核阈值", "波动复核阈值", "证据完整度", "数据不足", "风险复核", "等待确认",
+    "RSI偏热", "RSI偏冷", "MACD动能", "ATR/收盘价", "60日回撤",
 ).sortedByDescending { it.length }
 
 private val explainableTerms: List<String>
