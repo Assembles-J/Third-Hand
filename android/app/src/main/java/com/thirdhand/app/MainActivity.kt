@@ -67,6 +67,8 @@ import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
+import androidx.compose.material3.DatePickerDialog
+import androidx.compose.material3.DateRangePicker
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.FilledTonalButton
 import androidx.compose.material3.HorizontalDivider
@@ -82,6 +84,7 @@ import androidx.compose.material3.RadioButton
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
+import androidx.compose.material3.rememberDateRangePickerState
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Switch
 import androidx.compose.runtime.Composable
@@ -117,6 +120,7 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import java.time.OffsetDateTime
 import java.time.LocalDate
+import java.time.Instant
 import java.time.temporal.WeekFields
 import java.time.ZoneOffset
 import java.time.format.DateTimeFormatter
@@ -2137,6 +2141,7 @@ private fun formatPositionValue(value: Double): String = "%.2f".format(value)
 private fun signedPositionValue(value: Double): String = if (value >= 0) "+${formatPositionValue(value)}" else formatPositionValue(value)
 
 @Composable
+@OptIn(ExperimentalMaterial3Api::class)
 private fun HoldingDetailScreen(holding: HoldingDto, onBack: () -> Unit) {
     val api = ApiClient.service(LocalContext.current)
     val scope = rememberCoroutineScope()
@@ -2155,6 +2160,9 @@ private fun HoldingDetailScreen(holding: HoldingDto, onBack: () -> Unit) {
     var recommendation by remember(holding.id) { mutableStateOf<ResearchRecommendationDto?>(null) }
     var evaluations by remember(holding.id) { mutableStateOf<List<RecommendationEvaluationDto>>(emptyList()) }
     var period by remember { mutableStateOf("日线") }
+    var monthRangeStart by remember(holding.id) { mutableStateOf(LocalDate.now(ZoneOffset.ofHours(8)).minusMonths(6)) }
+    var monthRangeEnd by remember(holding.id) { mutableStateOf(LocalDate.now(ZoneOffset.ofHours(8))) }
+    var monthRangePickerOpen by remember(holding.id) { mutableStateOf(false) }
     var sellOpen by remember { mutableStateOf(false) }
     var editOpen by remember { mutableStateOf(false) }
     var editError by remember { mutableStateOf<String?>(null) }
@@ -2182,10 +2190,10 @@ private fun HoldingDetailScreen(holding: HoldingDto, onBack: () -> Unit) {
             evaluations = runCatching { api.recommendationEvaluations(item.id) }.getOrDefault(emptyList())
         }
     }
-    fun refreshDailyHistory() = scope.launch {
+    fun refreshDailyHistory(startDate: LocalDate? = null, endDate: LocalDate? = null) = scope.launch {
         refreshingDailyHistory = true
         dailyHistoryLoadError = null
-        runCatching { api.refreshMarketHistory(holding.symbol) }
+        runCatching { api.refreshMarketHistory(holding.symbol, MarketHistoryRefreshInputDto(startDate?.toString(), endDate?.toString())) }
             .onSuccess { refreshed ->
                 bars = refreshed
                 if (refreshed.size < 2) {
@@ -2200,6 +2208,9 @@ private fun HoldingDetailScreen(holding: HoldingDto, onBack: () -> Unit) {
     val chartBars = when (period) {
         "今日" -> intradayBars
         "日线" -> todaySnapshotBar(bars, quote)
+        "月线" -> aggregateBars(bars.filter { bar ->
+            marketDate(bar.trading_date)?.let { !it.isBefore(monthRangeStart) && !it.isAfter(monthRangeEnd) } == true
+        }, period)
         else -> aggregateBars(bars, period)
     }
     Column(Modifier.fillMaxSize()) {
@@ -2224,6 +2235,11 @@ private fun HoldingDetailScreen(holding: HoldingDto, onBack: () -> Unit) {
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
             Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) { listOf("今日", "日线", "周线", "月线").forEach { label -> TextButton(onClick = { period = label }) { Text(label, color = if (period == label) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant) } } }
+            if (period == "月线") {
+                FilledTonalButton(onClick = { monthRangePickerOpen = true }) {
+                    Text("${monthRangeStart} 至 ${monthRangeEnd}")
+                }
+            }
             if (chartBars.size >= 2) KLineChart(
                 chartBars,
                 quote.takeIf { period == "日线" || period == "今日" },
@@ -2306,6 +2322,46 @@ private fun HoldingDetailScreen(holding: HoldingDto, onBack: () -> Unit) {
             }
         } },
     )
+    if (monthRangePickerOpen) MonthRangePickerDialog(
+        initialStart = monthRangeStart,
+        initialEnd = monthRangeEnd,
+        onDismiss = { monthRangePickerOpen = false },
+        onConfirm = { start, end ->
+            monthRangeStart = start
+            monthRangeEnd = end
+            monthRangePickerOpen = false
+            refreshDailyHistory(start, end)
+        },
+    )
+}
+
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+private fun MonthRangePickerDialog(
+    initialStart: LocalDate,
+    initialEnd: LocalDate,
+    onDismiss: () -> Unit,
+    onConfirm: (LocalDate, LocalDate) -> Unit,
+) {
+    val state = rememberDateRangePickerState(
+        initialSelectedStartDateMillis = initialStart.atStartOfDay(ZoneOffset.UTC).toInstant().toEpochMilli(),
+        initialSelectedEndDateMillis = initialEnd.atStartOfDay(ZoneOffset.UTC).toInstant().toEpochMilli(),
+    )
+    DatePickerDialog(
+        onDismissRequest = onDismiss,
+        confirmButton = {
+            TextButton(
+                enabled = state.selectedStartDateMillis != null && state.selectedEndDateMillis != null,
+                onClick = {
+                    onConfirm(
+                        Instant.ofEpochMilli(state.selectedStartDateMillis!!).atZone(ZoneOffset.UTC).toLocalDate(),
+                        Instant.ofEpochMilli(state.selectedEndDateMillis!!).atZone(ZoneOffset.UTC).toLocalDate(),
+                    )
+                },
+            ) { Text("应用范围") }
+        },
+        dismissButton = { TextButton(onClick = onDismiss) { Text("取消") } },
+    ) { DateRangePicker(state = state, title = { Text("选择月K日期范围") }) }
 }
 
 private fun marketDate(value: String): LocalDate? = runCatching {

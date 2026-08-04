@@ -6,6 +6,8 @@ import logging
 import os
 
 from app.decimal_utils import decimal_text
+from app.time_utils import beijing_now
+from app.trading_calendar import TradingCalendarService
 
 
 logger = logging.getLogger(__name__)
@@ -16,7 +18,11 @@ class PriceHistoryUnavailable(RuntimeError):
 
 
 class PriceHistoryService:
-    LOOKBACK_DAYS = 800
+    DEFAULT_LOOKBACK_DAYS = 183
+    MAX_LOOKBACK_DAYS = 3650
+
+    def __init__(self, trading_calendar: TradingCalendarService | None = None) -> None:
+        self._trading_calendar = trading_calendar or TradingCalendarService()
 
     @staticmethod
     def _kind(symbol: str) -> str:
@@ -38,15 +44,46 @@ class PriceHistoryService:
         except ValueError:
             return None
 
-    def refresh(self, store, symbol: str) -> int:
+    def refresh(self, store, symbol: str, start_date: str | None = None, end_date: str | None = None) -> int:
+        """Fill only missing daily-session ranges and preserve cached history."""
+        symbol = symbol.strip().upper()
+        market = "HK" if self._kind(symbol) == "hk" else "CN"
+        latest = self._trading_calendar.latest_session_date(market) or beijing_now().date().isoformat()
+        try:
+            end_day = date.fromisoformat(end_date) if end_date else date.fromisoformat(latest)
+            start_day = date.fromisoformat(start_date) if start_date else end_day - timedelta(days=self.DEFAULT_LOOKBACK_DAYS)
+        except ValueError as error:
+            raise PriceHistoryUnavailable("日期范围格式应为 YYYY-MM-DD。") from error
+        if start_day > end_day or (end_day - start_day).days > self.MAX_LOOKBACK_DAYS:
+            raise PriceHistoryUnavailable("日期范围无效或超过十年上限。")
+        start = start_day.isoformat()
+        end = end_day.isoformat()
+        expected = self._trading_calendar.session_dates(market, start, end)
+        existing = {str(item["trading_date"]) for item in store.daily_prices(symbol, 1000)}
+        missing = [session for session in expected if session not in existing]
+        if not missing:
+            return len(existing)
+        groups: list[tuple[str, str]] = []
+        group_start = missing[0]
+        previous = missing[0]
+        expected_positions = {session: index for index, session in enumerate(expected)}
+        for session in missing[1:]:
+            if expected_positions[session] != expected_positions[previous] + 1:
+                groups.append((group_start, previous))
+                group_start = session
+            previous = session
+        groups.append((group_start, previous))
+        for range_start, range_end in groups:
+            self._refresh_range(store, symbol, range_start.replace("-", ""), range_end.replace("-", ""))
+        return len(store.daily_prices(symbol, 1000))
+
+    def _refresh_range(self, store, symbol: str, start: str, end: str) -> int:
         """Fetch outside request handling, then persist normalized daily OHLCV bars."""
         symbol = symbol.strip().upper()
         try:
             import akshare as ak
         except ImportError as error:
             raise PriceHistoryUnavailable("未安装历史行情依赖。") from error
-        start = (date.today() - timedelta(days=self.LOOKBACK_DAYS)).strftime("%Y%m%d")
-        end = date.today().strftime("%Y%m%d")
         akshare_error: Exception | None = None
         try:
             kind = self._kind(symbol)
@@ -103,11 +140,15 @@ class PriceHistoryService:
                 type(error).__name__,
             )
         if akshare_error is not None:
-            bars = self._tushare_bars(symbol, start)
+            # Tencent is independent from the Eastmoney endpoint behind
+            # ``stock_zh_a_hist``. Tushare remains the final fallback.
+            bars = self._tencent_bars(symbol, start, end)
+            if not bars:
+                bars = self._tushare_bars(symbol, start, end)
             if not bars:
                 raise PriceHistoryUnavailable(
-                    "历史日线不可用：AKShare 失败，Tushare 未返回可用数据；"
-                    "请查看两路 provider 日志。"
+                    "历史日线不可用：AKShare、Tencent 均失败，Tushare 未返回可用数据；"
+                    "请查看各 provider 日志。"
                 ) from akshare_error
         else:
             logger.info(
@@ -115,12 +156,92 @@ class PriceHistoryService:
                 symbol,
                 len(bars),
             )
+        # Tencent daily data can lag after the close. Fill only a missing
+        # completed-session bar from Sina's independently sourced 1-minute feed.
+        self._append_sina_closing_bar(symbol, bars)
         if not bars:
             raise PriceHistoryUnavailable("行情源未返回可用的交易日期。")
-        # A successful refresh is authoritative for one symbol. Replacing instead of
-        # upserting also purges legacy malformed dates already stored in the cache.
-        store.replace_daily_prices(symbol, bars)
+        store.save_daily_prices(symbol, bars)
         return len(bars)
+
+    def _tencent_bars(self, symbol: str, start: str, end: str) -> list[dict[str, object]]:
+        """Fetch A-share daily history from Tencent when Eastmoney is down."""
+        if self._kind(symbol) != "a":
+            return []
+        try:
+            import akshare as ak
+            exchange = "sh" if symbol.startswith(("5", "6", "9")) else "sz"
+            frame = ak.stock_zh_a_hist_tx(
+                symbol=f"{exchange}{symbol}", start_date=start, end_date=end, adjust="qfq",
+            )
+            if frame is None or frame.empty:
+                raise ValueError("empty_response")
+            bars = []
+            for index, day in enumerate(frame["date"]):
+                trading_date = self._trading_date(day)
+                row = frame.iloc[index]
+                close = decimal_text(row.get("close"))
+                if trading_date is None or close is None:
+                    continue
+                bars.append({
+                    "trading_date": trading_date, "open": decimal_text(row.get("open")),
+                    "close": close, "high": decimal_text(row.get("high")),
+                    "low": decimal_text(row.get("low")), "volume": decimal_text(row.get("volume")),
+                    "amount": decimal_text(row.get("amount")), "adjustment": "qfq",
+                    "source": "Tencent daily history",
+                })
+            if bars:
+                logger.info("历史日线获取成功 provider=tencent symbol=%s bar_count=%s", symbol, len(bars))
+            else:
+                logger.warning("历史日线获取失败 provider=tencent symbol=%s reason=no_usable_close", symbol)
+            return bars
+        except Exception as error:
+            logger.warning(
+                "历史日线获取失败 provider=tencent symbol=%s error_type=%s",
+                symbol, type(error).__name__,
+            )
+            return []
+
+    def _append_sina_closing_bar(self, symbol: str, bars: list[dict[str, object]]) -> None:
+        """Append a complete post-close A-share bar from Sina minute history."""
+        now = beijing_now()
+        if self._kind(symbol) != "a" or now.hour < 15:
+            return
+        today = now.date().isoformat()
+        if any(str(bar.get("trading_date")) == today for bar in bars):
+            return
+        try:
+            import akshare as ak
+            exchange = "sh" if symbol.startswith(("5", "6", "9")) else "sz"
+            frame = ak.stock_zh_a_minute(symbol=f"{exchange}{symbol}", period="1", adjust="qfq")
+            if frame is None or frame.empty:
+                return
+            rows = []
+            for index, value in enumerate(frame["day"]):
+                if str(value)[:10] != today:
+                    continue
+                row = frame.iloc[index]
+                if decimal_text(row.get("close")) is not None:
+                    rows.append(row)
+            if not rows:
+                return
+            volumes = [float(row.get("volume")) for row in rows if decimal_text(row.get("volume")) is not None]
+            amounts = [float(row.get("amount")) for row in rows if decimal_text(row.get("amount")) is not None]
+            bars.append({
+                "trading_date": today, "open": decimal_text(rows[0].get("open")),
+                "close": decimal_text(rows[-1].get("close")),
+                "high": decimal_text(max(float(row.get("high")) for row in rows)),
+                "low": decimal_text(min(float(row.get("low")) for row in rows)),
+                "volume": decimal_text(sum(volumes)) if volumes else None,
+                "amount": decimal_text(sum(amounts)) if amounts else None,
+                "adjustment": "qfq", "source": "Sina minute aggregation",
+            })
+            logger.info("历史日线补齐成功 provider=sina_minute symbol=%s trading_date=%s", symbol, today)
+        except Exception as error:
+            logger.warning(
+                "历史日线补齐跳过 provider=sina_minute symbol=%s error_type=%s",
+                symbol, type(error).__name__,
+            )
 
     def refresh_intraday(self, store, symbol: str) -> int:
         """Persist one-minute OHLCV bars; callers run this only in background jobs."""
@@ -129,8 +250,26 @@ class PriceHistoryService:
             raise PriceHistoryUnavailable("港股分钟行情源尚未配置")
         try:
             import akshare as ak
-            today = datetime.now().strftime("%Y-%m-%d")
-            frame = ak.stock_zh_a_hist_min_em(symbol=symbol, start_date=f"{today} 09:30:00", end_date=f"{today} 15:00:00", period="1", adjust="")
+            today = beijing_now().date().isoformat()
+            cached_today = [
+                item for item in store.intraday_prices(symbol, 1500)
+                if str(item.get("bar_time", ""))[:10] == today
+            ]
+            latest_cached = str(cached_today[-1]["bar_time"])[:19] if cached_today else None
+            if beijing_now().hour >= 15 and latest_cached and latest_cached.endswith("15:00:00"):
+                return len(cached_today)
+            request_start = latest_cached or f"{today} 09:30:00"
+            try:
+                frame = ak.stock_zh_a_hist_min_em(symbol=symbol, start_date=request_start, end_date=f"{today} 15:00:00", period="1", adjust="")
+                source = "AKShare stock_zh_a_hist_min_em"
+            except Exception as eastmoney_error:
+                logger.warning(
+                    "Minute data Eastmoney unavailable; falling back to Sina symbol=%s error_type=%s",
+                    symbol, type(eastmoney_error).__name__,
+                )
+                exchange = "sh" if symbol.startswith(("5", "6", "9")) else "sz"
+                frame = ak.stock_zh_a_minute(symbol=f"{exchange}{symbol}", period="1", adjust="qfq")
+                source = "Sina Finance minute / AKShare"
         except Exception as error:
             raise PriceHistoryUnavailable("分钟行情源暂时不可用") from error
         if frame is None or frame.empty:
@@ -138,15 +277,23 @@ class PriceHistoryService:
         bars = []
         for _, row in frame.iterrows():
             try:
-                values = list(row.values)
-                # Eastmoney's documented column order: time, open, close, high, low, volume, amount, amplitude, change, change amount, turnover.
-                bars.append({"bar_time": str(values[0])[:19], "open": float(values[1]), "close": float(values[2]), "high": float(values[3]), "low": float(values[4]), "volume": float(values[5]) if len(values) > 5 else None, "amount": float(values[6]) if len(values) > 6 else None, "average_price": None, "source": "AKShare stock_zh_a_hist_min_em"})
+                if source == "Sina Finance minute / AKShare":
+                    bars.append({
+                        "bar_time": str(row["day"])[:19], "open": float(row["open"]),
+                        "close": float(row["close"]), "high": float(row["high"]),
+                        "low": float(row["low"]), "volume": float(row["volume"]),
+                        "amount": float(row["amount"]), "average_price": None, "source": source,
+                    })
+                else:
+                    values = list(row.values)
+                    # Eastmoney's documented column order: time, open, close, high, low, volume, amount, amplitude, change, change amount, turnover.
+                    bars.append({"bar_time": str(values[0])[:19], "open": float(values[1]), "close": float(values[2]), "high": float(values[3]), "low": float(values[4]), "volume": float(values[5]) if len(values) > 5 else None, "amount": float(values[6]) if len(values) > 6 else None, "average_price": None, "source": source})
             except (TypeError, ValueError, IndexError):
                 continue
         store.save_intraday_prices(symbol, bars)
         return len(bars)
 
-    def _tushare_bars(self, symbol: str, start: str) -> list[dict[str, object]]:
+    def _tushare_bars(self, symbol: str, start: str, end: str) -> list[dict[str, object]]:
         """Use end-of-day Tushare data when an AKShare public endpoint is unavailable."""
         token = os.getenv("TUSHARE_TOKEN", "").strip()
         if not token:
@@ -166,7 +313,7 @@ class PriceHistoryService:
             client = ts.pro_api(token)
             exchange = "BJ" if symbol.startswith(("4", "8")) else ("SH" if symbol.startswith(("5", "6", "9")) else "SZ")
             is_etf = self._kind(symbol) == "etf"
-            frame = (client.fund_daily if is_etf else client.daily)(ts_code=f"{symbol}.{exchange}", start_date=start)
+            frame = (client.fund_daily if is_etf else client.daily)(ts_code=f"{symbol}.{exchange}", start_date=start, end_date=end)
             if frame is None or frame.empty:
                 logger.warning(
                     "历史日线获取失败 provider=tushare symbol=%s reason=empty_response",

@@ -82,6 +82,28 @@ def test_force_refresh_bypasses_in_memory_market_frame(monkeypatch):
     assert source == "东方财富 / AKShare"
 
 
+def test_a_share_quote_falls_back_to_sina_when_eastmoney_is_unavailable(monkeypatch):
+    sina = pd.DataFrame([{
+        "代码": "sz002594", "名称": "比亚迪", "最新价": 91.15,
+        "涨跌额": -3.3, "涨跌幅": -3.49, "昨收": 94.45, "今开": 96.03,
+        "最高": 96.59, "最低": 90.88, "成交量": 123, "成交额": 456,
+        "时间戳": "15:00:00",
+    }])
+    monkeypatch.setitem(
+        __import__("sys").modules,
+        "akshare",
+        SimpleNamespace(
+            stock_zh_a_spot_em=lambda: (_ for _ in ()).throw(ConnectionError("eastmoney unavailable")),
+            stock_zh_a_spot=lambda: sina,
+        ),
+    )
+
+    quote = MarketDataService().quotes(["002594"], force_refresh=True)[0]
+
+    assert quote["price"] == 91.15
+    assert quote["source"] == "Sina Finance / AKShare"
+
+
 def test_invalid_symbol_does_not_discard_valid_quote():
     service = MarketDataService()
     service._provider = "akshare"

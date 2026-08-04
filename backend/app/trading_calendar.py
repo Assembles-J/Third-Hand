@@ -158,3 +158,15 @@ class TradingCalendarService:
             return None
 
         return self.latest_session_date(market, moment)
+
+    def session_dates(self, market: str, start: str, end: str) -> list[str]:
+        """Return exchange session dates in an inclusive ISO date range."""
+        calendar = self._calendars.get(market)
+        if calendar is None:
+            return []
+        try:
+            return [session.date().isoformat() for session in calendar.sessions_in_range(
+                pd.Timestamp(start), pd.Timestamp(end),
+            )]
+        except ValueError:
+            return []

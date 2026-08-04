@@ -402,10 +402,21 @@ class MarketDataService:
                 frame = ak.fund_etf_spot_em()
                 source = "东方财富 / AKShare"
             else:
-                frame = ak.stock_zh_a_spot_em()
+                used_sina_a_fallback = False
+                try:
+                    frame = ak.stock_zh_a_spot_em()
+                except Exception as eastmoney_error:
+                    logger.warning(
+                        "A-share Eastmoney snapshot unavailable; falling back to Sina error_type=%s",
+                        type(eastmoney_error).__name__,
+                    )
+                    frame = ak.stock_zh_a_spot()
+                    used_sina_a_fallback = True
                 source = "东方财富 / AKShare"
         except Exception as error:
             raise MarketDataUnavailable("公开行情源暂时不可用，请稍后刷新。") from error
+        if market == "a" and used_sina_a_fallback:
+            source = "Sina Finance / AKShare"
         retrieved_at = beijing_now()
         logger.info(
             "行情上游响应 market=%s source=%s rows=%s elapsed_ms=%s",
@@ -563,6 +574,7 @@ class MarketDataService:
             data["代码"] = (
                 data["代码"]
                 .astype(str)
+                .str.replace(r"^(?:sh|sz|bj)", "", regex=True, case=False)
                 .str.zfill(code_width)
             )
 

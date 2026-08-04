@@ -10,7 +10,7 @@ import hashlib
 import io
 import json
 import logging
-from datetime import timezone, timedelta
+from datetime import date, timezone, timedelta
 import os
 import time
 from datetime import datetime
@@ -241,6 +241,11 @@ class DailyPrice(BaseModel):
     change_amount: float | None = None
     adjustment: str = "qfq"
     source: str = ""
+
+
+class MarketHistoryRefreshRequest(BaseModel):
+    start_date: date | None = None
+    end_date: date | None = None
 
 
 class RecommendationRequest(BaseModel):
@@ -1601,17 +1606,36 @@ def delete_watchlist_item(symbol: str) -> Response:
 
 
 @app.get("/v1/market/history/{symbol}", response_model=list[DailyPrice])
-def market_history(symbol: str, limit: int = Query(default=120, ge=20, le=800)) -> list[DailyPrice]:
+def market_history(
+    symbol: str,
+    limit: int = Query(default=120, ge=20, le=800),
+    start_date: date | None = None,
+    end_date: date | None = None,
+) -> list[DailyPrice]:
     """Persisted daily bars only; chart rendering never queries an upstream source."""
-    return [DailyPrice.model_validate(item) for item in store.daily_prices(symbol.strip().upper(), limit)]
+    normalized_symbol = symbol.strip().upper()
+    if start_date or end_date:
+        if not (start_date and end_date) or start_date > end_date:
+            raise HTTPException(status_code=422, detail="start_date and end_date must form a valid range")
+        return [DailyPrice.model_validate(item) for item in store.daily_prices_between(
+            normalized_symbol, start_date.isoformat(), end_date.isoformat(), 2000,
+        )]
+    return [DailyPrice.model_validate(item) for item in store.daily_prices(normalized_symbol, limit)]
 
 
 @app.post("/v1/market/history/{symbol}/refresh", response_model=list[DailyPrice])
-def refresh_market_history(symbol: str) -> list[DailyPrice]:
+def refresh_market_history(symbol: str, payload: MarketHistoryRefreshRequest = MarketHistoryRefreshRequest()) -> list[DailyPrice]:
     """Manually retry one symbol's daily-history provider chain for mobile charts."""
     normalized_symbol = symbol.strip().upper()
     try:
-        bar_count = price_history_service.refresh(store, normalized_symbol)
+        bar_count = (
+            price_history_service.refresh(
+                store, normalized_symbol,
+                payload.start_date.isoformat(), payload.end_date.isoformat(),
+            )
+            if payload.start_date and payload.end_date
+            else price_history_service.refresh(store, normalized_symbol)
+        )
         daily_history_attempted_for[normalized_symbol] = beijing_now().date().isoformat()
         daily_history_refreshed_for[normalized_symbol] = beijing_now().date().isoformat()
         daily_history_retry_after.pop(normalized_symbol, None)
@@ -1630,6 +1654,10 @@ def refresh_market_history(symbol: str) -> list[DailyPrice]:
         )
         raise HTTPException(status_code=503, detail=str(error)) from error
     queue_background(refresh_derived_cache, [normalized_symbol], "manual-daily-history-refresh")
+    if payload.start_date and payload.end_date:
+        return [DailyPrice.model_validate(item) for item in store.daily_prices_between(
+            normalized_symbol, payload.start_date.isoformat(), payload.end_date.isoformat(), 2000,
+        )]
     return [DailyPrice.model_validate(item) for item in store.daily_prices(normalized_symbol, 800)]
 
 

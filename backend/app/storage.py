@@ -880,6 +880,16 @@ class PortfolioStore:
             ).fetchall()
         return [dict(row) for row in reversed(rows)]
 
+    def daily_prices_between(self, symbol: str, start_date: str, end_date: str, limit: int = 2000) -> list[dict[str, object]]:
+        """Read one inclusive daily-history range from the local cache only."""
+        with self._connect() as connection:
+            rows = connection.execute(
+                "SELECT trading_date, open, close, high, low, volume, amount, amplitude_percent, change_percent, change_amount, turnover_rate, adjustment, source FROM daily_price_cache "
+                "WHERE symbol=? AND trading_date>=? AND trading_date<=? ORDER BY trading_date ASC LIMIT ?",
+                (symbol.strip().upper(), start_date, end_date, max(1, limit)),
+            ).fetchall()
+        return [dict(row) for row in rows]
+
     def save_instrument_metadata(self, item: dict[str, object]) -> dict[str, object]:
         now = beijing_now().isoformat()
         payload = {**item, "symbol": str(item["symbol"]).strip().upper(), "updated_at": now}

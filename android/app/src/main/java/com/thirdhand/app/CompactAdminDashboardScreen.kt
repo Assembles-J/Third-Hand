@@ -23,6 +23,7 @@ import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.FilterChip
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
+import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.OutlinedTextFieldDefaults
@@ -44,6 +45,7 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 
 private val CompactCanvas = Color(0xFF111614)
@@ -70,6 +72,7 @@ fun CompactAdminDashboardScreen() {
     var updateStatus by remember { mutableStateOf<String?>(null) }
     var checkingUpdate by remember { mutableStateOf(false) }
     var availableUpdate by remember { mutableStateOf<AppUpdate?>(null) }
+    var updateProgress by remember { mutableStateOf<UpdateDownloadProgress?>(null) }
     val scope = rememberCoroutineScope()
     LaunchedEffect(refreshKey) {
         error = null
@@ -77,6 +80,23 @@ fun CompactAdminDashboardScreen() {
             .onSuccess { overview = it }
             .onFailure { error = "无法读取系统状态，请检查服务连接。" }
         runCatching { api.adminConfig() }.onSuccess { config = it }
+    }
+    LaunchedEffect(availableUpdate) {
+        val update = availableUpdate ?: return@LaunchedEffect
+        while (true) {
+            val current = AppUpdateManager.refreshDownloadState(context)
+            updateProgress = current
+            if (current?.state?.isActive != true) {
+                updateStatus = when {
+                    AppUpdateManager.hasCompletedDownload(context, update) ->
+                        "更新包已准备好，点击“下载或安装更新”前往系统安装"
+                    current?.state == UpdateDownloadState.FAILED -> current.message
+                    else -> updateStatus
+                }
+                break
+            }
+            delay(500)
+        }
     }
     Column(
         Modifier.fillMaxWidth().background(CompactCanvas).verticalScroll(rememberScrollState()).padding(16.dp),
@@ -133,13 +153,14 @@ fun CompactAdminDashboardScreen() {
                     updateStatus = runCatching { AppUpdateManager.check(context) }.fold(
                         onSuccess = { update ->
                             availableUpdate = update
-                            if (update == null) "已是最新版本" else "发现 ${update.versionName}，正在开始下载"
+                            updateProgress = update?.let { AppUpdateManager.refreshDownloadState(context) }
+                            if (update == null) "已是最新版本" else "发现 ${update.versionName}，准备下载"
                         },
                         onFailure = { "检查更新失败：${it.message ?: "请检查服务地址和网络"}" },
                     )
                     availableUpdate?.let { update ->
                         updateStatus = when (AppUpdateManager.downloadAndInstall(context, update)) {
-                            UpdateLaunchResult.DOWNLOAD_STARTED -> "正在后台下载 ${update.versionName}，完成后可再次点此安装"
+                            UpdateLaunchResult.DOWNLOAD_STARTED -> "正在下载 ${update.versionName}；进度会在这里实时更新"
                             UpdateLaunchResult.INSTALLER_OPENED -> "已进入系统安装页；安装完成后点击“打开”即可直接进入新版"
                             UpdateLaunchResult.NEED_INSTALL_PERMISSION -> "请允许安装未知应用后重试"
                             UpdateLaunchResult.NEED_STORAGE_PERMISSION -> "请允许保存安装包后重试"
@@ -150,12 +171,13 @@ fun CompactAdminDashboardScreen() {
                     checkingUpdate = false
                 }
             }) { Text(if (checkingUpdate) "正在检查…" else if (availableUpdate != null) "下载或安装更新" else "检查更新", color = CompactMint) }
+            updateProgress?.let { progress -> CompactUpdateDownloadProgress(progress) }
             updateStatus?.let { Text(it, color = if (it.contains("失败") || it.contains("不可用")) CompactCoral else CompactTeal, style = MaterialTheme.typography.labelSmall) }
         }
         FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
             CompactConsoleCard(Modifier.weight(1f).widthIn(min = 150.dp)) {
                 Text("资源容量", color = CompactText, fontWeight = FontWeight.Bold)
-                Text("SQLite ${compactBytes(overview?.database_bytes ?: 0)}", color = CompactTeal, style = MaterialTheme.typography.labelMedium)
+                Text("SQLite ${compactBytes((overview?.database_bytes ?: 0).toLong())}", color = CompactTeal, style = MaterialTheme.typography.labelMedium)
                 Text("内容 ${overview?.cached_content_count ?: 0} 条", color = CompactQuiet, style = MaterialTheme.typography.labelSmall)
             }
             CompactConsoleCard(Modifier.weight(1f).widthIn(min = 150.dp)) {
@@ -183,6 +205,29 @@ fun CompactAdminDashboardScreen() {
                 Text("Debug 包始终不会提示安装正式版。", color = CompactTeal, style = MaterialTheme.typography.labelSmall)
             }
         }
+    }
+}
+
+@Composable
+private fun CompactUpdateDownloadProgress(progress: UpdateDownloadProgress) {
+    val percentage = progress.fraction?.let { " ${(it * 100).toInt()}%" }.orEmpty()
+    val size = if (progress.totalBytes > 0) {
+        " · ${compactBytes(progress.downloadedBytes)} / ${compactBytes(progress.totalBytes)}"
+    } else ""
+    Text("${progress.message}$percentage$size", color = CompactText, style = MaterialTheme.typography.labelSmall)
+    if (progress.fraction != null) {
+        LinearProgressIndicator(
+            progress = { progress.fraction },
+            modifier = Modifier.fillMaxWidth(),
+            color = CompactMint,
+            trackColor = CompactPanel,
+        )
+    } else if (progress.state.isActive) {
+        LinearProgressIndicator(
+            modifier = Modifier.fillMaxWidth(),
+            color = CompactMint,
+            trackColor = CompactPanel,
+        )
     }
 }
 
@@ -255,7 +300,7 @@ private fun CompactConsoleCard(modifier: Modifier = Modifier, content: @Composab
     shape = MaterialTheme.shapes.extraSmall,
 ) { Column(Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) { content() } }
 
-private fun compactBytes(bytes: Int): String = when {
+private fun compactBytes(bytes: Long): String = when {
     bytes >= 1_048_576 -> "%.1f MB".format(bytes / 1_048_576.0)
     bytes >= 1_024 -> "%.1f KB".format(bytes / 1_024.0)
     else -> "$bytes B"

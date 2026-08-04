@@ -35,6 +35,11 @@ data class HoldingInputDto(
     val average_cost: Double,
 )
 
+data class MarketHistoryRefreshInputDto(
+    val start_date: String? = null,
+    val end_date: String? = null,
+)
+
 data class HoldingDraftDto(
     val id: String,
     val client_row_id: String,
@@ -414,9 +419,9 @@ interface ThirdHandApi {
     suspend fun deleteWatchlistItem(@Path("symbol") symbol: String)
 
     @GET("v1/market/history/{symbol}")
-    suspend fun marketHistory(@Path("symbol") symbol: String, @Query("limit") limit: Int = 120): List<DailyPriceDto>
+    suspend fun marketHistory(@Path("symbol") symbol: String, @Query("limit") limit: Int = 120, @Query("start_date") startDate: String? = null, @Query("end_date") endDate: String? = null): List<DailyPriceDto>
     @POST("v1/market/history/{symbol}/refresh")
-    suspend fun refreshMarketHistory(@Path("symbol") symbol: String): List<DailyPriceDto>
+    suspend fun refreshMarketHistory(@Path("symbol") symbol: String, @Body input: MarketHistoryRefreshInputDto = MarketHistoryRefreshInputDto()): List<DailyPriceDto>
     @DELETE("v1/market/history/{symbol}")
     suspend fun deleteMarketHistory(@Path("symbol") symbol: String)
     @GET("v1/market/intraday/{symbol}")

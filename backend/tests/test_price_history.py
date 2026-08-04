@@ -4,6 +4,7 @@ import sys
 from types import SimpleNamespace
 
 import pytest
+import pandas as pd
 
 from app.market_freshness import quote_freshness_status
 from app.price_history import PriceHistoryService, PriceHistoryUnavailable
@@ -119,10 +120,116 @@ def test_daily_history_failure_logs_akshare_and_tushare_status(monkeypatch, tmp_
     monkeypatch.delenv("TUSHARE_TOKEN", raising=False)
 
     with caplog.at_level("WARNING"):
-        with pytest.raises(PriceHistoryUnavailable, match="AKShare 失败"):
+        with pytest.raises(PriceHistoryUnavailable, match="AKShare、Tencent"):
             PriceHistoryService().refresh(PortfolioStore(tmp_path / "history.db"), "600519")
 
     assert "provider=akshare" in caplog.text
     assert "ConnectionError" in caplog.text
     assert "provider=tushare" in caplog.text
     assert "reason=tushare_token_missing" in caplog.text
+
+
+def test_tencent_daily_fallback_replaces_failed_eastmoney_history(monkeypatch, tmp_path):
+    tencent_frame = _Frame([{
+        "date": "2026-08-03", "open": "94", "close": "95", "high": "96", "low": "93",
+        "volume": "100", "amount": "9500",
+    }])
+    monkeypatch.setitem(sys.modules, "akshare", SimpleNamespace(
+        stock_zh_a_hist=lambda **_: (_ for _ in ()).throw(ConnectionError("eastmoney unavailable")),
+        stock_zh_a_hist_tx=lambda **_: tencent_frame,
+        stock_zh_a_minute=lambda **_: _Frame([]),
+    ))
+    monkeypatch.setattr("app.price_history.beijing_now", lambda: datetime(2026, 8, 4, 15, 30))
+
+    store = PortfolioStore(tmp_path / "history.db")
+    assert PriceHistoryService().refresh(store, "002594") == 1
+    bar = store.daily_prices("002594")[0]
+    assert bar["close"] == 95
+    assert bar["source"] == "Tencent daily history"
+
+
+def test_post_close_sina_minutes_supply_missing_current_daily_bar(monkeypatch, tmp_path):
+    eastmoney_frame = _Frame([{
+        "日期": "2026-08-03", "开盘": "94", "收盘": "95", "最高": "96", "最低": "93",
+        "成交量": "100", "成交额": "9500",
+    }])
+    sina_frame = _Frame([
+        {"day": "2026-08-04 09:30:00", "open": "96", "high": "97", "low": "95", "close": "96.5", "volume": "10", "amount": "965"},
+        {"day": "2026-08-04 15:00:00", "open": "96.5", "high": "98", "low": "96", "close": "97", "volume": "20", "amount": "1940"},
+    ])
+    monkeypatch.setitem(sys.modules, "akshare", SimpleNamespace(
+        stock_zh_a_hist=lambda **_: eastmoney_frame,
+        stock_zh_a_minute=lambda **_: sina_frame,
+    ))
+    monkeypatch.setattr("app.price_history.beijing_now", lambda: datetime(2026, 8, 4, 15, 30))
+
+    store = PortfolioStore(tmp_path / "history.db")
+    assert PriceHistoryService().refresh(store, "002594") == 2
+    today = store.daily_prices("002594")[-1]
+    assert today["trading_date"] == "2026-08-04"
+    assert today["open"] == "96"
+    assert today["close"] == 97
+    assert today["high"] == 98
+    assert today["low"] == 95
+    assert today["volume"] == "30.0"
+    assert today["amount"] == "2905.0"
+    assert today["source"] == "Sina minute aggregation"
+
+
+def test_intraday_falls_back_to_sina_when_eastmoney_is_unavailable(monkeypatch, tmp_path):
+    sina_frame = pd.DataFrame([
+        {"day": "2026-08-04 14:59:00", "open": 96, "high": 97, "low": 95, "close": 96.5, "volume": 10, "amount": 965},
+        {"day": "2026-08-04 15:00:00", "open": 96.5, "high": 98, "low": 96, "close": 97, "volume": 20, "amount": 1940},
+    ])
+    monkeypatch.setitem(sys.modules, "akshare", SimpleNamespace(
+        stock_zh_a_hist_min_em=lambda **_: (_ for _ in ()).throw(ConnectionError("eastmoney unavailable")),
+        stock_zh_a_minute=lambda **_: sina_frame,
+    ))
+
+    store = PortfolioStore(tmp_path / "history.db")
+    assert PriceHistoryService().refresh_intraday(store, "002594") == 2
+    bars = store.intraday_prices("002594")
+    assert bars[-1]["bar_time"] == "2026-08-04 15:00:00"
+    assert bars[-1]["close"] == 97
+    assert bars[-1]["source"] == "Sina Finance minute / AKShare"
+
+
+def test_daily_refresh_requests_only_contiguous_missing_session_ranges(monkeypatch, tmp_path):
+    class Calendar:
+        def latest_session_date(self, market): return "2026-08-05"
+        def session_dates(self, market, start, end): return ["2026-08-03", "2026-08-04", "2026-08-05"]
+
+    calls = []
+    frame = _Frame([{
+        "日期": "2026-08-04", "开盘": "96", "收盘": "97", "最高": "98", "最低": "95",
+        "成交量": "100", "成交额": "9700",
+    }])
+    monkeypatch.setitem(sys.modules, "akshare", SimpleNamespace(
+        stock_zh_a_hist=lambda **kwargs: calls.append(kwargs) or frame,
+    ))
+    store = PortfolioStore(tmp_path / "history.db")
+    store.save_daily_prices("002594", [
+        {"trading_date": "2026-08-03", "open": 94, "close": 95, "high": 96, "low": 93, "source": "cached"},
+        {"trading_date": "2026-08-05", "open": 98, "close": 99, "high": 100, "low": 97, "source": "cached"},
+    ])
+
+    assert PriceHistoryService(Calendar()).refresh(store, "002594") == 3
+    assert [(call["start_date"], call["end_date"]) for call in calls] == [("20260804", "20260804")]
+    assert [bar["trading_date"] for bar in store.daily_prices("002594")] == ["2026-08-03", "2026-08-04", "2026-08-05"]
+
+
+def test_intraday_refresh_continues_from_latest_cached_bar(monkeypatch, tmp_path):
+    calls = []
+    eastmoney_frame = pd.DataFrame([["2026-08-04 14:12:00", 96, 96.5, 97, 95, 10, 965]])
+    monkeypatch.setitem(sys.modules, "akshare", SimpleNamespace(
+        stock_zh_a_hist_min_em=lambda **kwargs: calls.append(kwargs) or eastmoney_frame,
+    ))
+    monkeypatch.setattr("app.price_history.beijing_now", lambda: datetime(2026, 8, 4, 14, 15))
+    store = PortfolioStore(tmp_path / "history.db")
+    store.save_intraday_prices("002594", [{
+        "bar_time": "2026-08-04 14:11:00", "open": 96, "close": 96,
+        "high": 96, "low": 96, "source": "cached",
+    }])
+
+    assert PriceHistoryService().refresh_intraday(store, "002594") == 1
+    assert calls[0]["start_date"] == "2026-08-04 14:11:00"
