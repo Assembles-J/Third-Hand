@@ -233,3 +233,16 @@ def test_intraday_refresh_continues_from_latest_cached_bar(monkeypatch, tmp_path
 
     assert PriceHistoryService().refresh_intraday(store, "002594") == 1
     assert calls[0]["start_date"] == "2026-08-04 14:11:00"
+
+
+def test_intraday_refresh_discards_nan_ohlc_rows(monkeypatch, tmp_path):
+    frame = pd.DataFrame([
+        ["2026-08-04 14:12:00", float("nan"), 96.5, 97, 95, 10, 965],
+        ["2026-08-04 14:13:00", 96, 96.8, 97, 95, 11, 1064],
+    ])
+    monkeypatch.setitem(sys.modules, "akshare", SimpleNamespace(stock_zh_a_hist_min_em=lambda **_: frame))
+
+    store = PortfolioStore(tmp_path / "history.db")
+    assert PriceHistoryService().refresh_intraday(store, "002594") == 1
+    bars = store.intraday_prices("002594")
+    assert [bar["bar_time"] for bar in bars] == ["2026-08-04 14:13:00"]

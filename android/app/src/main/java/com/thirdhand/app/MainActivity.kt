@@ -226,10 +226,10 @@ private fun ThirdHandApp(resumeSignal: Int) {
                     NavigationBar {
                         listOf(
                             Triple("今日", Icons.Filled.AutoGraph, 0),
-                            Triple("持仓", Icons.Filled.Wallet, 1),
-                            Triple("管理", Icons.Filled.AdminPanelSettings, 2),
-                            Triple("研究", Icons.AutoMirrored.Filled.Article, 4),
                             Triple("自选", Icons.Filled.Bookmark, 5),
+                            Triple("持仓", Icons.Filled.Wallet, 1),
+                            Triple("研究", Icons.AutoMirrored.Filled.Article, 4),
+                            Triple("管理", Icons.Filled.AdminPanelSettings, 2),
                         ).forEach { (label, icon, targetTab) ->
                             NavigationBarItem(
                                 selected = tab == targetTab || (targetTab == 2 && tab == 3),
@@ -244,9 +244,20 @@ private fun ThirdHandApp(resumeSignal: Int) {
         ) { padding ->
             Surface(modifier = Modifier.fillMaxSize().padding(padding), color = MaterialTheme.colorScheme.background) {
                 if (detailHolding != null) {
-                    HoldingDetailScreen(detailHolding!!, onBack = { detailHolding = null })
+                    HoldingSummaryDetailScreen(
+                        target = ResearchTargetDto(detailHolding!!.symbol, detailHolding!!.name, "active_holding", detailHolding!!.created_at),
+                        holding = detailHolding!!,
+                        onBack = { detailHolding = null },
+                        onResearch = { target ->
+                            detailHolding = null
+                            researchChatController.beginNewResearch(target.symbol)
+                            researchConversation = emptyList()
+                            researchDraft = ""
+                            tab = 4
+                        },
+                    )
                 } else if (detailStock != null) {
-                    StockDetailScreen(detailStock!!, onBack = { detailStock = null }, onResearch = { target ->
+                    HoldingSummaryDetailScreen(detailStock!!, holding = null, onBack = { detailStock = null }, onResearch = { target ->
                         detailStock = null
                         researchChatController.beginNewResearch(target.symbol)
                         researchConversation = emptyList()
@@ -1730,13 +1741,19 @@ private fun SaleHistoryScreen(onBack: () -> Unit) {
 }
 
 @Composable
-private fun StockDetailScreen(target: ResearchTargetDto, onBack: () -> Unit, onResearch: (ResearchTargetDto) -> Unit) {
+private fun LegacyStockDetailScreen(target: ResearchTargetDto, onBack: () -> Unit, onResearch: (ResearchTargetDto) -> Unit) {
     val context = LocalContext.current
     val api = remember { ApiClient.service(context) }
     val scope = rememberCoroutineScope()
+    val uriHandler = LocalUriHandler.current
     var quote by remember(target.symbol) { mutableStateOf<MarketQuoteDto?>(null) }
     var history by remember(target.symbol) { mutableStateOf<List<DailyPriceDto>>(emptyList()) }
     var sales by remember(target.symbol) { mutableStateOf<List<SaleRecordDto>>(emptyList()) }
+    var content by remember(target.symbol) { mutableStateOf<List<NewsItemDto>>(emptyList()) }
+    var contentDialogOpen by remember(target.symbol) { mutableStateOf(false) }
+    var risk by remember(target.symbol) { mutableStateOf<RiskAssessmentDto?>(null) }
+    var settingsDialogOpen by remember(target.symbol) { mutableStateOf(false) }
+    var riskDialogOpen by remember(target.symbol) { mutableStateOf(false) }
     var error by remember(target.symbol) { mutableStateOf<String?>(null) }
     var clearHistoryRequested by remember(target.symbol) { mutableStateOf(false) }
     fun load() = scope.launch {
@@ -1746,6 +1763,8 @@ private fun StockDetailScreen(target: ResearchTargetDto, onBack: () -> Unit, onR
             .onFailure { error = "无法读取股票详情，请检查服务连接。" }
         history = runCatching { api.marketHistory(target.symbol, 30) }.getOrDefault(emptyList())
         sales = runCatching { api.sales(target.symbol) }.getOrDefault(emptyList())
+        risk = runCatching { api.riskAssessments().firstOrNull { it.symbol == target.symbol } }.getOrNull()
+        content = (runCatching { api.announcements(listOf(target.symbol)) }.getOrDefault(emptyList()) + runCatching { api.feed(listOf(target.symbol)) }.getOrDefault(emptyList())).distinctBy { it.id }.sortedByDescending { it.published_at }
     }
     LaunchedEffect(target.symbol) { load() }
     LazyColumn(contentPadding = androidx.compose.foundation.layout.PaddingValues(bottom = 24.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
@@ -1754,6 +1773,10 @@ private fun StockDetailScreen(target: ResearchTargetDto, onBack: () -> Unit, onR
             TextButton(onClick = onBack) { Icon(Icons.Filled.ArrowBack, null); Text("返回自选") }
             Spacer(Modifier.weight(1f))
             Button(onClick = { onResearch(target) }) { Icon(Icons.Filled.AutoGraph, null); Spacer(Modifier.width(6.dp)); Text("AI 分析") }
+        } }
+        item { Row(Modifier.padding(horizontal = 20.dp).fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            FilledTonalButton(onClick = { riskDialogOpen = true }, modifier = Modifier.weight(1f)) { Text("风险分析") }
+            FilledTonalButton(onClick = { settingsDialogOpen = true }, modifier = Modifier.weight(1f)) { Text("配置与计划") }
         } }
         error?.let { item { StatusCard(it, error = true) } }
         item { Card(Modifier.padding(horizontal = 20.dp).fillMaxWidth()) { Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
@@ -1768,6 +1791,12 @@ private fun StockDetailScreen(target: ResearchTargetDto, onBack: () -> Unit, onR
             }
             if (history.size < 2) Text("日线数据正在准备中；清理后会由后台重新拉取。", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
             else KLineChart(history.takeLast(60))
+        } } }
+        if (content.isNotEmpty()) item { Card(Modifier.padding(horizontal = 20.dp).fillMaxWidth().clickable { contentDialogOpen = true }, colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.secondaryContainer)) { Column(Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(5.dp)) {
+            Text("新闻与公告 · ${content.size} 条", style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.Bold)
+            Text(content.first().explanation.ifBlank { content.first().title }, maxLines = 2, overflow = TextOverflow.Ellipsis, style = MaterialTheme.typography.bodySmall)
+            content.first().ai_analysis?.get("summary")?.let { Text("AI：$it", maxLines = 2, overflow = TextOverflow.Ellipsis, style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.primary) }
+            Text("点击查看新闻列表与原文", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.primary)
         } } }
         item { Card(Modifier.padding(horizontal = 20.dp).fillMaxWidth()) { Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
             Text("出售历史", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
@@ -1786,6 +1815,38 @@ private fun StockDetailScreen(target: ResearchTargetDto, onBack: () -> Unit, onR
         } }) { Text("确认清理") } },
         dismissButton = { TextButton(onClick = { clearHistoryRequested = false }) { Text("取消") } },
     )
+    if (contentDialogOpen) AlertDialog(
+        onDismissRequest = { contentDialogOpen = false },
+        title = { Text("新闻与公告") },
+        text = { Text(content.take(8).joinToString("\n\n") { "${it.title}\n${it.explanation}" }) },
+        confirmButton = { TextButton(onClick = { contentDialogOpen = false }) { Text("关闭") } },
+        dismissButton = { TextButton(onClick = { content.firstOrNull()?.let { uriHandler.openUri(it.source_url) } }) { Text("查看首条原文") } },
+    )
+    if (riskDialogOpen) AlertDialog(onDismissRequest = { riskDialogOpen = false }, title = { Text("风险分析") }, text = { Text(risk?.let { if (it.status == "data_insufficient") it.message else "风险等级：${it.risk_level}\n下行概率：${it.historical_downside_probability}%\n年化波动：${it.annualized_volatility_percent}%\n${it.explanation}" } ?: "暂未生成风险评估。") }, confirmButton = { TextButton(onClick = { riskDialogOpen = false }) { Text("关闭") } })
+    if (settingsDialogOpen) AlertDialog(onDismissRequest = { settingsDialogOpen = false }, title = { Text("配置与计划") }, text = { Text("交易计划、持仓编辑与出售操作集中在持仓详情中管理；AI 分析请使用上方统一研究会话入口。") }, confirmButton = { TextButton(onClick = { settingsDialogOpen = false }) { Text("关闭") } })
+}
+
+/**
+ * Kept as the navigation entry point while the decision workspace lives in its
+ * own feature file.  The legacy implementation above remains available as a
+ * reference during this incremental refactor.
+ */
+@Composable
+private fun StockDetailScreen(target: ResearchTargetDto, onBack: () -> Unit, onResearch: (ResearchTargetDto) -> Unit) {
+    StockDetailDecisionRoute(target = target, onBack = onBack, onResearch = onResearch)
+}
+
+/** Common entry point for a stock opened from either self-select or holdings. */
+@Composable
+private fun HoldingSummaryDetailScreen(
+    target: ResearchTargetDto,
+    holding: HoldingDto?,
+    onBack: () -> Unit,
+    onResearch: (ResearchTargetDto) -> Unit,
+) {
+    // The selected holding only changes the identity summary; market and AI
+    // capability is intentionally shared with self-selected securities.
+    StockDetailScreen(target, onBack, onResearch)
 }
 
 @Composable
@@ -2229,11 +2290,11 @@ private fun HoldingDetailScreen(holding: HoldingDto, onBack: () -> Unit) {
                     Text(if (refreshingDailyHistory) "正在加载日线" else "重新加载日线")
                 }
             }
-            Text(
-                "日线是每个已结束交易日的一根 K 线；“今日”才是分钟 K 线。量为该周期累计成交量，额为累计成交金额；换手率反映当日流通筹码的交易比例。",
-                style = MaterialTheme.typography.labelSmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-            )
+//            Text(
+//                "日线是每个已结束交易日的一根 K 线；“今日”才是分钟 K 线。量为该周期累计成交量，额为累计成交金额；换手率反映当日流通筹码的交易比例。",
+//                style = MaterialTheme.typography.labelSmall,
+//                color = MaterialTheme.colorScheme.onSurfaceVariant,
+//            )
             Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) { listOf("今日", "日线", "周线", "月线").forEach { label -> TextButton(onClick = { period = label }) { Text(label, color = if (period == label) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant) } } }
             if (period == "月线") {
                 FilledTonalButton(onClick = { monthRangePickerOpen = true }) {
@@ -2393,8 +2454,109 @@ private fun intradayAxisIndices(size: Int): List<Int> {
     }.distinct()
 }
 
+/**
+ * Shared original chart module: intraday, daily, weekly and monthly candles.
+ * It owns the same loading, retry and month-range behaviours previously used
+ * by the holding detail screen, so every stock detail renders one chart flow.
+ */
 @Composable
-private fun KLineChart(
+fun TradingPeriodKLinePanel(symbol: String, quote: MarketQuoteDto?) {
+    val api = ApiClient.service(LocalContext.current)
+    val scope = rememberCoroutineScope()
+    var bars by remember(symbol) { mutableStateOf<List<DailyPriceDto>>(emptyList()) }
+    var intradayBars by remember(symbol) { mutableStateOf<List<DailyPriceDto>>(emptyList()) }
+    var intradayLoadError by remember(symbol) { mutableStateOf<String?>(null) }
+    var dailyHistoryLoadError by remember(symbol) { mutableStateOf<String?>(null) }
+    var refreshingDailyHistory by remember(symbol) { mutableStateOf(false) }
+    var period by remember(symbol) { mutableStateOf("日线") }
+    var monthRangeStart by remember(symbol) { mutableStateOf(LocalDate.now(ZoneOffset.ofHours(8)).minusMonths(6)) }
+    var monthRangeEnd by remember(symbol) { mutableStateOf(LocalDate.now(ZoneOffset.ofHours(8))) }
+    var monthRangePickerOpen by remember(symbol) { mutableStateOf(false) }
+
+    fun loadBars() = scope.launch {
+        val dailyHistoryResult = runCatching { api.marketHistory(symbol) }
+        bars = dailyHistoryResult.getOrDefault(emptyList())
+        dailyHistoryLoadError = dailyHistoryResult.exceptionOrNull()?.let { error ->
+            "日线请求失败：${error.message ?: error.javaClass.simpleName}"
+        }
+        val intradayResult = runCatching { api.marketIntraday(symbol) }
+        intradayBars = intradayResult.getOrDefault(emptyList()).map { bar ->
+            DailyPriceDto(
+                trading_date = bar.bar_time, open = bar.open, close = bar.close, high = bar.high, low = bar.low,
+                volume = bar.volume, amount = bar.amount, adjustment = "1m",
+            )
+        }
+        intradayLoadError = intradayResult.exceptionOrNull()?.let { error ->
+            "分时 K 线数据请求失败：${error.message ?: error.javaClass.simpleName}"
+        }
+    }
+    fun refreshDailyHistory(startDate: LocalDate? = null, endDate: LocalDate? = null) = scope.launch {
+        refreshingDailyHistory = true
+        dailyHistoryLoadError = null
+        runCatching { api.refreshMarketHistory(symbol, MarketHistoryRefreshInputDto(startDate?.toString(), endDate?.toString())) }
+            .onSuccess { refreshed ->
+                bars = refreshed
+                if (refreshed.size < 2) dailyHistoryLoadError = "服务端没有返回足够的日线数据。"
+            }
+            .onFailure { error -> dailyHistoryLoadError = "日线刷新失败：${error.message ?: error.javaClass.simpleName}" }
+        refreshingDailyHistory = false
+    }
+    LaunchedEffect(symbol) { loadBars() }
+    val chartBars = when (period) {
+        "今日" -> intradayBars
+        "日线" -> todaySnapshotBar(bars, quote)
+        "月线" -> aggregateBars(bars.filter { bar ->
+            marketDate(bar.trading_date)?.let { !it.isBefore(monthRangeStart) && !it.isAfter(monthRangeEnd) } == true
+        }, period)
+        else -> aggregateBars(bars, period)
+    }
+    Card {
+        Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+            Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+                Text("行情 K 线", modifier = Modifier.weight(1f), style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
+                TextButton(onClick = ::refreshDailyHistory, enabled = !refreshingDailyHistory) {
+                    Text(if (refreshingDailyHistory) "正在加载日线" else "重新加载日线")
+                }
+            }
+            Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                listOf("今日", "日线", "周线", "月线").forEach { label ->
+                    TextButton(onClick = { period = label }) {
+                        Text(label, color = if (period == label) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant)
+                    }
+                }
+            }
+            if (period == "月线") {
+                FilledTonalButton(onClick = { monthRangePickerOpen = true }) { Text("${monthRangeStart} 至 ${monthRangeEnd}") }
+            }
+            if (chartBars.size >= 2) {
+                KLineChart(chartBars, quote.takeIf { period == "日线" || period == "今日" }, useTimeAxis = period == "今日")
+            } else {
+                Text(
+                    when {
+                        period == "今日" -> intradayLoadError ?: "暂无分时行情缓存；请稍后刷新。"
+                        else -> dailyHistoryLoadError ?: "暂无可展示的日线；可点击“重新加载日线”立即重试。"
+                    },
+                    style = MaterialTheme.typography.bodySmall,
+                    color = if ((intradayLoadError != null && period == "今日") || (dailyHistoryLoadError != null && period != "今日")) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            }
+        }
+    }
+    if (monthRangePickerOpen) MonthRangePickerDialog(
+        initialStart = monthRangeStart,
+        initialEnd = monthRangeEnd,
+        onDismiss = { monthRangePickerOpen = false },
+        onConfirm = { start, end ->
+            monthRangeStart = start
+            monthRangeEnd = end
+            monthRangePickerOpen = false
+            refreshDailyHistory(start, end)
+        },
+    )
+}
+
+@Composable
+fun KLineChart(
     bars: List<DailyPriceDto>,
     quote: MarketQuoteDto? = null,
     useTimeAxis: Boolean = false,

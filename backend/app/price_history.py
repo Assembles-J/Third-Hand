@@ -3,6 +3,7 @@ from __future__ import annotations
 
 from datetime import date, timedelta, datetime
 import logging
+import math
 import os
 
 from app.decimal_utils import decimal_text
@@ -43,6 +44,14 @@ class PriceHistoryService:
             return date.fromisoformat(candidate).isoformat()
         except ValueError:
             return None
+
+    @staticmethod
+    def _has_finite_ohlc(bar: dict[str, object]) -> bool:
+        """SQLite converts NaN to NULL, which violates the intraday OHLC schema."""
+        try:
+            return all(math.isfinite(float(bar[field])) for field in ("open", "close", "high", "low"))
+        except (KeyError, TypeError, ValueError):
+            return False
 
     def refresh(self, store, symbol: str, start_date: str | None = None, end_date: str | None = None) -> int:
         """Fill only missing daily-session ranges and preserve cached history."""
@@ -290,8 +299,17 @@ class PriceHistoryService:
                     bars.append({"bar_time": str(values[0])[:19], "open": float(values[1]), "close": float(values[2]), "high": float(values[3]), "low": float(values[4]), "volume": float(values[5]) if len(values) > 5 else None, "amount": float(values[6]) if len(values) > 6 else None, "average_price": None, "source": source})
             except (TypeError, ValueError, IndexError):
                 continue
-        store.save_intraday_prices(symbol, bars)
-        return len(bars)
+        valid_bars = [bar for bar in bars if self._has_finite_ohlc(bar)]
+        discarded = len(bars) - len(valid_bars)
+        if discarded:
+            logger.warning(
+                "Discarded intraday bars with missing or non-finite OHLC symbol=%s source=%s count=%s",
+                symbol, source, discarded,
+            )
+        if not valid_bars:
+            raise PriceHistoryUnavailable("分钟行情未返回可写入的 OHLC 数据")
+        store.save_intraday_prices(symbol, valid_bars)
+        return len(valid_bars)
 
     def _tushare_bars(self, symbol: str, start: str, end: str) -> list[dict[str, object]]:
         """Use end-of-day Tushare data when an AKShare public endpoint is unavailable."""

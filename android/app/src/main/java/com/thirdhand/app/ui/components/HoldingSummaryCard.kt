@@ -6,6 +6,8 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.width
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.CameraAlt
@@ -39,39 +41,34 @@ fun HoldingSummaryCard(
         modifier = modifier.fillMaxWidth(),
         colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceContainerLow),
     ) {
-        Row(
+        Column(
             modifier = Modifier.padding(AppSpacing.large),
-            horizontalArrangement = Arrangement.spacedBy(AppSpacing.medium),
+            verticalArrangement = Arrangement.spacedBy(AppSpacing.medium),
         ) {
-            Column(modifier = Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(AppSpacing.xs)) {
+            Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
                 Text(
-                    text = "$holdingCount 只持仓 · $pendingCount 条待补全",
+                    text = "持仓概览",
+                    style = MaterialTheme.typography.titleSmall,
+                    fontWeight = FontWeight.Bold,
+                )
+                Text(
+                    text = "$holdingCount 只持仓${if (pendingCount > 0) " · $pendingCount 条待补全" else ""}",
                     style = MaterialTheme.typography.labelMedium,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
-                if (marketValue == null || totalPnl == null) {
-                    Text(
-                        text = "等待行情更新",
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    )
-                } else {
-                    Text(
-                        text = "市值 $marketValue · 浮盈 $totalPnl",
-                        style = MaterialTheme.typography.bodyMedium,
-                        color = if (totalPnlIsPositive) MaterialTheme.marketColors.rise else MaterialTheme.marketColors.fall,
-                        fontWeight = FontWeight.SemiBold,
-                    )
-                }
             }
-            Column {
+            Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(AppSpacing.medium)) {
+                Column(modifier = Modifier.weight(1f)) { Text("总市值", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant); Text(marketValue ?: "等待行情更新", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold) }
+                Column(modifier = Modifier.weight(1f)) { Text("浮动盈亏", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant); Text(totalPnl ?: "--", style = MaterialTheme.typography.titleMedium, color = if (totalPnl == null) MaterialTheme.colorScheme.onSurfaceVariant else if (totalPnlIsPositive) MaterialTheme.marketColors.rise else MaterialTheme.marketColors.fall, fontWeight = FontWeight.SemiBold) }
+            }
+            Row(horizontalArrangement = Arrangement.spacedBy(AppSpacing.small)) {
                 TextButton(onClick = onAdd) {
                     Icon(Icons.Filled.Add, contentDescription = null)
-                    Text("添加")
+                    Spacer(Modifier.width(AppSpacing.xs)); Text("添加持仓")
                 }
                 TextButton(onClick = onImport) {
                     Icon(Icons.Filled.CameraAlt, contentDescription = null)
-                    Text("导入")
+                    Spacer(Modifier.width(AppSpacing.xs)); Text("导入截图")
                 }
             }
         }

@@ -4,6 +4,7 @@ from __future__ import annotations
 import os
 import sqlite3
 import json
+import math
 from pathlib import Path
 from threading import Lock
 
@@ -951,10 +952,20 @@ class PortfolioStore:
         if not bars:
             return
         now = beijing_now().isoformat()
-        rows = [(
-            symbol, str(bar["bar_time"]), float(bar["open"]), float(bar["close"]), float(bar["high"]), float(bar["low"]),
-            bar.get("volume"), bar.get("amount"), bar.get("average_price"), str(bar.get("source", "AKShare intraday")), now,
-        ) for bar in bars]
+        rows = []
+        for bar in bars:
+            try:
+                ohlc = [float(bar[field]) for field in ("open", "close", "high", "low")]
+            except (KeyError, TypeError, ValueError):
+                continue
+            if not all(math.isfinite(value) for value in ohlc):
+                continue
+            rows.append((
+                symbol, str(bar["bar_time"]), *ohlc,
+                bar.get("volume"), bar.get("amount"), bar.get("average_price"), str(bar.get("source", "AKShare intraday")), now,
+            ))
+        if not rows:
+            return
         with self._connect() as connection:
             connection.executemany("INSERT OR REPLACE INTO intraday_price_cache VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)", rows)
 
