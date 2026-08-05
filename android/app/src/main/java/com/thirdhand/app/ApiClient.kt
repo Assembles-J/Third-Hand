@@ -2,7 +2,6 @@ package com.thirdhand.app
 
 import android.content.Context
 import android.util.Log
-import kotlinx.coroutines.delay
 import okhttp3.Interceptor
 import okhttp3.OkHttpClient
 import okio.Buffer
@@ -63,6 +62,11 @@ data class HoldingDraftInputDto(
 
 data class HoldingDraftBatchInputDto(val items: List<HoldingDraftInputDto>)
 
+data class OrderBookLevelDto(
+    val price: Double? = null,
+    val volume: Double? = null,
+)
+
 data class MarketQuoteDto(
     val symbol: String,
     val name: String,
@@ -75,6 +79,11 @@ data class MarketQuoteDto(
     val previous_close: Double? = null,
     val volume: Double? = null,
     val amount: Double? = null,
+    val bid_price: Double? = null,
+    val ask_price: Double? = null,
+    val bid_levels: List<OrderBookLevelDto> = emptyList(),
+    val ask_levels: List<OrderBookLevelDto> = emptyList(),
+    val volume_ratio: Double? = null,
     val turnover_rate: Double? = null,
     val currency: String,
     val source: String,
@@ -603,30 +612,15 @@ object ApiClient {
     }
 
     /**
-     * Ask the server to fetch a new upstream snapshot, then read its cache until
-     * that task has actually written a newer result.  This is condition-based:
-     * it does not wait for the scheduler's next interval before showing data.
+     * Request a server-side refresh and return the best immediately available
+     * snapshot.  A refresh may be fulfilled asynchronously by the server, so
+     * waiting for every timestamp to change here would keep the holdings UI in
+     * a loading state and repeatedly query the same cache.
      */
     suspend fun latestMarketQuotes(api: ThirdHandApi, symbols: List<String>): List<MarketQuoteDto> {
         val requested = symbols.distinct().filter { it.isNotBlank() }
         if (requested.isEmpty()) return emptyList()
-
-        val initial = marketQuotes(api, MarketQuoteBatchRequestDto(requested, refresh = true))
-        val initialBySymbol = initial.associateBy { it.symbol }
-        var latest = initial
-
-        repeat(60) {
-            delay(500)
-            latest = marketQuotes(api, MarketQuoteBatchRequestDto(requested))
-            val latestBySymbol = latest.associateBy { it.symbol }
-            val allUpdated = requested.all { symbol ->
-                val current = latestBySymbol[symbol]
-                val previous = initialBySymbol[symbol]
-                current?.price != null && (previous?.price == null || current.retrieved_at != previous.retrieved_at)
-            }
-            if (allUpdated) return latest
-        }
-        return latest
+        return marketQuotes(api, MarketQuoteBatchRequestDto(requested, refresh = true))
     }
 
     fun service(context: Context): ThirdHandApi {

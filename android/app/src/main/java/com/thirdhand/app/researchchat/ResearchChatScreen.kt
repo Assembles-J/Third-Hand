@@ -85,6 +85,7 @@ fun ResearchChatScreen(
     onConversationChange: (List<ResearchChatLine>) -> Unit,
     question: String,
     onQuestionChange: (String) -> Unit,
+    initialTarget: ResearchTargetDto? = null,
     onOpenTradePlan: () -> Unit,
     onOpenPortfolio: () -> Unit,
     onOpenRules: () -> Unit,
@@ -108,7 +109,7 @@ fun ResearchChatScreen(
     val drawerState = rememberDrawerState(DrawerValue.Closed)
     var sessions by remember { mutableStateOf<List<ResearchSessionSummary>>(emptyList()) }
     var researchTargets by remember { mutableStateOf<List<ResearchTargetDto>>(emptyList()) }
-    var selectedSymbol by remember { mutableStateOf<String?>(controller.currentSymbol) }
+    var selectedSymbol by remember(initialTarget?.symbol) { mutableStateOf(initialTarget?.symbol ?: controller.currentSymbol) }
     var sourcePicker by remember { mutableStateOf(false) }
     var targetPicker by remember { mutableStateOf(false) }
     var attachedSources by remember { mutableStateOf<List<ResearchAttachedSource>>(emptyList()) }
@@ -158,6 +159,15 @@ fun ResearchChatScreen(
     LaunchedEffect(Unit) {
         runCatching { ApiClient.service(context).researchTargets() }.onSuccess { researchTargets = it }.onFailure { loadError = "无法读取研究标的，请检查服务连接。" }
         refreshSessions()
+    }
+    LaunchedEffect(initialTarget?.symbol) {
+        initialTarget?.let { target ->
+            selectedSymbol = target.symbol
+            controller.beginNewResearch(target.symbol)
+            attachedSources = listOf(
+                ResearchAttachedSource("target:${target.symbol}", "分析对象 · ${target.name}", target.symbol),
+            )
+        }
     }
     LaunchedEffect(state) {
         when (val current = state) {
@@ -272,7 +282,7 @@ fun ResearchChatScreen(
     }
     if (targetPicker) AlertDialog(onDismissRequest = { targetPicker = false }, title = { Text("选择分析对象") }, text = {
         Column { researchTargets.forEach { target ->
-            TextButton(onClick = { selectedSymbol = target.symbol; controller.beginNewResearch(); onConversationChange(emptyList()); attachedSources = listOf(ResearchAttachedSource("target:${target.symbol}", "分析对象 · ${target.name}", target.symbol)); targetPicker = false }, modifier = Modifier.fillMaxWidth()) {
+            TextButton(onClick = { selectedSymbol = target.symbol; controller.beginNewResearch(target.symbol); onConversationChange(emptyList()); attachedSources = listOf(ResearchAttachedSource("target:${target.symbol}", "分析对象 · ${target.name}", target.symbol)); targetPicker = false }, modifier = Modifier.fillMaxWidth()) {
                 Icon(researchTargetIcon(target.status), contentDescription = null, tint = MaterialTheme.colorScheme.primary)
                 Column(Modifier.padding(start = 12.dp).weight(1f)) {
                     Text(target.name, fontWeight = FontWeight.SemiBold)

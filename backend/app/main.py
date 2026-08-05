@@ -93,6 +93,7 @@ intraday_refresh_lock = Lock()
 daily_history_refreshed_for: dict[str, str] = {}
 daily_history_attempted_for: dict[str, str] = {}
 daily_history_retry_after: dict[str, float] = {}
+daily_review_generated_dates: set[str] = set()
 market_refresh_state: dict[str, object] = {
     "last_attempt_at": None,
     "last_success_at": None,
@@ -408,6 +409,11 @@ class HoldingDraftCommitInput(BaseModel):
     items: list[HoldingDraftSelection] = Field(min_length=1, max_length=100)
 
 
+class OrderBookLevel(BaseModel):
+    price: float | None = None
+    volume: float | None = None
+
+
 class MarketQuote(BaseModel):
     symbol: str
     name: str = ""
@@ -420,6 +426,12 @@ class MarketQuote(BaseModel):
     previous_close: float | None = None
     volume: float | None = None
     amount: float | None = None
+    bid_price: float | None = None
+    ask_price: float | None = None
+    bid_levels: list[OrderBookLevel] = []
+    ask_levels: list[OrderBookLevel] = []
+    volume_ratio: float | None = None
+    turnover_rate: float | None = None
     currency: str
     source: str = ""
     retrieved_at: datetime | None = None
@@ -1015,9 +1027,9 @@ def scheduled_market_refresh_loop() -> None:
         try:
             all_symbols = list(
                 dict.fromkeys(
-                    str(holding["symbol"]).strip().upper()
-                    for holding in store.list()
-                    if str(holding.get("symbol", "")).strip()
+                    str(item["symbol"]).strip().upper()
+                    for item in [*store.list(), *store.watchlist()]
+                    if str(item.get("symbol", "")).strip()
                 )
             )
 
@@ -1054,6 +1066,13 @@ def scheduled_market_refresh_loop() -> None:
                 # full history every scheduler minute.
                 refresh_quote_cache(all_symbols, force_refresh=True, trigger="scheduler-close-snapshot")
                 refresh_derived_cache(all_symbols, "scheduler-close-snapshot", force_history=True)
+                review_date = now.date().isoformat()
+                if review_date not in daily_review_generated_dates:
+                    # Close snapshots create the one daily decision record.  It is
+                    # intentionally server-side so users never need to maintain a
+                    # separate plan or hand-written review before paper P&L works.
+                    generate_daily_review(DailyReviewGenerateRequest(symbols=all_symbols))
+                    daily_review_generated_dates.add(review_date)
             elif all_symbols and previous_open_symbols != open_symbols_key:
                 # 只在状态发生变化时记录，避免休市期间每分钟刷日志。
                 logger.info(
@@ -1776,6 +1795,10 @@ def evaluate_daily_review(review_id: str) -> DailyReview:
     highlights: list[str] = []
     mistakes: list[str] = []
     for item in review["items"]:
+        # Observation is not a trade signal.  It must neither create simulated
+        # P&L nor pollute the execution/review state.
+        if item.get("action") == "watch" or not item.get("suggested_quantity"):
+            continue
         future = [bar for bar in store.daily_prices(str(item["symbol"])) if str(bar["trading_date"]) > str(review["review_date"])]
         if not future:
             continue

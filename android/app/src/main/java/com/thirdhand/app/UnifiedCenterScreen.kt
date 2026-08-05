@@ -55,7 +55,7 @@ fun UnifiedCenterScreen(onOpenSaleHistory: () -> Unit) {
                         TextButton(onClick = onOpenSaleHistory) { Text("出售历史") }
                     }
                 }
-                ProfileScreen()
+                ExecutionReviewScreen()
             }
         } else CompactAdminDashboardScreen()
     }

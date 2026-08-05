@@ -105,13 +105,24 @@ class ResearchChatOrchestrator:
             self.repo.update_turn(turn.id, status=ResearchTurnStatus.streaming.value)
             yield emit(ResearchSseEventType.phase, {"phase": "streaming", "label": "正在进行研究分析"})
             tool_calls_used = 0
-            max_tool_calls = _positive_int_env("RESEARCH_CHAT_MAX_TOOL_CALLS", 6)
+            tool_rounds_used = 0
+            # A complete holding research commonly needs quote, position, daily
+            # history, risk and business evidence.  Six calls cuts that normal
+            # workflow off mid-answer, especially when the model groups calls
+            # across multiple rounds.
+            max_tool_calls = _positive_int_env("RESEARCH_CHAT_MAX_TOOL_CALLS", 12)
+            max_tool_rounds = _positive_int_env("RESEARCH_CHAT_MAX_TOOL_ROUNDS", 4)
+            tool_calling_active = _flag("RESEARCH_CHAT_TOOL_CALLING_ENABLED")
+            tool_result_cache: dict[str, object] = {}
             while True:
                 calls: dict[int, dict[str, object]] = {}
                 round_truncated = False
                 round_answer: list[str] = []
                 round_reasoning: list[str] = []
-                async for chunk in self.stream_client.stream_chat(messages, tools=definitions() if _flag("RESEARCH_CHAT_TOOL_CALLING_ENABLED") else None):
+                async for chunk in self.stream_client.stream_chat(
+                    messages,
+                    tools=definitions() if tool_calling_active else None,
+                ):
                     current_turn = self.repo.turn(turn.id)
                     if current_turn and current_turn.status == ResearchTurnStatus.cancelled:
                         yield emit(ResearchSseEventType.done, {"status": "cancelled", "turn_id": turn.id})
@@ -143,9 +154,6 @@ class ResearchChatOrchestrator:
                 if not calls:
                     completion_truncated = round_truncated
                     break
-                tool_calls_used += len(calls)
-                if tool_calls_used > max_tool_calls:
-                    raise RuntimeError("tool_loop_limit")
                 if any(
                     not str(call.get("id") or "")
                     or not str((call.get("function") or {}).get("name") or "")
@@ -166,6 +174,12 @@ class ResearchChatOrchestrator:
                 }
                 messages.append(assistant_tool_message)
                 tool_context_messages.append(assistant_tool_message)
+                tool_calls_used += len(calls)
+                tool_rounds_used += 1
+                limit_reached = (
+                    tool_calls_used > max_tool_calls
+                    or tool_rounds_used > max_tool_rounds
+                )
                 for call in calls.values():
                     function = call["function"]
                     tool_call_id = str(call.get("id") or "")
@@ -176,9 +190,23 @@ class ResearchChatOrchestrator:
                         arguments = json.loads(function["arguments"] or "{}")
                         if not isinstance(arguments, dict):
                             raise ValueError("tool_arguments_must_be_object")
-                        result = self.tools.call_tool(name, arguments, context)
-                        self.repo.save_tool_call(turn.id, name, arguments, "completed", result)
-                        logger.info("Research tool completed turn_id=%s tool=%s", turn.id, name)
+                        if limit_reached:
+                            result = {
+                                "error": "tool_budget_reached",
+                                "message": "Tool research budget is complete. Use the context and prior tool results to write the final answer; do not request more tools.",
+                            }
+                            self.repo.save_tool_call(turn.id, name, arguments, "skipped", result)
+                        else:
+                            cache_key = f"{name}:{json.dumps(arguments, ensure_ascii=False, sort_keys=True)}"
+                            if cache_key in tool_result_cache:
+                                result = tool_result_cache[cache_key]
+                                self.repo.save_tool_call(turn.id, name, arguments, "completed", result)
+                                logger.info("Research tool reused cached result turn_id=%s tool=%s", turn.id, name)
+                            else:
+                                result = self.tools.call_tool(name, arguments, context)
+                                tool_result_cache[cache_key] = result
+                                self.repo.save_tool_call(turn.id, name, arguments, "completed", result)
+                                logger.info("Research tool completed turn_id=%s tool=%s", turn.id, name)
                     except Exception as error:
                         self.repo.save_tool_call(turn.id, name, {}, "failed", error="tool_invalid_arguments")
                         logger.exception("Research tool failed turn_id=%s tool=%s", turn.id, name)
@@ -197,6 +225,26 @@ class ResearchChatOrchestrator:
                     tool_message = {"role": "tool", "tool_call_id": tool_call_id, "content": json.dumps(result, ensure_ascii=False, default=str)}
                     messages.append(tool_message)
                     tool_context_messages.append(tool_message)
+                if limit_reached:
+                    # Do not crash the entire SSE turn.  Replying to every
+                    # model-issued tool call keeps the DeepSeek transcript valid;
+                    # removing tools on the next pass forces a bounded final answer.
+                    tool_calling_active = False
+                    logger.warning(
+                        "Research tool budget reached turn_id=%s calls=%s/%s rounds=%s/%s",
+                        turn.id,
+                        tool_calls_used,
+                        max_tool_calls,
+                        tool_rounds_used,
+                        max_tool_rounds,
+                    )
+                    yield emit(
+                        ResearchSseEventType.warning,
+                        {
+                            "code": "tool_budget_reached",
+                            "message": "研究已取得可用资料，正在基于现有资料整理结论。",
+                        },
+                    )
 
             final_answer = "".join(answer).strip()
             self.repo.add_message(session.id, turn.id, "user", "user_text", user_message)

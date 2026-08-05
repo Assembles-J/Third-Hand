@@ -196,7 +196,12 @@ class PriceHistoryService:
                     "trading_date": trading_date, "open": decimal_text(row.get("open")),
                     "close": close, "high": decimal_text(row.get("high")),
                     "low": decimal_text(row.get("low")), "volume": decimal_text(row.get("volume")),
-                    "amount": decimal_text(row.get("amount")), "adjustment": "qfq",
+                    "amount": decimal_text(row.get("amount")),
+                    # Tencent expresses turnover as a fraction (for example,
+                    # 0.0021 means 0.21%).  The rest of this app stores and
+                    # renders turnover as a percentage.
+                    "turnover_rate": decimal_text(float(row.get("turnover")) * 100) if decimal_text(row.get("turnover")) is not None else None,
+                    "adjustment": "qfq",
                     "source": "Tencent daily history",
                 })
             if bars:

@@ -157,6 +157,7 @@ private fun ThirdHandApp(resumeSignal: Int) {
     val researchChatController = remember { ResearchChatController() }
     var researchConversation by remember { mutableStateOf<List<ResearchChatLine>>(emptyList()) }
     var researchDraft by remember { mutableStateOf("") }
+    var researchEntryTarget by remember { mutableStateOf<ResearchTargetDto?>(null) }
     var detailHolding by remember { mutableStateOf<HoldingDto?>(null) }
     var detailStock by remember { mutableStateOf<ResearchTargetDto?>(null) }
     var startupUpdate by remember { mutableStateOf<AppUpdate?>(null) }
@@ -233,7 +234,10 @@ private fun ThirdHandApp(resumeSignal: Int) {
                         ).forEach { (label, icon, targetTab) ->
                             NavigationBarItem(
                                 selected = tab == targetTab || (targetTab == 2 && tab == 3),
-                                onClick = { tab = targetTab },
+                                onClick = {
+                                    if (targetTab == 4) researchEntryTarget = null
+                                    tab = targetTab
+                                },
                                 icon = { Icon(icon, contentDescription = label) },
                                 label = { Text(label) },
                             )
@@ -250,6 +254,7 @@ private fun ThirdHandApp(resumeSignal: Int) {
                         onBack = { detailHolding = null },
                         onResearch = { target ->
                             detailHolding = null
+                            researchEntryTarget = target
                             researchChatController.beginNewResearch(target.symbol)
                             researchConversation = emptyList()
                             researchDraft = ""
@@ -259,6 +264,7 @@ private fun ThirdHandApp(resumeSignal: Int) {
                 } else if (detailStock != null) {
                     HoldingSummaryDetailScreen(detailStock!!, holding = null, onBack = { detailStock = null }, onResearch = { target ->
                         detailStock = null
+                        researchEntryTarget = target
                         researchChatController.beginNewResearch(target.symbol)
                         researchConversation = emptyList()
                         researchDraft = ""
@@ -285,29 +291,31 @@ private fun ThirdHandApp(resumeSignal: Int) {
                         label = "bottomNavigationPage",
                     ) { activeTab ->
                         when (activeTab) {
-                            0 -> TodayScreen(onOpenTradePlan = { tab = 3 }, onOpenRules = { tab = 2 }, onOpenPortfolio = { tab = 1 })
+                            0 -> TodayScreen(onOpenTradePlan = { tab = 4 }, onOpenRules = { tab = 4 }, onOpenPortfolio = { tab = 1 })
                             1 -> HoldingsScreen(onOpenDetail = { detailHolding = it })
                             2 -> UnifiedCenterScreen(onOpenSaleHistory = { tab = 6 })
-                            3 -> TradePlanScreen()
+                            3 -> ExecutionReviewScreen()
                             4 -> ResearchChatScreen(
                                 controller = researchChatController,
                                 conversation = researchConversation,
                                 onConversationChange = { researchConversation = it },
                                 question = researchDraft,
                                 onQuestionChange = { researchDraft = it },
-                                onOpenTradePlan = { tab = 3 },
+                                initialTarget = researchEntryTarget,
+                                onOpenTradePlan = { tab = 4 },
                                 onOpenPortfolio = { tab = 1 },
-                                onOpenRules = { tab = 2 },
+                                onOpenRules = { tab = 4 },
                                 onClose = { tab = 0 },
                             )
                             5 -> WatchlistScreen(onOpenDetail = { detailStock = it }, onResearch = { target ->
+                                researchEntryTarget = target
                                 researchChatController.beginNewResearch(target.symbol)
                                 researchConversation = emptyList()
                                 researchDraft = ""
                                 tab = 4
                             })
                             6 -> SaleHistoryScreen(onBack = { tab = 2 })
-                            else -> TodayScreen(onOpenTradePlan = { tab = 3 }, onOpenRules = { tab = 2 }, onOpenPortfolio = { tab = 1 })
+                            else -> TodayScreen(onOpenTradePlan = { tab = 4 }, onOpenRules = { tab = 4 }, onOpenPortfolio = { tab = 1 })
                         }
                     }
                 }
@@ -2203,6 +2211,8 @@ private fun signedPositionValue(value: Double): String = if (value >= 0) "+${for
 
 @Composable
 @OptIn(ExperimentalMaterial3Api::class)
+@Deprecated(message ="使用 TradingPeriodKLinePanel")
+
 private fun HoldingDetailScreen(holding: HoldingDto, onBack: () -> Unit) {
     val api = ApiClient.service(LocalContext.current)
     val scope = rememberCoroutineScope()
@@ -2510,8 +2520,7 @@ fun TradingPeriodKLinePanel(symbol: String, quote: MarketQuoteDto?) {
         }, period)
         else -> aggregateBars(bars, period)
     }
-    Card {
-        Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+    Column(Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 10.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
             Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
                 Text("行情 K 线", modifier = Modifier.weight(1f), style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
                 TextButton(onClick = ::refreshDailyHistory, enabled = !refreshingDailyHistory) {
@@ -2540,7 +2549,6 @@ fun TradingPeriodKLinePanel(symbol: String, quote: MarketQuoteDto?) {
                     color = if ((intradayLoadError != null && period == "今日") || (dailyHistoryLoadError != null && period != "今日")) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.onSurfaceVariant,
                 )
             }
-        }
     }
     if (monthRangePickerOpen) MonthRangePickerDialog(
         initialStart = monthRangeStart,
@@ -2561,7 +2569,10 @@ fun KLineChart(
     quote: MarketQuoteDto? = null,
     useTimeAxis: Boolean = false,
 ) = Column {
-    val visible = bars.takeLast(60)
+    // Daily/weekly/monthly views stay compact, but a "today" chart must retain
+    // the complete trading session.  Truncating every view to 60 candles made
+    // a 11:30 morning close appear to begin at 10:31.
+    val visible = if (useTimeAxis) bars else bars.takeLast(60)
     var selectedIndex by remember(visible.lastOrNull()?.trading_date) { mutableIntStateOf(visible.lastIndex) }
     val selected = visible[selectedIndex.coerceIn(0, visible.lastIndex)]
     val values = visible.flatMap { listOfNotNull(it.high, it.low, it.close, it.open) }
@@ -3041,7 +3052,7 @@ private fun PositionValueCell(main: String, sub: String, color: Color, modifier:
 }
 
 @Composable
-private fun AddHoldingDialog(
+fun AddHoldingDialog(
     onDismiss: () -> Unit,
     onSave: (HoldingInputDto) -> Unit,
     title: String = "添加持仓",

@@ -19,15 +19,13 @@ class ActionPolicyEngine:
             return (self._candidate("BLOCKED", 100, (), (), ("data_quality.blocked",), context.data_quality.missing_fields),)
 
         candidates: list[ActionCandidate] = []
-        if "plan.exit_condition_met" in ids:
-            candidates.append(self._candidate("EXIT", 95, ("plan.exit_condition_met",), (), ("plan.exit_condition",)))
-        elif self._reduce_ids(ids):
+        if self._reduce_ids(ids):
             support = tuple(sorted(self._reduce_ids(ids)))
             candidates.append(self._candidate("REDUCE", 85, support, (), ("position_or_risk.reduce",)))
         elif self._add_allowed(context, ids):
-            candidates.append(self._candidate("ADD", 70, ("plan.add_condition_met",), (), ("plan.add_condition",)))
+            candidates.append(self._candidate("ADD", 70, self._positive_ids(ids), (), ("signal.add",)))
         elif self._open_allowed(context, ids):
-            candidates.append(self._candidate("OPEN", 65, ("plan.entry_condition_met",), (), ("plan.entry_condition",)))
+            candidates.append(self._candidate("OPEN", 65, self._positive_ids(ids), (), ("signal.open",)))
         elif context.position:
             candidates.append(self._candidate("HOLD", 40, (), (), ("default.hold",)))
         else:
@@ -43,7 +41,7 @@ class ActionPolicyEngine:
 
     @staticmethod
     def _reduce_ids(ids: set[str]) -> set[str]:
-        direct = {"position.above_max", "plan.reduce_condition_met", "risk.historical_downside_high", "risk.annualized_volatility_high"}
+        direct = {"position.above_max", "risk.historical_downside_high", "risk.annualized_volatility_high"}
         matched = ids.intersection(direct)
         bearish_event = any(item.startswith("event.negative.") for item in ids) and "trend.below_sma20_and_sma60" in ids
         defensive_weak = {"market.defensive", "relative.underperform_20d", "trend.below_sma20_and_sma60"}.issubset(ids)
@@ -55,16 +53,19 @@ class ActionPolicyEngine:
 
     @staticmethod
     def _add_allowed(context: DecisionContext, ids: set[str]) -> bool:
-        position, plan = context.position, context.trade_plan
-        if not position or not plan or not plan.enabled or not context.risk or "plan.add_condition_met" not in ids:
-            return False
-        if position.position_percent is None or position.position_percent >= plan.max_position_percent:
+        position = context.position
+        if not position or not context.quote or not context.risk:
             return False
         if context.account.available_cash <= 0 or any(item.startswith("event.negative.") for item in ids):
             return False
-        return "trend.below_sma20_and_sma60" not in ids and "market.defensive" not in ids
+        if "trend.below_sma20_and_sma60" in ids or "market.defensive" in ids:
+            return False
+        return bool(ActionPolicyEngine._positive_ids(ids))
 
     @staticmethod
     def _open_allowed(context: DecisionContext, ids: set[str]) -> bool:
-        plan = context.trade_plan
-        return bool(not context.position and plan and plan.enabled and context.quote and context.risk and context.account.available_cash > 0 and "plan.entry_condition_met" in ids)
+        return bool(not context.position and context.quote and context.risk and context.account.available_cash > 0 and ActionPolicyEngine._positive_ids(ids) and "market.defensive" not in ids)
+
+    @staticmethod
+    def _positive_ids(ids: set[str]) -> tuple[str, ...]:
+        return tuple(sorted(ids.intersection({"trend.above_sma20", "trend.sma20_above_sma60", "market.supportive", "relative.outperform_20d"})))

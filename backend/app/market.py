@@ -146,6 +146,19 @@ class MarketDataService:
                     reason,
                 ))
         by_symbol = {str(quote["symbol"]): quote for quote in quotes}
+        # The market-wide snapshot deliberately avoids per-security requests.
+        # A stock-detail request contains one A-share, so enrich only that case
+        # with Eastmoney's five-level order book rather than multiplying the
+        # scheduler's upstream traffic for every holding.
+        if len(normalized) == 1 and normalized[0] in a_symbols:
+            symbol = normalized[0]
+            try:
+                by_symbol[symbol].update(self._a_order_book(symbol))
+            except Exception as error:
+                logger.warning(
+                    "A-share order book unavailable symbol=%s error_type=%s",
+                    symbol, type(error).__name__,
+                )
         result = [by_symbol[symbol] for symbol in normalized]
         logger.info(
             "行情源请求完成 symbols=%s result_count=%s priced_count=%s failed=%s elapsed_ms=%s",
@@ -155,6 +168,36 @@ class MarketDataService:
             round((time.monotonic() - started_at) * 1000),
         )
         return result
+
+    @staticmethod
+    def _a_order_book(symbol: str) -> dict[str, object]:
+        """Read Eastmoney's five-level A-share order book through AKShare."""
+        import akshare as ak
+
+        frame = ak.stock_bid_ask_em(symbol=symbol)
+        if frame is None or frame.empty:
+            raise MarketDataUnavailable("order book response was empty", "order_book_empty")
+        values = {
+            str(row["item"]): row["value"]
+            for _, row in frame.iterrows()
+            if str(row.get("item", "")).strip()
+        }
+
+        def level(side: str, index: int) -> dict[str, object] | None:
+            price = values.get(f"{side}_{index}")
+            volume = values.get(f"{side}_{index}_vol")
+            if price is None and volume is None:
+                return None
+            return {"price": price, "volume": volume}
+
+        bid_levels = [item for index in range(1, 6) if (item := level("buy", index))]
+        ask_levels = [item for index in range(1, 6) if (item := level("sell", index))]
+        return {
+            "bid_price": values.get("buy_1"),
+            "ask_price": values.get("sell_1"),
+            "bid_levels": bid_levels,
+            "ask_levels": ask_levels,
+        }
 
     def latest_market_snapshot(self, markets: set[str]) -> list[dict[str, object]]:
         """Normalize the already-downloaded market frames into one latest row per symbol.
@@ -208,6 +251,10 @@ class MarketDataService:
             "price": None,
             "change": None,
             "change_percent": None,
+            "bid_price": None,
+            "ask_price": None,
+            "volume_ratio": None,
+            "turnover_rate": None,
             "currency": "HKD" if MarketDataService._is_hk(symbol) else "CNY",
             "source": "行情错误",
             "retrieved_at": beijing_now(),
@@ -609,6 +656,12 @@ class MarketDataService:
                 "volume": record.get("成交量"),
                 "amount": record.get("成交额"),
                 "turnover_rate": record.get("换手率"),
+                # Sina spot snapshots provide 买入 / 卖出.  Eastmoney may omit
+                # these fields, so absence remains explicit instead of using the
+                # last-traded price as a fictional bid or ask.
+                "bid_price": record.get("买入"),
+                "ask_price": record.get("卖出"),
+                "volume_ratio": record.get("量比"),
                 "currency": currency,
                 "source": source,
 

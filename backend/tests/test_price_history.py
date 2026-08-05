@@ -132,7 +132,7 @@ def test_daily_history_failure_logs_akshare_and_tushare_status(monkeypatch, tmp_
 def test_tencent_daily_fallback_replaces_failed_eastmoney_history(monkeypatch, tmp_path):
     tencent_frame = _Frame([{
         "date": "2026-08-03", "open": "94", "close": "95", "high": "96", "low": "93",
-        "volume": "100", "amount": "9500",
+        "volume": "100", "amount": "9500", "turnover": "0.0021",
     }])
     monkeypatch.setitem(sys.modules, "akshare", SimpleNamespace(
         stock_zh_a_hist=lambda **_: (_ for _ in ()).throw(ConnectionError("eastmoney unavailable")),
@@ -146,6 +146,9 @@ def test_tencent_daily_fallback_replaces_failed_eastmoney_history(monkeypatch, t
     bar = store.daily_prices("002594")[0]
     assert bar["close"] == 95
     assert bar["source"] == "Tencent daily history"
+    assert bar["volume"] == "100"
+    assert bar["amount"] == "9500"
+    assert bar["turnover_rate"] == "0.21"
 
 
 def test_post_close_sina_minutes_supply_missing_current_daily_bar(monkeypatch, tmp_path):

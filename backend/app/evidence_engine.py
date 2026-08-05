@@ -24,7 +24,8 @@ class EvidenceEngine:
         evidence.extend(self._market(context))
         evidence.extend(self._relative(context))
         evidence.extend(self._events(context))
-        evidence.extend(self._plan(context))
+        # A decision must stand on current market, position, risk and event data.
+        # Editable trade-plan templates are deliberately excluded from the signal path.
         result = tuple(sorted(evidence, key=lambda item: item.evidence_id))
         if len({item.evidence_id for item in result}) != len(result):
             raise ValueError("evidence IDs must be unique")
@@ -114,20 +115,3 @@ class EvidenceEngine:
     @staticmethod
     def _events(context: DecisionContext) -> list[EvidenceItem]:
         return [_item(f"event.{event.impact}.{event.event_id}", "event", event.impact, .7 if event.impact in {"positive", "negative"} else .4, event.title, event.summary or event.title, value=event.impact, source=event.source, as_of=event.published_at, fresh=True, source_reference=event.source_reference) for event in context.events]
-
-    @staticmethod
-    def _plan(context: DecisionContext) -> list[EvidenceItem]:
-        plan, quote = context.trade_plan, context.quote
-        if not plan or not quote:
-            return []
-        result = []
-        if plan.is_draft:
-            result.append(_item("plan.auto_draft", "plan", "uncertain", .35, "系统已生成交易计划草稿", "草稿用于补齐分析上下文，尚未启用，不会触发开仓或加仓条件；可在之后编辑确认。", source="decision_context", as_of=context.generated_at, fresh=True, rule_id=plan.plan_id))
-        for condition in plan.structured_conditions:
-            trigger, field, operator, value = condition.get("trigger"), condition.get("field"), condition.get("operator"), condition.get("value")
-            if field != "close" or not isinstance(trigger, str):
-                continue
-            matched = operator == "between" and isinstance(value, list) and len(value) == 2 and float(value[0]) <= quote.price <= float(value[1])
-            if matched and trigger in {"entry", "add", "reduce", "exit"}:
-                result.append(_item(f"plan.{trigger}_condition_met", "plan", "neutral", .6, "交易计划条件命中", f"计划 {trigger} 条件已按结构化价格区间命中", value=quote.price, threshold=str(value), source="trade_plans", as_of=context.generated_at, rule_id=plan.plan_id))
-        return result

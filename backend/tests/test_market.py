@@ -88,6 +88,10 @@ def test_a_share_quote_falls_back_to_sina_when_eastmoney_is_unavailable(monkeypa
         "涨跌额": -3.3, "涨跌幅": -3.49, "昨收": 94.45, "今开": 96.03,
         "最高": 96.59, "最低": 90.88, "成交量": 123, "成交额": 456,
         "时间戳": "15:00:00",
+        "\u4e70\u5165": 91.14,
+        "\u5356\u51fa": 91.15,
+        "\u91cf\u6bd4": 1.26,
+        "\u6362\u624b\u7387": 2.31,
     }])
     monkeypatch.setitem(
         __import__("sys").modules,
@@ -102,6 +106,35 @@ def test_a_share_quote_falls_back_to_sina_when_eastmoney_is_unavailable(monkeypa
 
     assert quote["price"] == 91.15
     assert quote["source"] == "Sina Finance / AKShare"
+    assert quote["bid_price"] == 91.14
+    assert quote["ask_price"] == 91.15
+    assert quote["volume_ratio"] == 1.26
+    assert quote["turnover_rate"] == 2.31
+
+
+def test_a_share_order_book_exposes_five_levels_and_volumes(monkeypatch):
+    book = pd.DataFrame([
+        {"item": "buy_1", "value": 10.44}, {"item": "buy_1_vol", "value": 369000},
+        {"item": "buy_2", "value": 10.43}, {"item": "buy_2_vol", "value": 835900},
+        {"item": "sell_1", "value": 10.45}, {"item": "sell_1_vol", "value": 233900},
+        {"item": "sell_2", "value": 10.46}, {"item": "sell_2_vol", "value": 1608400},
+    ])
+    monkeypatch.setitem(
+        __import__("sys").modules,
+        "akshare",
+        SimpleNamespace(stock_bid_ask_em=lambda symbol: book),
+    )
+
+    order_book = MarketDataService._a_order_book("000001")
+
+    assert order_book["bid_price"] == 10.44
+    assert order_book["ask_price"] == 10.45
+    assert order_book["bid_levels"] == [
+        {"price": 10.44, "volume": 369000}, {"price": 10.43, "volume": 835900},
+    ]
+    assert order_book["ask_levels"] == [
+        {"price": 10.45, "volume": 233900}, {"price": 10.46, "volume": 1608400},
+    ]
 
 
 def test_invalid_symbol_does_not_discard_valid_quote():

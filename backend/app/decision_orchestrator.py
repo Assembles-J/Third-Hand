@@ -44,26 +44,19 @@ class DecisionOrchestrator:
 
     @staticmethod
     def _operation_items(context, action, candidate_blockers, sizing) -> tuple[OperationItem, ...]:
-        plan = context.trade_plan
         quote_price = context.quote.price if context.quote else None
         sizing_blockers = tuple(sizing.blocked_reasons) if sizing else ()
         blockers = tuple(dict.fromkeys((*candidate_blockers, *sizing_blockers)))
         if blockers:
             return (OperationItem(kind="COMPLETE", title="先补全执行条件", trigger="完成下列必填项后重新生成工作台", status="needs_input", blockers=blockers),)
-        condition_by_action = {
-            "OPEN": getattr(plan, "entry_condition", ""),
-            "ADD": getattr(plan, "add_condition", ""),
-            "REDUCE": getattr(plan, "reduce_condition", ""),
-            "EXIT": getattr(plan, "exit_condition", ""),
-        }
         title_by_action = {"OPEN": "建立仓位", "ADD": "满足条件后加仓", "REDUCE": "满足条件后减仓", "EXIT": "满足条件后退出", "HOLD": "继续持有", "WATCH": "继续观察"}
-        trigger = condition_by_action.get(action) or "当前无需执行交易；等待下一次规则或行情触发。"
+        trigger = "以当前行情为准；下单前复核价格、数量与风险边界。" if action in {"OPEN", "ADD", "REDUCE", "EXIT"} else "当前无待执行交易；等待新的行情、公告或风险信号。"
         return (OperationItem(
             kind=action,
             title=title_by_action.get(action, "暂不操作"),
             trigger=trigger,
             reference_price=quote_price,
-            invalidation_price=getattr(plan, "invalidation_price", None),
+            invalidation_price=getattr(sizing, "invalidation_price", None),
             suggested_quantity=getattr(sizing, "suggested_quantity", None),
             target_quantity=getattr(sizing, "target_quantity", None),
             status="ready",
