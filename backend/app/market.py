@@ -216,6 +216,79 @@ class MarketDataService:
             ))
         return records
 
+    def a_share_universe_snapshot(self, force_refresh: bool = False) -> list[dict[str, object]]:
+        """Return one normalized A-share snapshot with an explicit fallback chain.
+
+        AKShare supplies the preferred public snapshot and internally falls back
+        from Eastmoney to Sina.  Tushare is only used when both public sources
+        fail and a token is configured; its result is end-of-day data and must
+        never be presented as a live quote.
+        """
+        try:
+            frame, retrieved_at, source = self._frame("a", force_refresh=force_refresh)
+            records = self._from_frame(
+                (frame, retrieved_at, source),
+                None,
+                "CNY",
+                "公开全市场快照，仅供研究和条件核查，不用于交易执行。",
+            )
+            if not records:
+                raise MarketDataUnavailable("AKShare 全市场快照为空", "empty_universe_snapshot")
+            return records
+        except MarketDataUnavailable as public_error:
+            logger.warning(
+                "A-share universe snapshot unavailable through AKShare chain code=%s; trying Tushare",
+                public_error.code,
+            )
+            return self._tushare_a_share_universe(public_error)
+
+    def _tushare_a_share_universe(self, public_error: MarketDataUnavailable) -> list[dict[str, object]]:
+        if not self._tushare_token:
+            raise MarketDataUnavailable(
+                "全市场行情不可用：AKShare 数据源均失败，且未配置 Tushare Token。",
+                "akshare_unavailable_tushare_not_configured",
+            ) from public_error
+        try:
+            import tushare as ts
+            client = ts.pro_api(self._tushare_token)
+            session = self._trading_calendar.latest_session_date("CN")
+            if not session:
+                raise ValueError("latest CN trading session unavailable")
+            frame = client.daily(trade_date=session.replace("-", ""))
+            if frame is None or frame.empty:
+                raise ValueError("empty daily snapshot")
+            retrieved_at = beijing_now()
+            records: list[dict[str, object]] = []
+            for _, row in frame.iterrows():
+                ts_code = str(row.get("ts_code", ""))
+                symbol = ts_code.split(".", 1)[0]
+                if len(symbol) != 6 or not symbol.isdigit():
+                    continue
+                try:
+                    close, pre_close = float(row["close"]), float(row["pre_close"])
+                except (KeyError, TypeError, ValueError):
+                    continue
+                records.append({
+                    "symbol": symbol, "name": symbol, "price": close,
+                    "change": round(close - pre_close, 4),
+                    "change_percent": round(float(row.get("pct_chg", 0.0)), 2),
+                    "open": row.get("open"), "high": row.get("high"), "low": row.get("low"),
+                    "previous_close": pre_close, "volume": row.get("vol"), "amount": row.get("amount"),
+                    "currency": "CNY", "source": "Tushare Pro 全市场日线",
+                    "retrieved_at": retrieved_at, "as_of": session, "is_realtime": False,
+                    "delay_seconds": None, "license_scope": "personal-research-only",
+                    "freshness_note": "AKShare 全市场快照不可用；当前为 Tushare 最近交易日日线，不是实时行情。",
+                })
+            if not records:
+                raise ValueError("no usable A-share records")
+            logger.info("A-share universe snapshot recovered through Tushare records=%s", len(records))
+            return records
+        except Exception as error:
+            raise MarketDataUnavailable(
+                "全市场行情不可用：AKShare 数据源和 Tushare 兜底均未返回可用数据。",
+                "all_market_sources_unavailable",
+            ) from error
+
     def _auto_a_quotes(self, symbols: list[str], market: str, force_refresh: bool) -> list[dict[str, object]]:
         try:
             return self._public_a_quotes(

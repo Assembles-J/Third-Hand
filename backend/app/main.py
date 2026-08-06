@@ -276,6 +276,24 @@ class ResearchRecommendation(BaseModel):
     evaluation_status: str | None = None
 
 
+class OpportunityScanItem(BaseModel):
+    symbol: str
+    action: Literal["watch", "add", "trim"]
+    score: int = Field(ge=0, le=100)
+    summary: str
+    reasons: list[str] = Field(default_factory=list)
+    buy_condition: str
+    avoid_condition: str
+    invalidation_price: float | None = None
+    data_as_of: str | None = None
+
+
+class OpportunityScan(BaseModel):
+    generated_at: datetime
+    coverage_note: str
+    items: list[OpportunityScanItem] = Field(default_factory=list)
+
+
 class DailyReviewGenerateRequest(BaseModel):
     symbols: list[str] | None = Field(default=None, max_length=50)
 
@@ -1848,6 +1866,70 @@ def generate_recommendations(payload: RecommendationRequest) -> list[ResearchRec
 @app.get("/v1/research-recommendations", response_model=list[ResearchRecommendation])
 def list_recommendations(symbol: str | None = None) -> list[ResearchRecommendation]:
     return [ResearchRecommendation.model_validate(item) for item in store.recommendations(symbol)]
+
+
+@app.get("/v1/opportunity-scan", response_model=OpportunityScan)
+def opportunity_scan(limit: int = Query(default=8, ge=1, le=30)) -> OpportunityScan:
+    """Rank locally available symbols for observation, never a market-wide prediction."""
+    symbols = store.opportunity_symbols()
+    quotes = {str(item["symbol"]): item for item in store.cached_quotes(symbols)}
+    holdings = {str(item["symbol"]): item for item in store.list()}
+    candidates: list[OpportunityScanItem] = []
+    for symbol in symbols:
+        bars = store.daily_prices(symbol, 80)
+        if len(bars) < 60 or not (quote := quotes.get(symbol)) or quote.get("price") is None:
+            continue
+        closes = [float(bar["close"]) for bar in bars]
+        price = float(quote["price"])
+        high20, low20 = max(closes[-20:]), min(closes[-20:])
+        change = ((price / closes[-2]) - 1) * 100 if len(closes) > 1 and closes[-2] else 0.0
+        above_midpoint = price >= (high20 + low20) / 2
+        near_high = price >= high20 * 0.98
+        score = min(100, int(35 + max(-10, min(20, change * 3)) + (18 if above_midpoint else 0) + (12 if near_high else 0)))
+        holding = holdings.get(symbol)
+        action: Literal["watch", "add", "trim"] = "trim" if holding and price >= high20 else "watch"
+        reasons = [
+            f"最近 20 个交易日区间为 {low20:.2f} 到 {high20:.2f}，当前价位在区间{'上半部' if above_midpoint else '下半部'}。",
+            f"相对上一交易日，价格变化 {change:+.2f}%；这只是已发生的走势，不保证明天继续上涨。",
+        ]
+        if near_high:
+            reasons.append("价格接近近期高位，说明走势较强，也意味着追高后回落的风险更大。")
+        if action == "trim":
+            summary = "已有持仓接近近期高位，优先检查减仓或继续持有的条件。"
+            buy_condition = "不新增仓位；先核对既有计划是否允许减仓。"
+        else:
+            summary = "值得加入明日观察，不是“必涨”或立即买入信号。"
+            buy_condition = f"只有价格不明显高开、回到 {max(low20, price * .97):.2f} 至 {min(high20, price * 1.01):.2f} 区间并保持活跃时，再建立交易计划。"
+        candidates.append(OpportunityScanItem(
+            symbol=symbol, action=action, score=score, summary=summary, reasons=reasons,
+            buy_condition=buy_condition,
+            avoid_condition=f"若跌破 {low20 * .97:.2f}，或高开后快速回落，就停止关注本次机会。",
+            invalidation_price=round(low20 * .97, 2), data_as_of=str(bars[-1]["trading_date"]),
+        ))
+    ordered = sorted(candidates, key=lambda item: item.score, reverse=True)[:limit]
+    coverage = f"已在本机找到 {len(symbols)} 只具备行情和至少 60 日日线的标的；全市场快照刷新后，新标的仍需补齐日线才会进入候选，不预测明天必涨。"
+    return OpportunityScan(generated_at=beijing_now(), coverage_note=coverage, items=ordered)
+
+
+@app.post("/v1/opportunity-scan/refresh", response_model=OpportunityScan)
+def refresh_opportunity_scan(limit: int = Query(default=8, ge=1, le=30)) -> OpportunityScan:
+    """Refresh the A-share universe before reading only fully evidenced candidates.
+
+    It is intentionally separate from the GET endpoint: callers can refresh
+    public providers explicitly, while ordinary screen reloads use the local
+    cache and do not repeatedly download a whole-market snapshot.
+    """
+    try:
+        with market_collection_lock:
+            snapshot = market_data.a_share_universe_snapshot(force_refresh=True)
+            store.save_quotes(snapshot)
+    except MarketDataUnavailable as error:
+        raise HTTPException(status_code=503, detail={
+            "code": error.code,
+            "message": str(error),
+            "next_step": "请稍后重试；若持续失败，请检查 AKShare 网络连接和 Tushare Token 配置。",
+        }) from error
+    return opportunity_scan(limit)
 
 
 @app.post("/v1/research-recommendations/evaluate")

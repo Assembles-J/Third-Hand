@@ -166,6 +166,22 @@ data class RecommendationRequestDto(val symbols: List<String>)
 data class AvailableCashDto(val available_cash: Double, val updated_at: String = "")
 data class AvailableCashInputDto(val available_cash: Double)
 data class ResearchRecommendationDto(val id: String, val symbol: String, val status: String, val action: String? = null, val price_zone: Map<String, Double>? = null, val invalidation_price: Double? = null, val suggested_quantity: Double? = null, val quantity_status: String? = null, val blocked_reasons: List<String> = emptyList())
+data class OpportunityScanItemDto(
+    val symbol: String,
+    val action: String,
+    val score: Int,
+    val summary: String,
+    val reasons: List<String> = emptyList(),
+    val buy_condition: String,
+    val avoid_condition: String,
+    val invalidation_price: Double? = null,
+    val data_as_of: String? = null,
+)
+data class OpportunityScanDto(
+    val generated_at: String,
+    val coverage_note: String,
+    val items: List<OpportunityScanItemDto> = emptyList(),
+)
 data class RecommendationEvaluationDto(val horizon: Int, val evaluation_date: String, val net_pnl: Double, val return_percent: Double, val mfe_percent: Double, val mae_percent: Double)
 data class DailyReviewGenerateRequestDto(val symbols: List<String>? = null)
 data class DailyReviewExecutionInputDto(val execution_status: String, val executed_quantity: Double, val executed_price: Double? = null, val note: String = "")
@@ -447,6 +463,10 @@ interface ThirdHandApi {
     suspend fun generateRecommendations(@Body request: RecommendationRequestDto): List<ResearchRecommendationDto>
     @GET("v1/research-recommendations")
     suspend fun recommendations(@Query("symbol") symbol: String? = null): List<ResearchRecommendationDto>
+    @GET("v1/opportunity-scan")
+    suspend fun opportunityScan(@Query("limit") limit: Int = 8): OpportunityScanDto
+    @POST("v1/opportunity-scan/refresh")
+    suspend fun refreshOpportunityScan(@Query("limit") limit: Int = 8): OpportunityScanDto
     @GET("v1/research-recommendations/{id}/evaluations")
     suspend fun recommendationEvaluations(@Path("id") id: String): List<RecommendationEvaluationDto>
     @POST("v1/daily-reviews/generate")

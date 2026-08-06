@@ -648,6 +648,8 @@ private fun TodayScreen(onOpenTradePlan: () -> Unit, onOpenRules: () -> Unit, on
     var analyzing by remember { mutableStateOf(false) }
     var showSymbolPicker by remember { mutableStateOf(false) }
     var instrumentSetupSymbol by remember { mutableStateOf<String?>(null) }
+    var opportunityScan by remember { mutableStateOf<OpportunityScanDto?>(null) }
+    var scanningOpportunities by remember { mutableStateOf(false) }
     val scope = rememberCoroutineScope()
     fun load() = scope.launch {
         try {
@@ -689,7 +691,28 @@ private fun TodayScreen(onOpenTradePlan: () -> Unit, onOpenRules: () -> Unit, on
             analyzing = false
         }
     }
-    LaunchedEffect(Unit) { load() }
+    fun scanOpportunities() = scope.launch {
+        scanningOpportunities = true
+        try {
+            opportunityScan = api.refreshOpportunityScan()
+        } catch (_: Exception) {
+            error = "机会扫描暂时不可用；请确认后端正在运行并且已缓存行情和至少 60 天日线。"
+        } finally {
+            scanningOpportunities = false
+        }
+    }
+    fun loadCachedOpportunityScan() = scope.launch {
+        try {
+            opportunityScan = api.opportunityScan()
+        } catch (_: Exception) {
+            // The decision workspace remains usable when this independent
+            // section has no cached scan or the provider is temporarily down.
+        }
+    }
+    LaunchedEffect(Unit) {
+        load()
+        loadCachedOpportunityScan()
+    }
     val selectedHolding = holdings.firstOrNull { it.symbol == selectedSymbol }
     val selectedAnalysis = portfolioAnalysis.firstOrNull { it.symbol == selectedSymbol }
     LazyColumn(contentPadding = androidx.compose.foundation.layout.PaddingValues(bottom = 24.dp), verticalArrangement = Arrangement.spacedBy(14.dp)) {
@@ -699,6 +722,14 @@ private fun TodayScreen(onOpenTradePlan: () -> Unit, onOpenRules: () -> Unit, on
                 Text("AI 决策工作台", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold)
                 Text("行情不在这里重复展示；请选择持仓，沿着证据、规则和结论查看本次分析。", color = MaterialTheme.colorScheme.onSurfaceVariant, style = MaterialTheme.typography.bodySmall)
             }
+        }
+        item {
+            OpportunityScanCard(
+                scan = opportunityScan,
+                loading = scanningOpportunities,
+                onRefresh = ::scanOpportunities,
+                onOpenTradePlan = onOpenTradePlan,
+            )
         }
         error?.let { item { StatusCard(it, error = true) } }
         statusMessage?.let { item { StatusCard(it, positive = true) } }
@@ -768,6 +799,56 @@ private fun TodayScreen(onOpenTradePlan: () -> Unit, onOpenRules: () -> Unit, on
         confirmButton = { TextButton(onClick = { showSymbolPicker = false }) { Text("关闭") } },
     )
     if (showDecisionHistory && selectedSymbol != null) DecisionHistoryDialog(selectedSymbol!!, onDismiss = { showDecisionHistory = false })
+}
+
+@Composable
+private fun OpportunityScanCard(
+    scan: OpportunityScanDto?,
+    loading: Boolean,
+    onRefresh: () -> Unit,
+    onOpenTradePlan: () -> Unit,
+) {
+    Card(
+        modifier = Modifier.padding(horizontal = 20.dp).fillMaxWidth(),
+        shape = RoundedCornerShape(18.dp),
+        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.secondaryContainer),
+    ) {
+        Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Column(Modifier.weight(1f)) {
+                    Text("市场机会扫描", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
+                    Text("没有持仓也可以先观察；系统不会把“可能上涨”包装成“明天必涨”。", style = MaterialTheme.typography.bodySmall)
+                }
+                IconButton(onClick = onRefresh, enabled = !loading) {
+                    Icon(Icons.Filled.Refresh, contentDescription = "刷新机会扫描")
+                }
+            }
+            when {
+                loading -> Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    LinearProgressIndicator(modifier = Modifier.width(56.dp))
+                    Text("正在从已缓存的行情中筛选可观察标的…", style = MaterialTheme.typography.bodySmall)
+                }
+                scan == null -> Text("暂时没有机会扫描结果。", style = MaterialTheme.typography.bodySmall)
+                else -> {
+                    Text(scan.coverage_note, style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSecondaryContainer)
+                    if (scan.items.isEmpty()) {
+                        Text("目前没有满足基础数据条件的标的。先刷新行情和日线后再查看。", style = MaterialTheme.typography.bodySmall)
+                    } else scan.items.forEach { item ->
+                        HorizontalDivider(color = MaterialTheme.colorScheme.onSecondaryContainer.copy(alpha = 0.18f))
+                        Column(verticalArrangement = Arrangement.spacedBy(5.dp)) {
+                            Text("${item.symbol} · ${if (item.action == "trim") "优先复核持仓" else "值得观察"}", style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.SemiBold)
+                            Text(item.summary, style = MaterialTheme.typography.bodySmall)
+                            item.reasons.take(2).forEach { reason -> Text("• $reason", style = MaterialTheme.typography.bodySmall) }
+                            Text("考虑前提：${item.buy_condition}", style = MaterialTheme.typography.bodySmall, fontWeight = FontWeight.Medium)
+                            Text("不做/离场：${item.avoid_condition}", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.error)
+                            Text("数据截至 ${item.data_as_of ?: "未知"} · 观察强度 ${item.score}/100（不是上涨概率）", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSecondaryContainer)
+                        }
+                    }
+                    TextButton(onClick = onOpenTradePlan) { Text("建立交易计划后，再查看可执行数量") }
+                }
+            }
+        }
+    }
 }
 
 @Composable

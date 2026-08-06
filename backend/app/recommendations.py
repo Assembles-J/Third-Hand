@@ -8,26 +8,30 @@ SLIPPAGE_RATE = 0.0005
 
 
 def candidate(symbol: str, holding: dict | None, quote: dict | None, bars: list[dict], plan: dict | None, available_cash: float = 0.0) -> dict:
-    if not quote or quote.get("price") is None or len(bars) < 60 or not plan or not plan.get("enabled"):
-        return {"symbol": symbol, "status": "blocked", "blocked_reasons": ["quote_or_daily_history_or_enabled_plan_missing"], "automatic_execution": False}
+    if not quote or quote.get("price") is None or len(bars) < 60:
+        return {"symbol": symbol, "status": "blocked", "blocked_reasons": ["quote_or_daily_history_missing"], "automatic_execution": False}
     closes = [float(x["close"]) for x in bars]
     high20, low20 = max(closes[-20:]), min(closes[-20:])
     price = float(quote["price"])
     # A reproducible zone derived from current price and recent range; no LLM input.
     low, high = round(max(low20, price * .97), 2), round(min(high20, price * 1.01), 2)
     if low > high: low, high = high, low
-    action = "trim" if holding and price >= high20 else "add"
+    # A stock without a saved trading plan is kept in observation mode.  This
+    # lets a new user discover candidates without inventing a buy instruction.
+    action = "trim" if holding and price >= high20 else ("add" if plan and plan.get("enabled") else "watch")
     quantity = None
     quantity_status = "cash_missing"
     if holding and action == "trim":
         quantity = max(1, floor(float(holding["quantity"]) * .25))
         quantity_status = "position_based_25_percent"
-    elif available_cash > 0:
+    elif action == "add" and available_cash > 0:
         # Reserve 75% of cash and size the candidate in whole 100-share lots.
         quantity = floor((available_cash * .25) / price / 100) * 100
         quantity_status = "cash_based_25_percent_100_share_lot" if quantity > 0 else "cash_insufficient_for_one_lot"
-    structured = list(plan.get("structured_conditions") or [])
-    conditions = structured or [{"trigger": action, "field": "close", "operator": "between", "value": [low, high]}, {"field": "plan_enabled", "operator": "equals", "value": True}]
+    structured = list((plan or {}).get("structured_conditions") or [])
+    conditions = structured or [{"trigger": action, "field": "close", "operator": "between", "value": [low, high]}]
+    if action == "add":
+        conditions.append({"field": "plan_enabled", "operator": "equals", "value": True})
     return {"symbol": symbol, "status": "ready", "action": action, "price_zone": {"low": low, "high": high}, "invalidation_price": round(low * .97, 2), "suggested_quantity": quantity, "quantity_status": quantity_status, "conditions": conditions, "trigger_events": [{"event_type": "condition_checked", "trading_date": bars[-1].get("trading_date"), "trigger_price": price, "conditions": conditions, "matched": low <= price <= high}], "automatic_execution": False, "evaluation_version": "paper-evaluation-v2"}
 
 

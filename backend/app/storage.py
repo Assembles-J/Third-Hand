@@ -721,6 +721,27 @@ class PortfolioStore:
             ).fetchall()
         return [json.loads(str(row["payload"])) for row in rows]
 
+    def opportunity_symbols(self, minimum_daily_bars: int = 60, limit: int = 200) -> list[str]:
+        """Symbols eligible for local opportunity scanning.
+
+        This is deliberately limited to instruments for which the service already
+        has both a cached quote and enough daily history.  It must not claim to
+        represent the whole market when the configured data provider has only
+        populated a partial universe.
+        """
+        with self._connect() as connection:
+            rows = connection.execute(
+                """SELECT daily.symbol
+                   FROM daily_price_cache AS daily
+                   INNER JOIN market_quote_cache AS quote ON quote.symbol = daily.symbol
+                   GROUP BY daily.symbol
+                   HAVING COUNT(*) >= ?
+                   ORDER BY MAX(daily.trading_date) DESC, daily.symbol ASC
+                   LIMIT ?""",
+                (max(1, minimum_daily_bars), max(1, limit)),
+            ).fetchall()
+        return [str(row["symbol"]) for row in rows]
+
     def save_decision_ai_run(self, item: dict[str, object]) -> None:
         with self._connect() as connection:
             connection.execute("INSERT INTO decision_ai_runs (run_id,context_id,input_hash,status,error_code,payload,metadata,created_at) VALUES (?,?,?,?,?,?,?,?)", (str(item["run_id"]), str(item["context_id"]), str(item["input_hash"]), str(item["status"]), item.get("error_code"), json.dumps(item.get("payload", {}), ensure_ascii=False), json.dumps(item.get("metadata", {}), ensure_ascii=False), str(item["created_at"])))

@@ -156,6 +156,32 @@ def test_invalid_symbol_does_not_discard_valid_quote():
     assert quotes[1]["error_code"] == "invalid_symbol"
 
 
+def test_universe_snapshot_uses_tushare_only_after_akshare_chain_fails(monkeypatch):
+    service = MarketDataService()
+    service._frame = lambda *_args, **_kwargs: (_ for _ in ()).throw(
+        MarketDataUnavailable("AKShare unavailable", "akshare_chain_unavailable")
+    )
+    recovered = [{"symbol": "600519", "price": 1500.0, "source": "Tushare Pro 全市场日线"}]
+    service._tushare_a_share_universe = lambda error: recovered
+
+    assert service.a_share_universe_snapshot(force_refresh=True) == recovered
+
+
+def test_universe_snapshot_reports_unavailable_when_akshare_and_tushare_fail():
+    service = MarketDataService()
+    service._frame = lambda *_args, **_kwargs: (_ for _ in ()).throw(
+        MarketDataUnavailable("AKShare unavailable", "akshare_chain_unavailable")
+    )
+    service._tushare_a_share_universe = lambda error: (_ for _ in ()).throw(
+        MarketDataUnavailable("all sources unavailable", "all_market_sources_unavailable")
+    )
+
+    with pytest.raises(MarketDataUnavailable, match="all sources unavailable") as error:
+        service.a_share_universe_snapshot(force_refresh=True)
+
+    assert error.value.code == "all_market_sources_unavailable"
+
+
 def test_a_share_name_lookup_uses_dedicated_code_directory(monkeypatch):
     service = MarketDataService()
     monkeypatch.setitem(
