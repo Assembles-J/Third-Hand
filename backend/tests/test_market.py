@@ -182,6 +182,32 @@ def test_universe_snapshot_reports_unavailable_when_akshare_and_tushare_fail():
     assert error.value.code == "all_market_sources_unavailable"
 
 
+def test_hot_industry_boards_and_members_keep_names(monkeypatch):
+    boards = pd.DataFrame([
+        {"板块名称": "半导体", "涨跌幅": 3.5},
+        {"板块名称": "银行", "涨跌幅": -0.2},
+        {"板块名称": "通信设备", "涨跌幅": 2.1},
+    ])
+    members = pd.DataFrame([{"代码": "000001", "名称": "平安银行"}])
+    monkeypatch.setitem(
+        __import__("sys").modules,
+        "akshare",
+        SimpleNamespace(
+            stock_board_industry_name_em=lambda: boards,
+            stock_board_industry_cons_em=lambda symbol: members,
+        ),
+    )
+    service = MarketDataService()
+
+    assert service.hot_a_share_sectors(limit=2) == [
+        {"name": "半导体", "change_percent": 3.5},
+        {"name": "通信设备", "change_percent": 2.1},
+    ]
+    assert service.a_share_sector_members("半导体") == [
+        {"symbol": "000001", "name": "平安银行", "sector": "半导体"},
+    ]
+
+
 def test_a_share_name_lookup_uses_dedicated_code_directory(monkeypatch):
     service = MarketDataService()
     monkeypatch.setitem(

@@ -831,14 +831,21 @@ private fun OpportunityScanCard(
                 scan == null -> Text("暂时没有机会扫描结果。", style = MaterialTheme.typography.bodySmall)
                 else -> {
                     Text(scan.coverage_note, style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSecondaryContainer)
+                    if (scan.hot_sectors.isNotEmpty()) {
+                        Text("当前热门板块：${scan.hot_sectors.joinToString(" · ")}", style = MaterialTheme.typography.bodySmall, fontWeight = FontWeight.Medium)
+                    }
                     if (scan.items.isEmpty()) {
-                        Text("目前没有满足基础数据条件的标的。先刷新行情和日线后再查看。", style = MaterialTheme.typography.bodySmall)
+                        Text("热门板块候选正在补齐日线，完成后会自动进入分析；无需录入股票代码。", style = MaterialTheme.typography.bodySmall)
                     } else scan.items.forEach { item ->
                         HorizontalDivider(color = MaterialTheme.colorScheme.onSecondaryContainer.copy(alpha = 0.18f))
                         Column(verticalArrangement = Arrangement.spacedBy(5.dp)) {
-                            Text("${item.symbol} · ${if (item.action == "trim") "优先复核持仓" else "值得观察"}", style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.SemiBold)
+                            Text("${item.name}（${item.symbol}） · ${if (item.action == "trim") "优先复核持仓" else "值得观察"}", style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.SemiBold)
+                            CandidateSourceBadges(item.sources)
+                            item.sector?.let { Text("所属板块：$it", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSecondaryContainer) }
                             Text(item.summary, style = MaterialTheme.typography.bodySmall)
                             item.reasons.take(2).forEach { reason -> Text("• $reason", style = MaterialTheme.typography.bodySmall) }
+                            Text("综合评分 ${item.score}/100 · 证据置信度 ${item.confidence}/100 · 偏强可能性 ${item.upside_likelihood}/100（非承诺）", style = MaterialTheme.typography.bodySmall, fontWeight = FontWeight.Medium)
+                            Text("风险：${item.risk_level}。置信度衡量证据完整度，不等于涨跌概率。", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSecondaryContainer)
                             Text("考虑前提：${item.buy_condition}", style = MaterialTheme.typography.bodySmall, fontWeight = FontWeight.Medium)
                             Text("不做/离场：${item.avoid_condition}", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.error)
                             Text("数据截至 ${item.data_as_of ?: "未知"} · 观察强度 ${item.score}/100（不是上涨概率）", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSecondaryContainer)
@@ -847,6 +854,24 @@ private fun OpportunityScanCard(
                     TextButton(onClick = onOpenTradePlan) { Text("建立交易计划后，再查看可执行数量") }
                 }
             }
+        }
+    }
+}
+
+@Composable
+private fun CandidateSourceBadges(sources: List<String>) {
+    Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
+        if ("holding" in sources) {
+            Icon(Icons.Filled.Wallet, contentDescription = "持仓候选", modifier = Modifier.width(16.dp), tint = MaterialTheme.colorScheme.primary)
+            Text("持仓", style = MaterialTheme.typography.labelSmall)
+        }
+        if ("watchlist" in sources) {
+            Icon(Icons.Filled.Bookmark, contentDescription = "自选候选", modifier = Modifier.width(16.dp), tint = MaterialTheme.colorScheme.secondary)
+            Text("自选", style = MaterialTheme.typography.labelSmall)
+        }
+        if ("market" in sources) {
+            Icon(Icons.Filled.AutoGraph, contentDescription = "市场推荐候选", modifier = Modifier.width(16.dp), tint = MaterialTheme.colorScheme.tertiary)
+            Text("市场推荐", style = MaterialTheme.typography.labelSmall)
         }
     }
 }

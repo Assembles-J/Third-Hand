@@ -168,8 +168,14 @@ data class AvailableCashInputDto(val available_cash: Double)
 data class ResearchRecommendationDto(val id: String, val symbol: String, val status: String, val action: String? = null, val price_zone: Map<String, Double>? = null, val invalidation_price: Double? = null, val suggested_quantity: Double? = null, val quantity_status: String? = null, val blocked_reasons: List<String> = emptyList())
 data class OpportunityScanItemDto(
     val symbol: String,
+    val name: String,
+    val sector: String? = null,
+    val sources: List<String> = emptyList(),
     val action: String,
     val score: Int,
+    val confidence: Int,
+    val upside_likelihood: Int,
+    val risk_level: String,
     val summary: String,
     val reasons: List<String> = emptyList(),
     val buy_condition: String,
@@ -180,6 +186,7 @@ data class OpportunityScanItemDto(
 data class OpportunityScanDto(
     val generated_at: String,
     val coverage_note: String,
+    val hot_sectors: List<String> = emptyList(),
     val items: List<OpportunityScanItemDto> = emptyList(),
 )
 data class RecommendationEvaluationDto(val horizon: Int, val evaluation_date: String, val net_pnl: Double, val return_percent: Double, val mfe_percent: Double, val mae_percent: Double)
@@ -464,9 +471,9 @@ interface ThirdHandApi {
     @GET("v1/research-recommendations")
     suspend fun recommendations(@Query("symbol") symbol: String? = null): List<ResearchRecommendationDto>
     @GET("v1/opportunity-scan")
-    suspend fun opportunityScan(@Query("limit") limit: Int = 8): OpportunityScanDto
+    suspend fun opportunityScan(@Query("limit") limit: Int = 15): OpportunityScanDto
     @POST("v1/opportunity-scan/refresh")
-    suspend fun refreshOpportunityScan(@Query("limit") limit: Int = 8): OpportunityScanDto
+    suspend fun refreshOpportunityScan(@Query("limit") limit: Int = 15): OpportunityScanDto
     @GET("v1/research-recommendations/{id}/evaluations")
     suspend fun recommendationEvaluations(@Path("id") id: String): List<RecommendationEvaluationDto>
     @POST("v1/daily-reviews/generate")

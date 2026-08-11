@@ -257,6 +257,11 @@ class MarketDataService:
             frame = client.daily(trade_date=session.replace("-", ""))
             if frame is None or frame.empty:
                 raise ValueError("empty daily snapshot")
+            names_frame = client.stock_basic(exchange="", list_status="L", fields="ts_code,name")
+            names = {
+                str(row.get("ts_code", "")): str(row.get("name", "")).strip()
+                for _, row in names_frame.iterrows()
+            } if names_frame is not None else {}
             retrieved_at = beijing_now()
             records: list[dict[str, object]] = []
             for _, row in frame.iterrows():
@@ -269,7 +274,7 @@ class MarketDataService:
                 except (KeyError, TypeError, ValueError):
                     continue
                 records.append({
-                    "symbol": symbol, "name": symbol, "price": close,
+                    "symbol": symbol, "name": names.get(ts_code) or symbol, "price": close,
                     "change": round(close - pre_close, 4),
                     "change_percent": round(float(row.get("pct_chg", 0.0)), 2),
                     "open": row.get("open"), "high": row.get("high"), "low": row.get("low"),
@@ -288,6 +293,58 @@ class MarketDataService:
                 "全市场行情不可用：AKShare 数据源和 Tushare 兜底均未返回可用数据。",
                 "all_market_sources_unavailable",
             ) from error
+
+    def hot_a_share_sectors(self, limit: int = 3) -> list[dict[str, object]]:
+        """Read the currently strongest industry boards through AKShare.
+
+        A board is an observed market grouping, not a prediction.  If this
+        optional enrichment fails, the universe scan still runs without a
+        sector label rather than inventing one.
+        """
+        try:
+            import akshare as ak
+            frame = ak.stock_board_industry_name_em()
+            if frame is None or frame.empty:
+                return []
+            name_column = next((item for item in ("板块名称", "名称") if item in frame.columns), None)
+            change_column = next((item for item in ("涨跌幅", "涨跌幅(%)") if item in frame.columns), None)
+            if not name_column or not change_column:
+                return []
+            items = []
+            for _, row in frame.iterrows():
+                try:
+                    change = float(row[change_column])
+                except (TypeError, ValueError):
+                    continue
+                name = str(row[name_column]).strip()
+                if name:
+                    items.append({"name": name, "change_percent": round(change, 2)})
+            return sorted(items, key=lambda item: item["change_percent"], reverse=True)[:max(1, limit)]
+        except Exception as error:
+            logger.warning("Industry-board scan unavailable error_type=%s", type(error).__name__)
+            return []
+
+    def a_share_sector_members(self, sector: str, limit: int = 15) -> list[dict[str, str]]:
+        """Return a small, bounded set of component stocks for one hot board."""
+        try:
+            import akshare as ak
+            frame = ak.stock_board_industry_cons_em(symbol=sector)
+            if frame is None or frame.empty:
+                return []
+            code_column = next((item for item in ("代码", "股票代码") if item in frame.columns), None)
+            name_column = next((item for item in ("名称", "股票名称") if item in frame.columns), None)
+            if not code_column or not name_column:
+                return []
+            members = []
+            for _, row in frame.iterrows():
+                code = str(row[code_column]).strip().zfill(6)
+                name = str(row[name_column]).strip()
+                if len(code) == 6 and code.isdigit() and name:
+                    members.append({"symbol": code, "name": name, "sector": sector})
+            return members[:max(1, limit)]
+        except Exception as error:
+            logger.warning("Industry-board constituents unavailable sector=%s error_type=%s", sector, type(error).__name__)
+            return []
 
     def _auto_a_quotes(self, symbols: list[str], market: str, force_refresh: bool) -> list[dict[str, object]]:
         try:

@@ -41,6 +41,7 @@ from app.market_regime import MarketRegimeService
 from app.relative_strength import RelativeStrengthService
 from app.trading_calendar import TradingCalendarService
 from app.recommendations import candidate as build_candidate, first_fill, evaluations
+from app.opportunity_scoring import score_opportunity
 from app.decision_context import DecisionContextBuilder
 from app.decision_models import DecisionContext
 from app.evidence_engine import EvidenceEngine
@@ -83,6 +84,7 @@ def positive_environment_integer(name: str, default: int, minimum: int) -> int:
 
 MARKET_REFRESH_ENABLED = os.getenv("MARKET_REFRESH_ENABLED", "true").lower() not in {"0", "false", "no"}
 MARKET_REFRESH_INTERVAL_SECONDS = positive_environment_integer("MARKET_REFRESH_INTERVAL_SECONDS", 60, 30)
+MARKET_UNIVERSE_SCAN_INTERVAL_SECONDS = positive_environment_integer("MARKET_UNIVERSE_SCAN_INTERVAL_SECONDS", 300, 60)
 DAILY_HISTORY_RETRY_SECONDS = positive_environment_integer("DAILY_HISTORY_RETRY_SECONDS", 300, 30)
 market_refresh_stop = Event()
 market_refresh_thread: Thread | None = None
@@ -101,6 +103,14 @@ market_refresh_state: dict[str, object] = {
     "last_trigger": None,
     "symbols": [],
     "result_count": 0,
+}
+universe_scan_state_lock = Lock()
+universe_scan_state: dict[str, object] = {
+    "last_attempt_at": None,
+    "last_success_at": None,
+    "last_error": None,
+    "hot_sectors": [],
+    "candidates": {},
 }
 app.add_middleware(
     CORSMiddleware,
@@ -278,8 +288,14 @@ class ResearchRecommendation(BaseModel):
 
 class OpportunityScanItem(BaseModel):
     symbol: str
+    name: str
+    sector: str | None = None
+    sources: list[str] = Field(default_factory=list)
     action: Literal["watch", "add", "trim"]
     score: int = Field(ge=0, le=100)
+    confidence: int = Field(ge=0, le=100)
+    upside_likelihood: int = Field(ge=0, le=100)
+    risk_level: Literal["低", "中", "高"]
     summary: str
     reasons: list[str] = Field(default_factory=list)
     buy_condition: str
@@ -291,6 +307,7 @@ class OpportunityScanItem(BaseModel):
 class OpportunityScan(BaseModel):
     generated_at: datetime
     coverage_note: str
+    hot_sectors: list[str] = Field(default_factory=list)
     items: list[OpportunityScanItem] = Field(default_factory=list)
 
 
@@ -1033,6 +1050,58 @@ def refresh_derived_cache(symbols: list[str], trigger: str, force_history: bool 
         derived_refresh_lock.release()
 
 
+def refresh_universe_opportunity_inputs(trigger: str) -> list[str]:
+    """Refresh whole-market quotes and queue bounded daily-history analysis."""
+    with universe_scan_state_lock:
+        universe_scan_state["last_attempt_at"] = beijing_now()
+    try:
+        with market_collection_lock:
+            snapshot = market_data.a_share_universe_snapshot(force_refresh=True)
+            store.save_quotes(snapshot)
+            hot_sectors = market_data.hot_a_share_sectors(limit=3)
+            members = [
+                member
+                for sector in hot_sectors
+                for member in market_data.a_share_sector_members(str(sector["name"]), limit=12)
+            ]
+        quote_by_symbol = {str(item["symbol"]): item for item in snapshot}
+        metadata: dict[str, dict[str, str]] = {}
+        for member in members:
+            symbol = str(member["symbol"])
+            if symbol in quote_by_symbol:
+                metadata[symbol] = {
+                    "name": str(quote_by_symbol[symbol].get("name") or member["name"] or symbol),
+                    "sector": str(member["sector"]),
+                }
+        if not metadata:
+            ranked = sorted(
+                (item for item in snapshot if item.get("price") is not None),
+                key=lambda item: float(item.get("change_percent") or -999),
+                reverse=True,
+            )[:24]
+            metadata = {
+                str(item["symbol"]): {"name": str(item.get("name") or item["symbol"]), "sector": "市场活跃股"}
+                for item in ranked
+            }
+        selected = list(metadata)[:24]
+        with universe_scan_state_lock:
+            universe_scan_state.update({
+                "last_success_at": beijing_now(), "last_error": None,
+                "hot_sectors": hot_sectors, "candidates": metadata,
+            })
+        logger.info(
+            "全市场机会扫描输入刷新 trigger=%s quotes=%s sectors=%s history_queue=%s",
+            trigger, len(snapshot), ",".join(str(item["name"]) for item in hot_sectors) or "fallback", ",".join(selected),
+        )
+        queue_background(refresh_derived_cache, selected, f"{trigger}-candidate-history")
+        return selected
+    except MarketDataUnavailable as error:
+        with universe_scan_state_lock:
+            universe_scan_state["last_error"] = f"{error.code}: {error}"
+        logger.warning("全市场机会扫描不可用 trigger=%s code=%s", trigger, error.code)
+        raise
+
+
 def scheduled_market_refresh_loop() -> None:
     logger.info(
         "行情定时刷新已启动 interval_seconds=%s",
@@ -1040,9 +1109,19 @@ def scheduled_market_refresh_loop() -> None:
     )
 
     previous_open_symbols: tuple[str, ...] | None = None
+    last_universe_scan_at = 0.0
 
     while not market_refresh_stop.is_set():
         try:
+            now = beijing_now()
+            if (
+                trading_calendar.is_market_open("CN", now)
+                and time.monotonic() - last_universe_scan_at >= MARKET_UNIVERSE_SCAN_INTERVAL_SECONDS
+            ):
+                try:
+                    refresh_universe_opportunity_inputs("scheduler-whole-market")
+                finally:
+                    last_universe_scan_at = time.monotonic()
             all_symbols = list(
                 dict.fromkeys(
                     str(item["symbol"]).strip().upper()
@@ -1050,8 +1129,6 @@ def scheduled_market_refresh_loop() -> None:
                     if str(item.get("symbol", "")).strip()
                 )
             )
-
-            now = beijing_now()
 
             # 只保留当前交易所正在开盘的证券。
             #
@@ -1869,31 +1946,55 @@ def list_recommendations(symbol: str | None = None) -> list[ResearchRecommendati
 
 
 @app.get("/v1/opportunity-scan", response_model=OpportunityScan)
-def opportunity_scan(limit: int = Query(default=8, ge=1, le=30)) -> OpportunityScan:
-    """Rank locally available symbols for observation, never a market-wide prediction."""
-    symbols = store.opportunity_symbols()
+def opportunity_scan(limit: int = Query(default=15, ge=1, le=15)) -> OpportunityScan:
+    """Rank holdings, watchlist, and market candidates in one explainable daily pool."""
+    with universe_scan_state_lock:
+        state = dict(universe_scan_state)
+    candidate_metadata = dict(state.get("candidates") or {})
+    holding_by_symbol = {str(item["symbol"]): item for item in store.list()}
+    watchlist_by_symbol = {str(item["symbol"]): item for item in store.watchlist()}
+    symbols = list(dict.fromkeys([*holding_by_symbol, *watchlist_by_symbol, *candidate_metadata]))
+    if not symbols:
+        symbols = store.opportunity_symbols(limit=500)
     quotes = {str(item["symbol"]): item for item in store.cached_quotes(symbols)}
-    holdings = {str(item["symbol"]): item for item in store.list()}
     candidates: list[OpportunityScanItem] = []
     for symbol in symbols:
         bars = store.daily_prices(symbol, 80)
-        if len(bars) < 60 or not (quote := quotes.get(symbol)) or quote.get("price") is None:
+        quote = quotes.get(symbol)
+        sources = list(filter(None, [
+            "holding" if symbol in holding_by_symbol else None,
+            "watchlist" if symbol in watchlist_by_symbol else None,
+            "market" if symbol in candidate_metadata else None,
+        ])) or ["market"]
+        sector = candidate_metadata.get(symbol, {}).get("sector")
+        sector_change = next((float(item["change_percent"]) for item in state.get("hot_sectors", []) if item["name"] == sector), None)
+        metrics = score_opportunity(
+            quote=quote, bars=bars, risk=store.cached_risk(symbol),
+            sector_change_percent=sector_change, sources=sources,
+        )
+        name = str(
+            holding_by_symbol.get(symbol, {}).get("name")
+            or watchlist_by_symbol.get(symbol, {}).get("name")
+            or candidate_metadata.get(symbol, {}).get("name")
+            or (quote or {}).get("name")
+            or symbol
+        )
+        if not quote or quote.get("price") is None or len(bars) < 20:
+            candidates.append(OpportunityScanItem(
+                symbol=symbol, name=name, sector=sector, sources=sources,
+                action="watch", score=int(metrics["score"]), confidence=int(metrics["confidence"]),
+                upside_likelihood=int(metrics["upside_likelihood"]), risk_level=str(metrics["risk_level"]),
+                summary="已加入每日候选池，正在补齐行情或日线；当前不生成买入结论。",
+                reasons=list(metrics["factors"]), buy_condition="等待行情和至少 20 日日线补齐后重新评分。",
+                avoid_condition="数据未完成前不追高、不据此下单。", invalidation_price=None,
+                data_as_of=str(bars[-1]["trading_date"]) if bars else None,
+            ))
             continue
         closes = [float(bar["close"]) for bar in bars]
         price = float(quote["price"])
         high20, low20 = max(closes[-20:]), min(closes[-20:])
-        change = ((price / closes[-2]) - 1) * 100 if len(closes) > 1 and closes[-2] else 0.0
-        above_midpoint = price >= (high20 + low20) / 2
-        near_high = price >= high20 * 0.98
-        score = min(100, int(35 + max(-10, min(20, change * 3)) + (18 if above_midpoint else 0) + (12 if near_high else 0)))
-        holding = holdings.get(symbol)
+        holding = holding_by_symbol.get(symbol)
         action: Literal["watch", "add", "trim"] = "trim" if holding and price >= high20 else "watch"
-        reasons = [
-            f"最近 20 个交易日区间为 {low20:.2f} 到 {high20:.2f}，当前价位在区间{'上半部' if above_midpoint else '下半部'}。",
-            f"相对上一交易日，价格变化 {change:+.2f}%；这只是已发生的走势，不保证明天继续上涨。",
-        ]
-        if near_high:
-            reasons.append("价格接近近期高位，说明走势较强，也意味着追高后回落的风险更大。")
         if action == "trim":
             summary = "已有持仓接近近期高位，优先检查减仓或继续持有的条件。"
             buy_condition = "不新增仓位；先核对既有计划是否允许减仓。"
@@ -1901,18 +2002,26 @@ def opportunity_scan(limit: int = Query(default=8, ge=1, le=30)) -> OpportunityS
             summary = "值得加入明日观察，不是“必涨”或立即买入信号。"
             buy_condition = f"只有价格不明显高开、回到 {max(low20, price * .97):.2f} 至 {min(high20, price * 1.01):.2f} 区间并保持活跃时，再建立交易计划。"
         candidates.append(OpportunityScanItem(
-            symbol=symbol, action=action, score=score, summary=summary, reasons=reasons,
+            symbol=symbol, name=name, sector=sector, sources=sources, action=action,
+            score=int(metrics["score"]), confidence=int(metrics["confidence"]),
+            upside_likelihood=int(metrics["upside_likelihood"]), risk_level=str(metrics["risk_level"]),
+            summary=summary, reasons=list(metrics["factors"]),
             buy_condition=buy_condition,
             avoid_condition=f"若跌破 {low20 * .97:.2f}，或高开后快速回落，就停止关注本次机会。",
             invalidation_price=round(low20 * .97, 2), data_as_of=str(bars[-1]["trading_date"]),
         ))
-    ordered = sorted(candidates, key=lambda item: item.score, reverse=True)[:limit]
-    coverage = f"已在本机找到 {len(symbols)} 只具备行情和至少 60 日日线的标的；全市场快照刷新后，新标的仍需补齐日线才会进入候选，不预测明天必涨。"
-    return OpportunityScan(generated_at=beijing_now(), coverage_note=coverage, items=ordered)
+    ordered = sorted(candidates, key=lambda item: (item.score, item.confidence), reverse=True)[:limit]
+    sector_labels = [f"{item['name']} {float(item['change_percent']):+.2f}%" for item in state.get("hot_sectors", [])]
+    coverage = (
+        f"全市场定时扫描已选出 {len(candidate_metadata)} 只热点候选，其中 {len(symbols)} 只已补齐至少 60 日日线并进入分析。"
+        if candidate_metadata else
+        f"暂未完成全市场扫描；当前仅有 {len(symbols)} 只本地标的具备行情和至少 60 日日线。"
+    )
+    return OpportunityScan(generated_at=beijing_now(), coverage_note=coverage, hot_sectors=sector_labels, items=ordered)
 
 
 @app.post("/v1/opportunity-scan/refresh", response_model=OpportunityScan)
-def refresh_opportunity_scan(limit: int = Query(default=8, ge=1, le=30)) -> OpportunityScan:
+def refresh_opportunity_scan(limit: int = Query(default=15, ge=1, le=15)) -> OpportunityScan:
     """Refresh the A-share universe before reading only fully evidenced candidates.
 
     It is intentionally separate from the GET endpoint: callers can refresh
@@ -1920,9 +2029,7 @@ def refresh_opportunity_scan(limit: int = Query(default=8, ge=1, le=30)) -> Oppo
     cache and do not repeatedly download a whole-market snapshot.
     """
     try:
-        with market_collection_lock:
-            snapshot = market_data.a_share_universe_snapshot(force_refresh=True)
-            store.save_quotes(snapshot)
+        refresh_universe_opportunity_inputs("user-whole-market-refresh")
     except MarketDataUnavailable as error:
         raise HTTPException(status_code=503, detail={
             "code": error.code,
