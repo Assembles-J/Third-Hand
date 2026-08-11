@@ -28,7 +28,7 @@ import com.thirdhand.app.ui.theme.AppSpacing
 @Composable
 fun PortfolioCashCard(
     availableCash: String,
-    onEdit: () -> Unit,
+    onEdit: (() -> Unit)? = null,
     modifier: Modifier = Modifier,
 ) {
     Card(
@@ -65,7 +65,7 @@ fun PortfolioCashCard(
                     color = MaterialTheme.colorScheme.onPrimaryContainer,
                 )
             }
-            TextButton(onClick = onEdit) { Text("录入资金") }
+            onEdit?.let { edit -> TextButton(onClick = edit) { Text("请在系统管理中修改") } }
         }
     }
 }

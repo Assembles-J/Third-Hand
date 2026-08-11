@@ -73,13 +73,16 @@ fun CompactAdminDashboardScreen() {
     var checkingUpdate by remember { mutableStateOf(false) }
     var availableUpdate by remember { mutableStateOf<AppUpdate?>(null) }
     var updateProgress by remember { mutableStateOf<UpdateDownloadProgress?>(null) }
+    var availableCash by remember { mutableStateOf<AvailableCashDto?>(null) }
+    var cashInput by remember { mutableStateOf("") }
     val scope = rememberCoroutineScope()
     LaunchedEffect(refreshKey) {
         error = null
         runCatching { api.adminOverview() }
             .onSuccess { overview = it }
             .onFailure { error = "无法读取系统状态，请检查服务连接。" }
-        runCatching { api.adminConfig() }.onSuccess { config = it }
+        runCatching { api.adminConfig() }.onSuccess { config = it }.onFailure { error = "无法读取系统配置：${it.message ?: "请检查服务版本"}" }
+        runCatching { api.availableCash() }.onSuccess { availableCash = it; cashInput = "%.2f".format(it.available_cash) }
     }
     LaunchedEffect(availableUpdate) {
         val update = availableUpdate ?: return@LaunchedEffect
@@ -114,6 +117,15 @@ fun CompactAdminDashboardScreen() {
         MarketRefreshCard(overview)
         PendingReviewCard(overview)
         ApplicationDataGrid(overview)
+        CompactConsoleCard {
+            Text("可用资金（统一账本）", color = CompactText, fontWeight = FontWeight.Bold)
+            Text("持仓页与模拟操盘均只读取该数据库余额。修改后立即保存。", color = CompactQuiet, style = MaterialTheme.typography.labelSmall)
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                OutlinedTextField(value = cashInput, onValueChange = { cashInput = it }, modifier = Modifier.weight(1f), singleLine = true, label = { Text("可用资金", color = CompactText) })
+                TextButton(onClick = { cashInput.toDoubleOrNull()?.takeIf { it >= 0 }?.let { value -> scope.launch { runCatching { api.saveAvailableCash(AvailableCashInputDto(value)) }.onSuccess { availableCash = it; cashInput = "%.2f".format(it.available_cash) }.onFailure { error = "保存可用资金失败：${it.message ?: "请稍后重试"}" } } } }) { Text("保存", color = CompactMint) }
+            }
+            availableCash?.updated_at?.let { Text("已保存：$it", color = CompactTeal, style = MaterialTheme.typography.labelSmall) }
+        }
         CompactConsoleCard {
             Text("服务与 APK 下载地址", color = CompactText, fontWeight = FontWeight.Bold)
             Text("应用更新和 APK 下载均通过此服务地址的 /v1/app-update 获取。", color = CompactQuiet, style = MaterialTheme.typography.labelSmall)
@@ -178,14 +190,14 @@ fun CompactAdminDashboardScreen() {
             Row(verticalAlignment = Alignment.CenterVertically) {
                 Column(Modifier.weight(1f)) {
                     Text("模拟操盘自动执行", color = CompactText, fontWeight = FontWeight.Bold)
-                    Text("开盘期间每小时读取统一 AI 决策；模拟资金、持仓与真实账户完全隔离。", color = CompactQuiet, style = MaterialTheme.typography.labelSmall)
+                    Text("开盘期间每小时读取统一 AI 决策；直接使用数据库可用资金，模拟持仓不连接券商。", color = CompactQuiet, style = MaterialTheme.typography.labelSmall)
                 }
                 Switch(
                     checked = config?.paper_trading_enabled == true,
-                    enabled = config != null && !savingConfig,
+                    enabled = !savingConfig,
                     onCheckedChange = { enabled -> scope.launch {
                         savingConfig = true
-                        val current = config ?: return@launch
+                        val current = config ?: SystemConfigDto()
                         runCatching { api.saveAdminConfig(current.copy(paper_trading_enabled = enabled)) }
                             .onSuccess { config = it }
                             .onFailure { error = "保存模拟操盘配置失败：${it.message ?: "请稍后重试"}" }

@@ -1230,19 +1230,19 @@ class PortfolioStore:
     def paper_account(self) -> dict[str, object]:
         settings = self.system_settings()
         with self._connect() as connection:
-            row = connection.execute("SELECT available_cash, initial_cash, updated_at FROM paper_trading_accounts WHERE account_id='default'").fetchone()
+            cash_row = connection.execute("SELECT available_cash, updated_at FROM account_cash WHERE account_id='default'").fetchone()
+            row = connection.execute("SELECT initial_cash FROM paper_trading_accounts WHERE account_id='default'").fetchone()
             positions = [dict(item) for item in connection.execute("SELECT * FROM paper_trading_positions ORDER BY updated_at DESC").fetchall()]
             quotes = {str(item["symbol"]): json.loads(str(item["payload"])) for item in connection.execute("SELECT symbol,payload FROM market_quote_cache").fetchall()}
         market_value = sum(float(position["quantity"]) * float((quotes.get(str(position["symbol"]), {}).get("price")) or position["average_cost"]) for position in positions)
-        cash = float(row["available_cash"]) if row else 0.0
+        cash = float(cash_row["available_cash"]) if cash_row else 0.0
         initial_cash = float(row["initial_cash"]) if row else 0.0
         equity = cash + market_value
-        return {"available_cash": cash, "initial_cash": initial_cash, "market_value": market_value, "total_equity": equity, "total_pnl": equity - initial_cash, "total_return_percent": (equity / initial_cash - 1) * 100 if initial_cash else 0.0, "updated_at": row["updated_at"] if row else beijing_now().isoformat(), "enabled": settings["paper_trading_enabled"], "positions": positions}
+        return {"available_cash": cash, "initial_cash": initial_cash, "market_value": market_value, "total_equity": equity, "total_pnl": equity - initial_cash, "total_return_percent": (equity / initial_cash - 1) * 100 if initial_cash else 0.0, "updated_at": cash_row["updated_at"] if cash_row else beijing_now().isoformat(), "enabled": settings["paper_trading_enabled"], "positions": positions}
 
     def save_paper_account(self, available_cash: float) -> dict[str, object]:
-        now = beijing_now().isoformat()
-        with self._connect() as connection:
-            connection.execute("INSERT INTO paper_trading_accounts (account_id,available_cash,initial_cash,enabled,updated_at) VALUES ('default', ?, ?, 0, ?) ON CONFLICT(account_id) DO UPDATE SET available_cash=excluded.available_cash, initial_cash=excluded.initial_cash, updated_at=excluded.updated_at", (available_cash, available_cash, now))
+        # Compatibility endpoint: paper trading now shares the one database cash ledger.
+        self.save_available_cash(available_cash)
         return self.paper_account()
 
     def paper_logs(self, symbol: str | None = None, limit: int = 200) -> list[dict[str, object]]:
@@ -1254,7 +1254,7 @@ class PortfolioStore:
         """Persist a non-execution so simulations can be audited, not just replayed."""
         now = beijing_now().isoformat()
         with self._connect() as connection:
-            account = connection.execute("SELECT available_cash FROM paper_trading_accounts WHERE account_id='default'").fetchone()
+            account = connection.execute("SELECT available_cash FROM account_cash WHERE account_id='default'").fetchone()
             cash = float(account["available_cash"]) if account else 0.0
             item = {"id": f"skip-{uuid4().hex}", "symbol": symbol, "name": name, "side": "SKIP", "quantity": 0.0, "price": price, "fee": 0.0, "cash_before": cash, "cash_after": cash, "decision_id": decision_id, "reason": reason, "status": "skipped", "executed_at": now}
             connection.execute("INSERT INTO paper_trading_logs (id,symbol,name,side,quantity,price,fee,cash_before,cash_after,decision_id,reason,status,executed_at) VALUES (:id,:symbol,:name,:side,:quantity,:price,:fee,:cash_before,:cash_after,:decision_id,:reason,:status,:executed_at)", item)
@@ -1272,8 +1272,11 @@ class PortfolioStore:
                 (decision_id, side),
             ).fetchone():
                 raise ValueError("paper_decision_already_executed")
-            account = connection.execute("SELECT available_cash FROM paper_trading_accounts WHERE account_id='default'").fetchone()
+            account = connection.execute("SELECT available_cash FROM account_cash WHERE account_id='default'").fetchone()
             cash_before = float(account["available_cash"]) if account else 0.0
+            baseline = connection.execute("SELECT initial_cash FROM paper_trading_accounts WHERE account_id='default'").fetchone()
+            if baseline is None or float(baseline["initial_cash"]) <= 0:
+                connection.execute("INSERT INTO paper_trading_accounts (account_id,available_cash,initial_cash,enabled,updated_at) VALUES ('default', 0, ?, 0, ?) ON CONFLICT(account_id) DO UPDATE SET initial_cash=excluded.initial_cash, updated_at=excluded.updated_at", (cash_before, now))
             position = connection.execute("SELECT * FROM paper_trading_positions WHERE symbol=?", (symbol,)).fetchone()
             existing_quantity = float(position["quantity"]) if position else 0.0
             if side == "BUY":
@@ -1294,7 +1297,7 @@ class PortfolioStore:
                 if remaining <= 1e-9: connection.execute("DELETE FROM paper_trading_positions WHERE symbol=?", (symbol,))
                 else: connection.execute("UPDATE paper_trading_positions SET quantity=?, updated_at=? WHERE symbol=?", (remaining, now, symbol))
             else: raise ValueError("invalid_paper_trade_side")
-            connection.execute("INSERT INTO paper_trading_accounts (account_id,available_cash,initial_cash,enabled,updated_at) VALUES ('default', ?, 0, 0, ?) ON CONFLICT(account_id) DO UPDATE SET available_cash=excluded.available_cash, updated_at=excluded.updated_at", (cash_after, now))
+            connection.execute("INSERT INTO account_cash (account_id,available_cash,updated_at) VALUES ('default', ?, ?) ON CONFLICT(account_id) DO UPDATE SET available_cash=excluded.available_cash, updated_at=excluded.updated_at", (cash_after, now))
             item = {"id": trade_id, "symbol": symbol, "name": name, "side": side, "quantity": quantity, "price": price, "fee": fee, "cash_before": cash_before, "cash_after": cash_after, "decision_id": decision_id, "reason": reason, "executed_at": now}
             connection.execute("INSERT INTO paper_trading_logs (id,symbol,name,side,quantity,price,fee,cash_before,cash_after,decision_id,reason,status,executed_at) VALUES (:id,:symbol,:name,:side,:quantity,:price,:fee,:cash_before,:cash_after,:decision_id,:reason,'executed',:executed_at)", item)
         return item

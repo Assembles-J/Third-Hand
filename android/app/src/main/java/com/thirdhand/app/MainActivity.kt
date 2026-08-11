@@ -2149,7 +2149,7 @@ private fun HoldingsScreen(onOpenDetail: (HoldingDto) -> Unit) {
         item {
             com.thirdhand.app.ui.components.PortfolioCashCard(
                 availableCash = formatPositionValue(availableCash?.available_cash ?: 0.0),
-                onEdit = { showCashEditor = true },
+                onEdit = null,
                 modifier = Modifier.padding(horizontal = 14.dp),
             )
         }

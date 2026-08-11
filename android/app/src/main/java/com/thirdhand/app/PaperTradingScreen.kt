@@ -23,10 +23,9 @@ fun PaperTradingScreen() {
     var account by remember { mutableStateOf<PaperTradingAccountDto?>(null) }
     var logs by remember { mutableStateOf<List<PaperTradingLogDto>>(emptyList()) }
     var error by remember { mutableStateOf<String?>(null) }
-    var cashInput by remember { mutableStateOf("") }
     fun refresh() = scope.launch {
         runCatching { api.paperTradingAccount() to api.paperTradingLogs() }.onSuccess { (loaded, events) ->
-            account = loaded; logs = events; cashInput = "%.2f".format(Locale.US, loaded.available_cash); error = null
+            account = loaded; logs = events; error = null
         }.onFailure { error = "无法读取模拟账本：${it.message ?: "请检查服务连接"}" }
     }
     LaunchedEffect(Unit) { refresh() }
@@ -42,10 +41,7 @@ fun PaperTradingScreen() {
                 Text("模拟资金", fontWeight = FontWeight.Bold)
                 Text("可用现金 ¥${account?.available_cash?.let { "%.2f".format(Locale.US, it) } ?: "--"}", style = MaterialTheme.typography.titleLarge)
                 Text("总资产 ¥${account?.total_equity?.let { "%.2f".format(Locale.US, it) } ?: "--"} · 浮动/累计 ¥${account?.total_pnl?.let { "%.2f".format(Locale.US, it) } ?: "--"} (${account?.total_return_percent?.let { "%.2f%%".format(Locale.US, it) } ?: "--"})", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                    OutlinedTextField(cashInput, { cashInput = it }, label = { Text("初始化 / 调整模拟现金") }, modifier = Modifier.weight(1f), singleLine = true)
-                    TextButton(onClick = { cashInput.toDoubleOrNull()?.let { amount -> scope.launch { runCatching { api.savePaperTradingAccount(PaperTradingConfigDto(amount)) }.onSuccess { account = it; refresh() }.onFailure { error = "保存模拟资金失败" } } } }) { Text("保存") }
-                }
+                Text("资金由数据库的统一“可用资金”提供；请到系统管理页修改。", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
                 Text("自动执行：${if (account?.enabled == true) "已开启（开盘期间每小时）" else "已关闭，请在系统管理中开启"}", style = MaterialTheme.typography.labelMedium)
             } }
         }
