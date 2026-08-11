@@ -178,11 +178,11 @@ class PaperTradingPosition(BaseModel):
 
 class PaperTradingLog(BaseModel):
     id: str; symbol: str; name: str; side: Literal["BUY", "SELL", "SKIP"]; quantity: float; price: float
-    cash_before: float; cash_after: float; decision_id: str | None = None; reason: str; status: Literal["executed", "skipped"] = "executed"; executed_at: datetime
+    fee: float = 0; cash_before: float; cash_after: float; decision_id: str | None = None; reason: str; status: Literal["executed", "skipped"] = "executed"; executed_at: datetime
 
 
 class PaperTradingAccount(BaseModel):
-    available_cash: float; updated_at: datetime; enabled: bool; positions: list[PaperTradingPosition] = Field(default_factory=list)
+    available_cash: float; initial_cash: float = 0; market_value: float = 0; total_equity: float = 0; total_pnl: float = 0; total_return_percent: float = 0; updated_at: datetime; enabled: bool; positions: list[PaperTradingPosition] = Field(default_factory=list)
 
 
 class AppUpdate(BaseModel):

@@ -41,6 +41,7 @@ fun PaperTradingScreen() {
             Card(Modifier.fillMaxWidth()) { Column(Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
                 Text("模拟资金", fontWeight = FontWeight.Bold)
                 Text("可用现金 ¥${account?.available_cash?.let { "%.2f".format(Locale.US, it) } ?: "--"}", style = MaterialTheme.typography.titleLarge)
+                Text("总资产 ¥${account?.total_equity?.let { "%.2f".format(Locale.US, it) } ?: "--"} · 浮动/累计 ¥${account?.total_pnl?.let { "%.2f".format(Locale.US, it) } ?: "--"} (${account?.total_return_percent?.let { "%.2f%%".format(Locale.US, it) } ?: "--"})", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     OutlinedTextField(cashInput, { cashInput = it }, label = { Text("初始化 / 调整模拟现金") }, modifier = Modifier.weight(1f), singleLine = true)
                     TextButton(onClick = { cashInput.toDoubleOrNull()?.let { amount -> scope.launch { runCatching { api.savePaperTradingAccount(PaperTradingConfigDto(amount)) }.onSuccess { account = it; refresh() }.onFailure { error = "保存模拟资金失败" } } } }) { Text("保存") }
@@ -56,7 +57,7 @@ fun PaperTradingScreen() {
         if (logs.isEmpty()) item { Text("暂无模拟操作日志", color = MaterialTheme.colorScheme.onSurfaceVariant) }
         items(logs, key = { it.id }) { log ->
             val action = when (log.side) { "BUY" -> "模拟买入 B"; "SELL" -> "模拟卖出 S"; else -> "规则跳过" }
-            val detail = if (log.status == "skipped") "${log.executed_at.take(16)}\n未执行：${log.reason}" else "${log.executed_at.take(16)}  ${log.quantity} 股 × ¥${"%.2f".format(Locale.US, log.price)}\n现金 ¥${"%.2f".format(Locale.US, log.cash_before)} → ¥${"%.2f".format(Locale.US, log.cash_after)}"
+            val detail = if (log.status == "skipped") "${log.executed_at.take(16)}\n未执行：${log.reason}" else "${log.executed_at.take(16)}  ${log.quantity} 股 × ¥${"%.2f".format(Locale.US, log.price)} · 费用 ¥${"%.2f".format(Locale.US, log.fee)}\n现金 ¥${"%.2f".format(Locale.US, log.cash_before)} → ¥${"%.2f".format(Locale.US, log.cash_after)}"
             ListItem(headlineContent = { Text("$action · ${log.name} ${log.symbol}", fontWeight = FontWeight.SemiBold) }, supportingContent = { Text(detail) }, trailingContent = { Text(if (log.side == "BUY") "B" else if (log.side == "SELL") "S" else "跳过", color = if (log.status == "skipped") MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.primary) })
         }
     }

@@ -1351,4 +1351,18 @@ class PortfolioStore:
             connection.executemany("INSERT OR REPLACE INTO paper_daily_pnl VALUES (?, ?, ?, ?, ?, ?)", rows)
 
     def enqueue_ai_job(self, job: dict[str, object]) -> dict[str, object]:
-   
+        now = beijing_now().isoformat()
+        with self._connect() as connection:
+            existing = connection.execute("SELECT * FROM ai_jobs WHERE input_hash=?", (job["input_hash"],)).fetchone()
+            if existing: return dict(existing) | {"payload": json.loads(str(existing["payload"]))}
+            connection.execute("INSERT INTO ai_jobs VALUES (?, ?, ?, 'pending', 0, ?, ?, NULL, ?, ?)", (job["id"], job["target_id"], job["input_hash"], job.get("max_attempts", 3), json.dumps(job["payload"], ensure_ascii=False, default=str), now, now))
+        return {**job, "status": "pending", "attempts": 0, "created_at": now, "updated_at": now}
+
+    def ai_jobs(self, target_id: str | None = None) -> list[dict[str, object]]:
+        query, params = ("SELECT * FROM ai_jobs WHERE target_id=? ORDER BY updated_at DESC", [target_id]) if target_id else ("SELECT * FROM ai_jobs ORDER BY updated_at DESC", [])
+        with self._connect() as connection: rows = connection.execute(query, params).fetchall()
+        return [{**dict(row), "payload": json.loads(str(row["payload"]))} for row in rows]
+
+    def update_ai_job(self, job_id: str, status: str, error_message: str | None = None, increment_attempt: bool = False) -> None:
+        with self._connect() as connection:
+            connection.execute("UPDATE ai_jobs SET status=?, attempts=attempts+?, error_message=?, updated_at=? WHERE id=?", (status, 1 if increment_attempt else 0, error_message, beijing_now().isoformat(), job_id))

@@ -292,13 +292,27 @@ jobs:
               exit 1
             fi
 
-            sleep 5
             compose_cmd="docker compose"
             if ! docker compose version >/dev/null 2>&1; then
               compose_cmd="docker-compose"
             fi
+            api_health_url="http://127.0.0.1:${API_PORT:-8000}/health"
+            api_ready=false
+            for attempt in $(seq 1 15); do
+              if curl --connect-timeout 2 --max-time 5 -fsS "$api_health_url"; then
+                api_ready=true
+                break
+              fi
+              echo "API health check attempt $attempt/15 failed; waiting for Uvicorn to finish starting."
+              sleep 2
+            done
+            if [ "$api_ready" != "true" ]; then
+              echo "API did not become healthy within 30 seconds."
+              $compose_cmd ps
+              $compose_cmd logs --tail=200 api
+              exit 1
+            fi
             $compose_cmd exec -T api python -c 'import os; print("runtime_config decision_ai=%s research_chat=%s research_sse=%s tool_calling=%s key_configured=%s model=%s reasoning_model=%s" % (os.getenv("DECISION_AI_ENABLED"), os.getenv("RESEARCH_CHAT_ENABLED"), os.getenv("RESEARCH_CHAT_SSE_ENABLED"), os.getenv("RESEARCH_CHAT_TOOL_CALLING_ENABLED"), bool(os.getenv("DEEPSEEK_API_KEY", "").strip()), os.getenv("DEEPSEEK_MODEL"), os.getenv("DEEPSEEK_REASONING_MODEL")))'
-            curl -fsS "http://127.0.0.1:${API_PORT:-8000}/health"
             curl -fsS "http://127.0.0.1:${API_PORT:-8000}/v1/system/ai-capabilities"
             curl -fsS "http://127.0.0.1:${API_PORT:-8000}/v1/app-update"
             curl -fsS "http://127.0.0.1:${API_PORT:-8000}/v1/research-chat/sessions" >/dev/null
