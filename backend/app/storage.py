@@ -7,6 +7,7 @@ import json
 import math
 from pathlib import Path
 from threading import Lock
+from uuid import uuid4
 
 from app.time_utils import beijing_now
 from app.decimal_utils import decimal_text
@@ -249,6 +250,13 @@ class PortfolioStore:
                 connection.execute("CREATE TABLE IF NOT EXISTS paper_daily_pnl (recommendation_id TEXT NOT NULL, trading_date TEXT NOT NULL, close_price REAL NOT NULL, gross_pnl REAL NOT NULL, net_pnl REAL NOT NULL, quantity REAL NOT NULL, PRIMARY KEY(recommendation_id, trading_date))")
                 connection.execute("CREATE TABLE IF NOT EXISTS ai_jobs (id TEXT PRIMARY KEY, target_id TEXT NOT NULL, input_hash TEXT NOT NULL UNIQUE, status TEXT NOT NULL, attempts INTEGER NOT NULL, max_attempts INTEGER NOT NULL, payload TEXT NOT NULL, error_message TEXT, created_at TEXT NOT NULL, updated_at TEXT NOT NULL)")
                 connection.execute("CREATE TABLE IF NOT EXISTS account_cash (account_id TEXT PRIMARY KEY, available_cash REAL NOT NULL, updated_at TEXT NOT NULL)")
+                connection.execute("CREATE TABLE IF NOT EXISTS paper_trading_accounts (account_id TEXT PRIMARY KEY, available_cash REAL NOT NULL, initial_cash REAL NOT NULL DEFAULT 0, enabled INTEGER NOT NULL DEFAULT 0, updated_at TEXT NOT NULL)")
+                connection.execute("CREATE TABLE IF NOT EXISTS paper_trading_positions (symbol TEXT PRIMARY KEY, name TEXT NOT NULL, quantity REAL NOT NULL, average_cost REAL NOT NULL, updated_at TEXT NOT NULL)")
+                connection.execute("CREATE TABLE IF NOT EXISTS paper_trading_logs (id TEXT PRIMARY KEY, symbol TEXT NOT NULL, name TEXT NOT NULL, side TEXT NOT NULL, quantity REAL NOT NULL, price REAL NOT NULL, fee REAL NOT NULL DEFAULT 0, cash_before REAL NOT NULL, cash_after REAL NOT NULL, decision_id TEXT, reason TEXT NOT NULL, status TEXT NOT NULL DEFAULT 'executed', executed_at TEXT NOT NULL)")
+                connection.execute("CREATE INDEX IF NOT EXISTS idx_paper_trading_logs_symbol_time ON paper_trading_logs(symbol, executed_at DESC)")
+                self._ensure_column(connection, "paper_trading_logs", "status", "TEXT NOT NULL DEFAULT 'executed'")
+                self._ensure_column(connection, "paper_trading_logs", "fee", "REAL NOT NULL DEFAULT 0")
+                self._ensure_column(connection, "paper_trading_accounts", "initial_cash", "REAL NOT NULL DEFAULT 0")
                 connection.execute("""
                     CREATE TABLE IF NOT EXISTS calibration_observations (
                         id TEXT PRIMARY KEY,
@@ -593,7 +601,7 @@ class PortfolioStore:
         with self._connect() as connection:
             rows = connection.execute("SELECT setting_key, setting_value FROM system_settings").fetchall()
         stored = {str(row["setting_key"]): str(row["setting_value"]) for row in rows}
-        return {"update_check_enabled": stored.get("update_check_enabled", "true").lower() == "true"}
+        return {"update_check_enabled": stored.get("update_check_enabled", "true").lower() == "true", "paper_trading_enabled": stored.get("paper_trading_enabled", "false").lower() == "true"}
 
     def save_system_settings(self, settings: dict[str, bool]) -> dict[str, bool]:
         timestamp = beijing_now().isoformat()
@@ -1219,6 +1227,78 @@ class PortfolioStore:
             connection.execute("INSERT INTO account_cash VALUES ('default', ?, ?) ON CONFLICT(account_id) DO UPDATE SET available_cash=excluded.available_cash, updated_at=excluded.updated_at", (available_cash, now))
         return {"available_cash": available_cash, "updated_at": now}
 
+    def paper_account(self) -> dict[str, object]:
+        settings = self.system_settings()
+        with self._connect() as connection:
+            row = connection.execute("SELECT available_cash, initial_cash, updated_at FROM paper_trading_accounts WHERE account_id='default'").fetchone()
+            positions = [dict(item) for item in connection.execute("SELECT * FROM paper_trading_positions ORDER BY updated_at DESC").fetchall()]
+            quotes = {str(item["symbol"]): json.loads(str(item["payload"])) for item in connection.execute("SELECT symbol,payload FROM market_quote_cache").fetchall()}
+        market_value = sum(float(position["quantity"]) * float((quotes.get(str(position["symbol"]), {}).get("price")) or position["average_cost"]) for position in positions)
+        cash = float(row["available_cash"]) if row else 0.0
+        initial_cash = float(row["initial_cash"]) if row else 0.0
+        equity = cash + market_value
+        return {"available_cash": cash, "initial_cash": initial_cash, "market_value": market_value, "total_equity": equity, "total_pnl": equity - initial_cash, "total_return_percent": (equity / initial_cash - 1) * 100 if initial_cash else 0.0, "updated_at": row["updated_at"] if row else beijing_now().isoformat(), "enabled": settings["paper_trading_enabled"], "positions": positions}
+
+    def save_paper_account(self, available_cash: float) -> dict[str, object]:
+        now = beijing_now().isoformat()
+        with self._connect() as connection:
+            connection.execute("INSERT INTO paper_trading_accounts (account_id,available_cash,initial_cash,enabled,updated_at) VALUES ('default', ?, ?, 0, ?) ON CONFLICT(account_id) DO UPDATE SET available_cash=excluded.available_cash, initial_cash=excluded.initial_cash, updated_at=excluded.updated_at", (available_cash, available_cash, now))
+        return self.paper_account()
+
+    def paper_logs(self, symbol: str | None = None, limit: int = 200) -> list[dict[str, object]]:
+        query, args = ("SELECT * FROM paper_trading_logs WHERE symbol=? ORDER BY executed_at DESC LIMIT ?", [symbol, limit]) if symbol else ("SELECT * FROM paper_trading_logs ORDER BY executed_at DESC LIMIT ?", [limit])
+        with self._connect() as connection: rows = connection.execute(query, args).fetchall()
+        return [dict(row) for row in rows]
+
+    def record_paper_skip(self, *, symbol: str, name: str, decision_id: str | None, reason: str, price: float = 0.0) -> dict[str, object]:
+        """Persist a non-execution so simulations can be audited, not just replayed."""
+        now = beijing_now().isoformat()
+        with self._connect() as connection:
+            account = connection.execute("SELECT available_cash FROM paper_trading_accounts WHERE account_id='default'").fetchone()
+            cash = float(account["available_cash"]) if account else 0.0
+            item = {"id": f"skip-{uuid4().hex}", "symbol": symbol, "name": name, "side": "SKIP", "quantity": 0.0, "price": price, "fee": 0.0, "cash_before": cash, "cash_after": cash, "decision_id": decision_id, "reason": reason, "status": "skipped", "executed_at": now}
+            connection.execute("INSERT INTO paper_trading_logs (id,symbol,name,side,quantity,price,fee,cash_before,cash_after,decision_id,reason,status,executed_at) VALUES (:id,:symbol,:name,:side,:quantity,:price,:fee,:cash_before,:cash_after,:decision_id,:reason,:status,:executed_at)", item)
+        return item
+
+    def execute_paper_trade(self, *, trade_id: str, symbol: str, name: str, side: str, quantity: float, price: float, decision_id: str | None, reason: str) -> dict[str, object]:
+        if quantity <= 0 or price <= 0: raise ValueError("quantity_and_price_must_be_positive")
+        if side == "BUY" and quantity % 100 != 0: raise ValueError("paper_buy_requires_100_share_lot")
+        now = beijing_now().isoformat()
+        with self._connect() as connection:
+            # The scheduler may wake more than once or restart during an hour.
+            # One normalized decision may therefore change this ledger once only.
+            if decision_id and connection.execute(
+                "SELECT 1 FROM paper_trading_logs WHERE decision_id=? AND side=? LIMIT 1",
+                (decision_id, side),
+            ).fetchone():
+                raise ValueError("paper_decision_already_executed")
+            account = connection.execute("SELECT available_cash FROM paper_trading_accounts WHERE account_id='default'").fetchone()
+            cash_before = float(account["available_cash"]) if account else 0.0
+            position = connection.execute("SELECT * FROM paper_trading_positions WHERE symbol=?", (symbol,)).fetchone()
+            existing_quantity = float(position["quantity"]) if position else 0.0
+            if side == "BUY":
+                gross = quantity * price
+                fee = max(5.0, gross * 0.0003)
+                cost = gross + fee
+                if cost > cash_before + 1e-9: raise ValueError("insufficient_paper_cash_after_fee")
+                new_quantity = existing_quantity + quantity
+                average_cost = ((float(position["average_cost"]) * existing_quantity) + cost) / new_quantity if position else price
+                cash_after = cash_before - cost
+                connection.execute("INSERT INTO paper_trading_positions VALUES (?,?,?,?,?) ON CONFLICT(symbol) DO UPDATE SET name=excluded.name,quantity=excluded.quantity,average_cost=excluded.average_cost,updated_at=excluded.updated_at", (symbol, name, new_quantity, average_cost, now))
+            elif side == "SELL":
+                if quantity > existing_quantity + 1e-9: raise ValueError("insufficient_paper_position")
+                gross = quantity * price
+                fee = max(5.0, gross * 0.0003) + gross * 0.001
+                cash_after = cash_before + gross - fee
+                remaining = existing_quantity - quantity
+                if remaining <= 1e-9: connection.execute("DELETE FROM paper_trading_positions WHERE symbol=?", (symbol,))
+                else: connection.execute("UPDATE paper_trading_positions SET quantity=?, updated_at=? WHERE symbol=?", (remaining, now, symbol))
+            else: raise ValueError("invalid_paper_trade_side")
+            connection.execute("INSERT INTO paper_trading_accounts (account_id,available_cash,initial_cash,enabled,updated_at) VALUES ('default', ?, 0, 0, ?) ON CONFLICT(account_id) DO UPDATE SET available_cash=excluded.available_cash, updated_at=excluded.updated_at", (cash_after, now))
+            item = {"id": trade_id, "symbol": symbol, "name": name, "side": side, "quantity": quantity, "price": price, "fee": fee, "cash_before": cash_before, "cash_after": cash_after, "decision_id": decision_id, "reason": reason, "executed_at": now}
+            connection.execute("INSERT INTO paper_trading_logs (id,symbol,name,side,quantity,price,fee,cash_before,cash_after,decision_id,reason,status,executed_at) VALUES (:id,:symbol,:name,:side,:quantity,:price,:fee,:cash_before,:cash_after,:decision_id,:reason,'executed',:executed_at)", item)
+        return item
+
     def recommendations(self, symbol: str | None = None) -> list[dict[str, object]]:
         query, args = ("SELECT payload FROM research_recommendations WHERE symbol=? ORDER BY created_at DESC", [symbol]) if symbol else ("SELECT payload FROM research_recommendations ORDER BY created_at DESC", [])
         with self._connect() as connection: rows = connection.execute(query, args).fetchall()
@@ -1271,18 +1351,4 @@ class PortfolioStore:
             connection.executemany("INSERT OR REPLACE INTO paper_daily_pnl VALUES (?, ?, ?, ?, ?, ?)", rows)
 
     def enqueue_ai_job(self, job: dict[str, object]) -> dict[str, object]:
-        now = beijing_now().isoformat()
-        with self._connect() as connection:
-            existing = connection.execute("SELECT * FROM ai_jobs WHERE input_hash=?", (job["input_hash"],)).fetchone()
-            if existing: return dict(existing) | {"payload": json.loads(str(existing["payload"]))}
-            connection.execute("INSERT INTO ai_jobs VALUES (?, ?, ?, 'pending', 0, ?, ?, NULL, ?, ?)", (job["id"], job["target_id"], job["input_hash"], job.get("max_attempts", 3), json.dumps(job["payload"], ensure_ascii=False, default=str), now, now))
-        return {**job, "status": "pending", "attempts": 0, "created_at": now, "updated_at": now}
-
-    def ai_jobs(self, target_id: str | None = None) -> list[dict[str, object]]:
-        query, params = ("SELECT * FROM ai_jobs WHERE target_id=? ORDER BY updated_at DESC", [target_id]) if target_id else ("SELECT * FROM ai_jobs ORDER BY updated_at DESC", [])
-        with self._connect() as connection: rows = connection.execute(query, params).fetchall()
-        return [{**dict(row), "payload": json.loads(str(row["payload"]))} for row in rows]
-
-    def update_ai_job(self, job_id: str, status: str, error_message: str | None = None, increment_attempt: bool = False) -> None:
-        with self._connect() as connection:
-            connection.execute("UPDATE ai_jobs SET status=?, attempts=attempts+?, error_message=?, updated_at=? WHERE id=?", (status, 1 if increment_attempt else 0, error_message, beijing_now().isoformat(), job_id))
+   

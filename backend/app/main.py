@@ -85,6 +85,7 @@ def positive_environment_integer(name: str, default: int, minimum: int) -> int:
 MARKET_REFRESH_ENABLED = os.getenv("MARKET_REFRESH_ENABLED", "true").lower() not in {"0", "false", "no"}
 MARKET_REFRESH_INTERVAL_SECONDS = positive_environment_integer("MARKET_REFRESH_INTERVAL_SECONDS", 60, 30)
 MARKET_UNIVERSE_SCAN_INTERVAL_SECONDS = positive_environment_integer("MARKET_UNIVERSE_SCAN_INTERVAL_SECONDS", 300, 60)
+PAPER_TRADING_INTERVAL_SECONDS = positive_environment_integer("PAPER_TRADING_INTERVAL_SECONDS", 3600, 300)
 DAILY_HISTORY_RETRY_SECONDS = positive_environment_integer("DAILY_HISTORY_RETRY_SECONDS", 300, 30)
 market_refresh_stop = Event()
 market_refresh_thread: Thread | None = None
@@ -96,6 +97,7 @@ daily_history_refreshed_for: dict[str, str] = {}
 daily_history_attempted_for: dict[str, str] = {}
 daily_history_retry_after: dict[str, float] = {}
 daily_review_generated_dates: set[str] = set()
+last_paper_trading_run_at = 0.0
 market_refresh_state: dict[str, object] = {
     "last_attempt_at": None,
     "last_success_at": None,
@@ -163,6 +165,24 @@ class AdminOverview(BaseModel):
 
 class SystemConfig(BaseModel):
     update_check_enabled: bool = True
+    paper_trading_enabled: bool = False
+
+
+class PaperTradingConfig(BaseModel):
+    available_cash: float = Field(ge=0, le=1_000_000_000)
+
+
+class PaperTradingPosition(BaseModel):
+    symbol: str; name: str; quantity: float; average_cost: float; updated_at: datetime
+
+
+class PaperTradingLog(BaseModel):
+    id: str; symbol: str; name: str; side: Literal["BUY", "SELL", "SKIP"]; quantity: float; price: float
+    cash_before: float; cash_after: float; decision_id: str | None = None; reason: str; status: Literal["executed", "skipped"] = "executed"; executed_at: datetime
+
+
+class PaperTradingAccount(BaseModel):
+    available_cash: float; updated_at: datetime; enabled: bool; positions: list[PaperTradingPosition] = Field(default_factory=list)
 
 
 class AppUpdate(BaseModel):
@@ -818,6 +838,21 @@ def save_admin_config(payload: SystemConfig) -> SystemConfig:
     return SystemConfig(**store.save_system_settings(payload.model_dump()))
 
 
+@app.get("/v1/paper-trading/account", response_model=PaperTradingAccount)
+def paper_trading_account() -> PaperTradingAccount:
+    return PaperTradingAccount.model_validate(store.paper_account())
+
+
+@app.put("/v1/paper-trading/account", response_model=PaperTradingAccount)
+def save_paper_trading_account(payload: PaperTradingConfig) -> PaperTradingAccount:
+    return PaperTradingAccount.model_validate(store.save_paper_account(payload.available_cash))
+
+
+@app.get("/v1/paper-trading/logs", response_model=list[PaperTradingLog])
+def paper_trading_logs(symbol: str | None = None, limit: int = Query(default=100, ge=1, le=500)) -> list[PaperTradingLog]:
+    return [PaperTradingLog.model_validate(item) for item in store.paper_logs(symbol, limit)]
+
+
 @app.get("/v1/feed", response_model=list[NewsItem])
 def feed(background_tasks: BackgroundTasks, symbols: Annotated[list[str], Query()] = []) -> list[NewsItem]:
     requested = [symbol.strip().upper() for symbol in symbols if symbol.strip()]
@@ -1155,6 +1190,7 @@ def scheduled_market_refresh_loop() -> None:
                     trigger="scheduler-trading-session",
                 )
                 refresh_derived_cache(refreshable_symbols, "scheduler-trading-session")
+                run_paper_trading_cycle(refreshable_symbols)
             elif all_symbols and previous_open_symbols:
                 # Capture one final close snapshot when the session ends.  This
                 # also refreshes that day's daily bar once, rather than fetching
@@ -1187,6 +1223,37 @@ def scheduled_market_refresh_loop() -> None:
             break
 
     logger.info("行情定时刷新已停止")
+
+
+def run_paper_trading_cycle(symbols: list[str]) -> None:
+    """Apply the sole persisted DecisionReport output to an isolated paper ledger."""
+    global last_paper_trading_run_at
+    if not store.system_settings()["paper_trading_enabled"]:
+        return
+    if time.monotonic() - last_paper_trading_run_at < PAPER_TRADING_INTERVAL_SECONDS:
+        return
+    last_paper_trading_run_at = time.monotonic()
+    names = {str(x["symbol"]): str(x["name"]) for x in [*store.list(), *store.watchlist()]}
+    for symbol in symbols:
+        report = (store.decision_reports(symbol, 1) or [None])[0]
+        if not report or str(report.get("status", "")).upper() not in {"READY", "DEGRADED"}:
+            continue
+        action = str(report.get("action") or report.get("ai_assessment", {}).get("preferred_action") or "").upper()
+        sizing = report.get("sizing") or {}
+        quantity = float(sizing.get("suggested_quantity") or sizing.get("target_quantity") or 0)
+        price = float(report.get("market_price") or 0)
+        side = "BUY" if action in {"BUY", "ADD"} else "SELL" if action in {"REDUCE", "SELL", "STOP"} else None
+        if not side or quantity <= 0 or price <= 0:
+            continue
+        try:
+            store.execute_paper_trade(trade_id=str(uuid4()), symbol=symbol, name=names.get(symbol, symbol), side=side, quantity=quantity, price=price, decision_id=str(report.get("decision_id") or "") or None, reason=f"统一 AI 决策：{action}；{str(report.get('summary') or '')[:180]}")
+            logger.info("paper trading executed symbol=%s side=%s quantity=%s", symbol, side, quantity)
+        except ValueError as error:
+            logger.info("paper trading skipped symbol=%s reason=%s", symbol, error)
+            # Repeating an already-consumed decision is expected after a restart;
+            # it is not a new skipped trading decision and should not spam the journal.
+            if str(error) != "paper_decision_already_executed":
+                store.record_paper_skip(symbol=symbol, name=names.get(symbol, symbol), decision_id=str(report.get("decision_id") or "") or None, reason=str(error), price=price)
 
 
 def resolve_holding_drafts(draft_ids: list[str]) -> None:

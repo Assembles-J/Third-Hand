@@ -19,6 +19,14 @@ class ToolExecutor:
   if name=="request_daily_history_refresh":
    available=len(self.store.daily_prices(symbol,60))
    return {"confirmation_required":available<60,"action":"daily_history_refresh","symbol":symbol,"required_days":60,"available_days":available,"summary":f"当前仅有 {available} 条日线，需要拉取至少 60 条后再继续研究。","automatic_execution":False}
+  if name in {"paper_add_position","paper_reduce_position"}:
+   quantity=float(args.get("quantity") or 0)
+   quote=(self.store.cached_quotes([symbol]) or [{}])[0]
+   price=float(quote.get("price") or 0)
+   if quantity<=0 or price<=0:raise ValueError("paper_trade_quote_or_quantity_invalid")
+   names={str(item.get("symbol")):str(item.get("name")) for item in [*self.store.list(),*self.store.watchlist()]}
+   from uuid import uuid4
+   return self.store.execute_paper_trade(trade_id=str(uuid4()),symbol=symbol,name=names.get(symbol,symbol),side="BUY" if name=="paper_add_position" else "SELL",quantity=quantity,price=price,decision_id=None,reason="MCP 显式模拟操作")
   content=self.store.cached_content([symbol],limit=30)
   announcements=[item for item in content if str(item.get("id", "")).startswith("announcement-")]
   news=[item for item in content if str(item.get("id", "")).startswith("news-")]

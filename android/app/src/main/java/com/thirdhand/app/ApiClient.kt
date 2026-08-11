@@ -244,7 +244,11 @@ data class AdminOverviewDto(
     val market_last_success_at: String? = null,
     val market_last_error: String? = null,
 )
-data class SystemConfigDto(val update_check_enabled: Boolean = true)
+data class SystemConfigDto(val update_check_enabled: Boolean = true, val paper_trading_enabled: Boolean = false)
+data class PaperTradingConfigDto(val available_cash: Double)
+data class PaperTradingPositionDto(val symbol: String, val name: String, val quantity: Double, val average_cost: Double, val updated_at: String)
+data class PaperTradingLogDto(val id: String, val symbol: String, val name: String, val side: String, val quantity: Double, val price: Double, val cash_before: Double, val cash_after: Double, val decision_id: String? = null, val reason: String, val status: String = "executed", val executed_at: String)
+data class PaperTradingAccountDto(val available_cash: Double, val updated_at: String, val enabled: Boolean, val positions: List<PaperTradingPositionDto> = emptyList())
 data class AnalysisTraceStepDto(val stage: String, val status: String, val detail: String)
 data class TechnicalSnapshotDto(
     val as_of: String,
@@ -423,6 +427,12 @@ interface ThirdHandApi {
 
     @PUT("v1/admin/config")
     suspend fun saveAdminConfig(@Body config: SystemConfigDto): SystemConfigDto
+    @GET("v1/paper-trading/account")
+    suspend fun paperTradingAccount(): PaperTradingAccountDto
+    @PUT("v1/paper-trading/account")
+    suspend fun savePaperTradingAccount(@Body config: PaperTradingConfigDto): PaperTradingAccountDto
+    @GET("v1/paper-trading/logs")
+    suspend fun paperTradingLogs(@Query("symbol") symbol: String? = null, @Query("limit") limit: Int = 100): List<PaperTradingLogDto>
 
     @GET("v1/holdings")
     suspend fun holdings(): List<HoldingDto>

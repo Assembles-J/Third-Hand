@@ -174,6 +174,26 @@ fun CompactAdminDashboardScreen() {
             updateProgress?.let { progress -> CompactUpdateDownloadProgress(progress) }
             updateStatus?.let { Text(it, color = if (it.contains("失败") || it.contains("不可用")) CompactCoral else CompactTeal, style = MaterialTheme.typography.labelSmall) }
         }
+        CompactConsoleCard {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Column(Modifier.weight(1f)) {
+                    Text("模拟操盘自动执行", color = CompactText, fontWeight = FontWeight.Bold)
+                    Text("开盘期间每小时读取统一 AI 决策；模拟资金、持仓与真实账户完全隔离。", color = CompactQuiet, style = MaterialTheme.typography.labelSmall)
+                }
+                Switch(
+                    checked = config?.paper_trading_enabled == true,
+                    enabled = config != null && !savingConfig,
+                    onCheckedChange = { enabled -> scope.launch {
+                        savingConfig = true
+                        val current = config ?: return@launch
+                        runCatching { api.saveAdminConfig(current.copy(paper_trading_enabled = enabled)) }
+                            .onSuccess { config = it }
+                            .onFailure { error = "保存模拟操盘配置失败：${it.message ?: "请稍后重试"}" }
+                        savingConfig = false
+                    } },
+                )
+            }
+        }
         FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
             CompactConsoleCard(Modifier.weight(1f).widthIn(min = 150.dp)) {
                 Text("资源容量", color = CompactText, fontWeight = FontWeight.Bold)

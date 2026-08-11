@@ -144,6 +144,9 @@ class MainActivity : ComponentActivity() {
 }
 
 private var savedGlossaryTerms by mutableStateOf<List<String>>(emptyList())
+// Deliberately separate from real execution records: KLineChart uses these only
+// for purple paper-trade markers.
+private var paperChartMarkers by mutableStateOf<List<PaperTradingLogDto>>(emptyList())
 
 @Composable
 @OptIn(ExperimentalMaterial3Api::class)
@@ -213,7 +216,8 @@ private fun ThirdHandApp(resumeSignal: Int) {
             delay(500)
         }
     }
-    BackHandler(enabled = detailHolding != null || detailStock != null || tab == 3 || tab == 6) {
+    val tabOrder = remember { listOf(0, 5, 1, 3, 4, 2) }
+    BackHandler(enabled = detailHolding != null || detailStock != null || tab != 0) {
         when {
             detailHolding != null -> detailHolding = null
             detailStock != null -> detailStock = null
@@ -228,12 +232,14 @@ private fun ThirdHandApp(resumeSignal: Int) {
                         listOf(
                             Triple("今日", Icons.Filled.AutoGraph, 0),
                             Triple("自选", Icons.Filled.Bookmark, 5),
+                            Triple("自选", Icons.Filled.Bookmark, 5),
                             Triple("持仓", Icons.Filled.Wallet, 1),
+                            Triple("模拟", Icons.Filled.AutoGraph, 3),
                             Triple("研究", Icons.AutoMirrored.Filled.Article, 4),
                             Triple("管理", Icons.Filled.AdminPanelSettings, 2),
-                        ).forEach { (label, icon, targetTab) ->
+                        ).distinctBy { it.third }.forEach { (label, icon, targetTab) ->
                             NavigationBarItem(
-                                selected = tab == targetTab || (targetTab == 2 && tab == 3),
+                                selected = tab == targetTab,
                                 onClick = {
                                     if (targetTab == 4) researchEntryTarget = null
                                     tab = targetTab
@@ -276,8 +282,9 @@ private fun ThirdHandApp(resumeSignal: Int) {
                         onDragStart = { horizontalDrag = 0f },
                         onHorizontalDrag = { _, amount -> horizontalDrag += amount },
                         onDragEnd = {
-                            if (horizontalDrag <= -56f) tab = (tab + 1).coerceAtMost(6)
-                            if (horizontalDrag >= 56f) tab = (tab - 1).coerceAtLeast(0)
+                            val currentIndex = tabOrder.indexOf(tab).coerceAtLeast(0)
+                            if (horizontalDrag <= -56f) tab = tabOrder[(currentIndex + 1).coerceAtMost(tabOrder.lastIndex)]
+                            if (horizontalDrag >= 56f) tab = tabOrder[(currentIndex - 1).coerceAtLeast(0)]
                         },
                     )
                 }) {
@@ -294,7 +301,7 @@ private fun ThirdHandApp(resumeSignal: Int) {
                             0 -> TodayScreen(onOpenTradePlan = { tab = 4 }, onOpenRules = { tab = 4 }, onOpenPortfolio = { tab = 1 })
                             1 -> HoldingsScreen(onOpenDetail = { detailHolding = it })
                             2 -> UnifiedCenterScreen(onOpenSaleHistory = { tab = 6 })
-                            3 -> ExecutionReviewScreen()
+                            3 -> PaperTradingScreen()
                             4 -> ResearchChatScreen(
                                 controller = researchChatController,
                                 conversation = researchConversation,
@@ -314,7 +321,6 @@ private fun ThirdHandApp(resumeSignal: Int) {
                                 researchDraft = ""
                                 tab = 4
                             })
-                            6 -> SaleHistoryScreen(onBack = { tab = 2 })
                             else -> TodayScreen(onOpenTradePlan = { tab = 4 }, onOpenRules = { tab = 4 }, onOpenPortfolio = { tab = 1 })
                         }
                     }
@@ -2588,6 +2594,7 @@ fun TradingPeriodKLinePanel(symbol: String, quote: MarketQuoteDto?) {
     var monthRangeStart by remember(symbol) { mutableStateOf(LocalDate.now(ZoneOffset.ofHours(8)).minusMonths(6)) }
     var monthRangeEnd by remember(symbol) { mutableStateOf(LocalDate.now(ZoneOffset.ofHours(8))) }
     var monthRangePickerOpen by remember(symbol) { mutableStateOf(false) }
+    var paperTradeMarkers by remember(symbol) { mutableStateOf<List<PaperTradingLogDto>>(emptyList()) }
 
     fun loadBars() = scope.launch {
         val dailyHistoryResult = runCatching { api.marketHistory(symbol) }
@@ -2618,6 +2625,10 @@ fun TradingPeriodKLinePanel(symbol: String, quote: MarketQuoteDto?) {
         refreshingDailyHistory = false
     }
     LaunchedEffect(symbol) { loadBars() }
+    LaunchedEffect(symbol) {
+        paperTradeMarkers = runCatching { api.paperTradingLogs(symbol) }.getOrDefault(emptyList())
+        paperChartMarkers = paperTradeMarkers
+    }
     val chartBars = when (period) {
         "今日" -> intradayBars
         "日线" -> todaySnapshotBar(bars, quote)
@@ -2655,6 +2666,14 @@ fun TradingPeriodKLinePanel(symbol: String, quote: MarketQuoteDto?) {
                     color = if ((intradayLoadError != null && period == "今日") || (dailyHistoryLoadError != null && period != "今日")) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.onSurfaceVariant,
                 )
             }
+    }
+    if (paperTradeMarkers.isNotEmpty()) {
+        Text("模拟 B/S 标记（紫色，与真实操作区分）", style = MaterialTheme.typography.labelSmall, color = Color(0xFF7E57C2))
+        Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+            paperTradeMarkers.take(4).forEach { marker ->
+                Text("${if (marker.side == "BUY") "B" else "S"} ${marker.executed_at.take(10)} ¥${marketNumber(marker.price)}", style = MaterialTheme.typography.labelSmall, color = Color(0xFF7E57C2))
+            }
+        }
     }
     if (monthRangePickerOpen) MonthRangePickerDialog(
         initialStart = monthRangeStart,
@@ -2747,6 +2766,16 @@ fun KLineChart(
                 drawLine(color, Offset(x, y(open)), Offset(x, y(bar.close)), strokeWidth = candleWidth)
                 val volumeHeight = ((bar.volume ?: 0.0) / maxVolume * (size.height - volumeTop)).toFloat()
                 drawLine(color.copy(alpha = .7f), Offset(x, size.height), Offset(x, size.height - volumeHeight), strokeWidth = candleWidth)
+            }
+            paperChartMarkers.forEach { marker ->
+                val markerIndex = visible.indexOfLast { it.trading_date.take(10) == marker.executed_at.take(10) }
+                if (markerIndex >= 0) {
+                    val markerPrice = marker.price.coerceIn(minimum, maximum)
+                    val markerColor = Color(0xFF7E57C2)
+                    val markerX = step * markerIndex + step / 2
+                    drawCircle(markerColor, radius = 7f, center = Offset(markerX, y(markerPrice)))
+                    drawCircle(Color.White, radius = 2.5f, center = Offset(markerX, y(markerPrice)))
+                }
             }
             val crossX = step * selectedIndex + step / 2
             drawLine(crosshairColor.copy(alpha = .75f), Offset(crossX, 0f), Offset(crossX, size.height), strokeWidth = 1.5f)
