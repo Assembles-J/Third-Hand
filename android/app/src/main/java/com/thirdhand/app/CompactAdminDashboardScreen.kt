@@ -75,13 +75,14 @@ fun CompactAdminDashboardScreen() {
     var updateProgress by remember { mutableStateOf<UpdateDownloadProgress?>(null) }
     var availableCash by remember { mutableStateOf<AvailableCashDto?>(null) }
     var cashInput by remember { mutableStateOf("") }
+    var paperIntervalMinutes by remember { mutableStateOf("60") }
     val scope = rememberCoroutineScope()
     LaunchedEffect(refreshKey) {
         error = null
         runCatching { api.adminOverview() }
             .onSuccess { overview = it }
             .onFailure { error = "无法读取系统状态，请检查服务连接。" }
-        runCatching { api.adminConfig() }.onSuccess { config = it }.onFailure { error = "无法读取系统配置：${it.message ?: "请检查服务版本"}" }
+        runCatching { api.adminConfig() }.onSuccess { config = it; paperIntervalMinutes = (it.paper_trading_interval_seconds / 60).toString() }.onFailure { error = "无法读取系统配置：${it.message ?: "请检查服务版本"}" }
         runCatching { api.availableCash() }.onSuccess { availableCash = it; cashInput = "%.2f".format(it.available_cash) }
     }
     LaunchedEffect(availableUpdate) {
@@ -205,6 +206,20 @@ fun CompactAdminDashboardScreen() {
                     } },
                 )
             }
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                OutlinedTextField(value = paperIntervalMinutes, onValueChange = { paperIntervalMinutes = it.filter(Char::isDigit) }, modifier = Modifier.weight(1f), singleLine = true, label = { Text("执行间隔（分钟，最低 5）", color = CompactText) })
+                TextButton(onClick = {
+                    val minutes = paperIntervalMinutes.toIntOrNull()
+                    if (minutes == null || minutes < 5) { error = "执行间隔至少为 5 分钟" } else scope.launch {
+                        savingConfig = true
+                        val current = config ?: SystemConfigDto()
+                        runCatching { api.saveAdminConfig(current.copy(paper_trading_interval_seconds = minutes * 60)) }
+                            .onSuccess { config = it; paperIntervalMinutes = (it.paper_trading_interval_seconds / 60).toString() }
+                            .onFailure { error = "保存执行间隔失败：${it.message ?: "请稍后重试"}" }
+                        savingConfig = false
+                    }
+                }, enabled = !savingConfig) { Text("保存", color = CompactMint) }
+            }
         }
         FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
             CompactConsoleCard(Modifier.weight(1f).widthIn(min = 150.dp)) {
@@ -224,10 +239,10 @@ fun CompactAdminDashboardScreen() {
                     }
                     Switch(
                         checked = config?.update_check_enabled ?: false,
-                        enabled = config != null && !savingConfig,
+                        enabled = !savingConfig,
                         onCheckedChange = { enabled -> scope.launch {
                             savingConfig = true
-                            runCatching { api.saveAdminConfig(SystemConfigDto(enabled)) }
+                            runCatching { api.saveAdminConfig((config ?: SystemConfigDto()).copy(update_check_enabled = enabled)) }
                                 .onSuccess { config = it }
                                 .onFailure { error = "保存系统配置失败：${it.message ?: "请稍后重试"}" }
                             savingConfig = false

@@ -166,6 +166,7 @@ class AdminOverview(BaseModel):
 class SystemConfig(BaseModel):
     update_check_enabled: bool = True
     paper_trading_enabled: bool = False
+    paper_trading_interval_seconds: int = Field(default=3600, ge=300, le=86_400)
 
 
 class PaperTradingConfig(BaseModel):
@@ -1230,7 +1231,8 @@ def run_paper_trading_cycle(symbols: list[str]) -> None:
     global last_paper_trading_run_at
     if not store.system_settings()["paper_trading_enabled"]:
         return
-    if time.monotonic() - last_paper_trading_run_at < PAPER_TRADING_INTERVAL_SECONDS:
+    configured_interval = int(store.system_settings().get("paper_trading_interval_seconds", PAPER_TRADING_INTERVAL_SECONDS))
+    if time.monotonic() - last_paper_trading_run_at < configured_interval:
         return
     last_paper_trading_run_at = time.monotonic()
     names = {str(x["symbol"]): str(x["name"]) for x in [*store.list(), *store.watchlist()]}

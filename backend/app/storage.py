@@ -597,15 +597,16 @@ class PortfolioStore:
                 rows,
             )
 
-    def system_settings(self) -> dict[str, bool]:
+    def system_settings(self) -> dict[str, object]:
         with self._connect() as connection:
             rows = connection.execute("SELECT setting_key, setting_value FROM system_settings").fetchall()
         stored = {str(row["setting_key"]): str(row["setting_value"]) for row in rows}
-        return {"update_check_enabled": stored.get("update_check_enabled", "true").lower() == "true", "paper_trading_enabled": stored.get("paper_trading_enabled", "false").lower() == "true"}
+        interval = int(stored.get("paper_trading_interval_seconds", "3600")) if stored.get("paper_trading_interval_seconds", "").isdigit() else 3600
+        return {"update_check_enabled": stored.get("update_check_enabled", "true").lower() == "true", "paper_trading_enabled": stored.get("paper_trading_enabled", "false").lower() == "true", "paper_trading_interval_seconds": max(300, interval)}
 
-    def save_system_settings(self, settings: dict[str, bool]) -> dict[str, bool]:
+    def save_system_settings(self, settings: dict[str, object]) -> dict[str, object]:
         timestamp = beijing_now().isoformat()
-        rows = [(key, "true" if value else "false", timestamp) for key, value in settings.items()]
+        rows = [(key, "true" if value else "false", timestamp) if isinstance(value, bool) else (key, str(value), timestamp) for key, value in settings.items()]
         with self._connect() as connection:
             connection.executemany(
                 "INSERT INTO system_settings (setting_key, setting_value, updated_at) VALUES (?, ?, ?) "
