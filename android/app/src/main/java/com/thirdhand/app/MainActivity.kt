@@ -721,6 +721,10 @@ private fun TodayScreen(onOpenTradePlan: () -> Unit, onOpenRules: () -> Unit, on
     }
     val selectedHolding = holdings.firstOrNull { it.symbol == selectedSymbol }
     val selectedAnalysis = portfolioAnalysis.firstOrNull { it.symbol == selectedSymbol }
+    val rankedAnalysis = portfolioAnalysis.sortedWith(
+        compareBy<PortfolioAnalysisItemDto> { todayAnalysisPriority(it.action) }
+            .thenByDescending { it.confidence_percent },
+    )
     LazyColumn(contentPadding = androidx.compose.foundation.layout.PaddingValues(bottom = 24.dp), verticalArrangement = Arrangement.spacedBy(14.dp)) {
         item { AppHero("今日决策", "规则负责约束，AI 负责复核解释") }
         item {
@@ -740,6 +744,25 @@ private fun TodayScreen(onOpenTradePlan: () -> Unit, onOpenRules: () -> Unit, on
         error?.let { item { StatusCard(it, error = true) } }
         statusMessage?.let { item { StatusCard(it, positive = true) } }
         if (holdings.isEmpty()) item { StatusCard("先在“持仓”页添加第一只持仓，才能建立决策分析。") }
+        if (rankedAnalysis.isNotEmpty()) {
+            item { Text("今日分析", modifier = Modifier.padding(horizontal = 20.dp), style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold) }
+            items(rankedAnalysis, key = { "today-analysis-${it.symbol}" }) { item ->
+                Card(Modifier.padding(horizontal = 20.dp).fillMaxWidth().clickable {
+                    selectedSymbol = item.symbol
+                    decisionReport = null
+                    scope.launch { decisionReport = runCatching { api.latestDecision(item.symbol) }.getOrNull() }
+                }) {
+                    Column(Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            Text("${item.name} · ${item.symbol}", modifier = Modifier.weight(1f), fontWeight = FontWeight.SemiBold)
+                            Text(analysisActionLabel(item.action), color = analysisActionColor(item.action), style = MaterialTheme.typography.labelMedium, fontWeight = FontWeight.Bold)
+                        }
+                        Text(item.reason, maxLines = 2, overflow = TextOverflow.Ellipsis, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                        Text("证据置信度 ${item.confidence_percent}% · 点击查看本次保存的依据和数据范围", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    }
+                }
+            }
+        }
         selectedHolding?.let { holding -> item {
             OutlinedButton(
                 onClick = { showSymbolPicker = true },
@@ -3156,6 +3179,14 @@ private fun analysisActionLabel(action: String): String = when (action) {
     "wait_for_confirmation" -> "等待确认"
     "data_insufficient" -> "数据不足"
     else -> "复核"
+}
+
+private fun todayAnalysisPriority(action: String): Int = when (action.lowercase()) {
+    "risk_review", "reduce", "exit", "sell", "stop" -> 0
+    "add", "buy", "open" -> 1
+    "wait_for_confirmation", "hold" -> 2
+    "observe", "watch", "data_insufficient" -> 9
+    else -> 5
 }
 
 private fun marketTag(currency: String): String? = when (currency) {
