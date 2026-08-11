@@ -254,6 +254,8 @@ class PortfolioStore:
                 connection.execute("CREATE TABLE IF NOT EXISTS paper_trading_positions (symbol TEXT PRIMARY KEY, name TEXT NOT NULL, quantity REAL NOT NULL, average_cost REAL NOT NULL, updated_at TEXT NOT NULL)")
                 connection.execute("CREATE TABLE IF NOT EXISTS paper_trading_logs (id TEXT PRIMARY KEY, symbol TEXT NOT NULL, name TEXT NOT NULL, side TEXT NOT NULL, quantity REAL NOT NULL, price REAL NOT NULL, fee REAL NOT NULL DEFAULT 0, cash_before REAL NOT NULL, cash_after REAL NOT NULL, decision_id TEXT, reason TEXT NOT NULL, status TEXT NOT NULL DEFAULT 'executed', executed_at TEXT NOT NULL)")
                 connection.execute("CREATE INDEX IF NOT EXISTS idx_paper_trading_logs_symbol_time ON paper_trading_logs(symbol, executed_at DESC)")
+                connection.execute("CREATE TABLE IF NOT EXISTS paper_trading_equity_snapshots (id INTEGER PRIMARY KEY AUTOINCREMENT, total_equity REAL NOT NULL, available_cash REAL NOT NULL, market_value REAL NOT NULL, total_pnl REAL NOT NULL, recorded_at TEXT NOT NULL)")
+                connection.execute("CREATE INDEX IF NOT EXISTS idx_paper_equity_snapshots_time ON paper_trading_equity_snapshots(recorded_at DESC)")
                 self._ensure_column(connection, "paper_trading_logs", "status", "TEXT NOT NULL DEFAULT 'executed'")
                 self._ensure_column(connection, "paper_trading_logs", "fee", "REAL NOT NULL DEFAULT 0")
                 self._ensure_column(connection, "paper_trading_accounts", "initial_cash", "REAL NOT NULL DEFAULT 0")
@@ -1235,11 +1237,30 @@ class PortfolioStore:
             row = connection.execute("SELECT initial_cash FROM paper_trading_accounts WHERE account_id='default'").fetchone()
             positions = [dict(item) for item in connection.execute("SELECT * FROM paper_trading_positions ORDER BY updated_at DESC").fetchall()]
             quotes = {str(item["symbol"]): json.loads(str(item["payload"])) for item in connection.execute("SELECT symbol,payload FROM market_quote_cache").fetchall()}
-        market_value = sum(float(position["quantity"]) * float((quotes.get(str(position["symbol"]), {}).get("price")) or position["average_cost"]) for position in positions)
+        enriched_positions = []
+        for position in positions:
+            price = float((quotes.get(str(position["symbol"]), {}).get("price")) or position["average_cost"])
+            market_value = float(position["quantity"]) * price
+            cost_value = float(position["quantity"]) * float(position["average_cost"])
+            enriched_positions.append({**position, "last_price": price, "market_value": market_value, "unrealized_pnl": market_value - cost_value, "unrealized_return_percent": (market_value / cost_value - 1) * 100 if cost_value else 0.0})
+        positions = enriched_positions
+        market_value = sum(float(position["market_value"]) for position in positions)
         cash = float(cash_row["available_cash"]) if cash_row else 0.0
         initial_cash = float(row["initial_cash"]) if row else 0.0
         equity = cash + market_value
         return {"available_cash": cash, "initial_cash": initial_cash, "market_value": market_value, "total_equity": equity, "total_pnl": equity - initial_cash, "total_return_percent": (equity / initial_cash - 1) * 100 if initial_cash else 0.0, "updated_at": cash_row["updated_at"] if cash_row else beijing_now().isoformat(), "enabled": settings["paper_trading_enabled"], "positions": positions}
+
+    def record_paper_equity_snapshot(self) -> dict[str, object]:
+        account = self.paper_account()
+        now = beijing_now().isoformat()
+        with self._connect() as connection:
+            connection.execute("INSERT INTO paper_trading_equity_snapshots (total_equity,available_cash,market_value,total_pnl,recorded_at) VALUES (?,?,?,?,?)", (account["total_equity"], account["available_cash"], account["market_value"], account["total_pnl"], now))
+        return {"recorded_at": now, **{key: account[key] for key in ("total_equity", "available_cash", "market_value", "total_pnl")}}
+
+    def paper_equity_snapshots(self, limit: int = 120) -> list[dict[str, object]]:
+        with self._connect() as connection:
+            rows = connection.execute("SELECT total_equity,available_cash,market_value,total_pnl,recorded_at FROM paper_trading_equity_snapshots ORDER BY recorded_at DESC LIMIT ?", (max(1, limit),)).fetchall()
+        return [dict(row) for row in reversed(rows)]
 
     def save_paper_account(self, available_cash: float) -> dict[str, object]:
         # Compatibility endpoint: paper trading now shares the one database cash ledger.
@@ -1286,7 +1307,7 @@ class PortfolioStore:
                 cost = gross + fee
                 if cost > cash_before + 1e-9: raise ValueError("insufficient_paper_cash_after_fee")
                 new_quantity = existing_quantity + quantity
-                average_cost = ((float(position["average_cost"]) * existing_quantity) + cost) / new_quantity if position else price
+                average_cost = ((float(position["average_cost"]) * existing_quantity) + cost) / new_quantity if position else cost / quantity
                 cash_after = cash_before - cost
                 connection.execute("INSERT INTO paper_trading_positions VALUES (?,?,?,?,?) ON CONFLICT(symbol) DO UPDATE SET name=excluded.name,quantity=excluded.quantity,average_cost=excluded.average_cost,updated_at=excluded.updated_at", (symbol, name, new_quantity, average_cost, now))
             elif side == "SELL":

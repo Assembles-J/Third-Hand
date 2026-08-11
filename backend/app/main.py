@@ -174,7 +174,7 @@ class PaperTradingConfig(BaseModel):
 
 
 class PaperTradingPosition(BaseModel):
-    symbol: str; name: str; quantity: float; average_cost: float; updated_at: datetime
+    symbol: str; name: str; quantity: float; average_cost: float; last_price: float = 0; market_value: float = 0; unrealized_pnl: float = 0; unrealized_return_percent: float = 0; updated_at: datetime
 
 
 class PaperTradingLog(BaseModel):
@@ -184,6 +184,10 @@ class PaperTradingLog(BaseModel):
 
 class PaperTradingAccount(BaseModel):
     available_cash: float; initial_cash: float = 0; market_value: float = 0; total_equity: float = 0; total_pnl: float = 0; total_return_percent: float = 0; updated_at: datetime; enabled: bool; positions: list[PaperTradingPosition] = Field(default_factory=list)
+
+
+class PaperEquitySnapshot(BaseModel):
+    total_equity: float; available_cash: float; market_value: float; total_pnl: float; recorded_at: datetime
 
 
 class AppUpdate(BaseModel):
@@ -854,6 +858,11 @@ def paper_trading_logs(symbol: str | None = None, limit: int = Query(default=100
     return [PaperTradingLog.model_validate(item) for item in store.paper_logs(symbol, limit)]
 
 
+@app.get("/v1/paper-trading/equity-snapshots", response_model=list[PaperEquitySnapshot])
+def paper_trading_equity_snapshots(limit: int = Query(default=120, ge=1, le=500)) -> list[PaperEquitySnapshot]:
+    return [PaperEquitySnapshot.model_validate(item) for item in store.paper_equity_snapshots(limit)]
+
+
 @app.get("/v1/feed", response_model=list[NewsItem])
 def feed(background_tasks: BackgroundTasks, symbols: Annotated[list[str], Query()] = []) -> list[NewsItem]:
     requested = [symbol.strip().upper() for symbol in symbols if symbol.strip()]
@@ -1256,6 +1265,7 @@ def run_paper_trading_cycle(symbols: list[str]) -> None:
             # it is not a new skipped trading decision and should not spam the journal.
             if str(error) != "paper_decision_already_executed":
                 store.record_paper_skip(symbol=symbol, name=names.get(symbol, symbol), decision_id=str(report.get("decision_id") or "") or None, reason=str(error), price=price)
+    store.record_paper_equity_snapshot()
 
 
 def resolve_holding_drafts(draft_ids: list[str]) -> None:

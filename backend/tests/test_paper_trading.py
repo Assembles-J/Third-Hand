@@ -15,7 +15,9 @@ def test_paper_ledger_moves_cash_and_blocks_duplicate_decision(tmp_path: Path) -
     )
     assert buy["fee"] == 5
     assert buy["cash_after"] == 195
-    assert store.paper_account()["positions"][0]["quantity"] == 100
+    account_after_buy = store.paper_account()
+    assert account_after_buy["positions"][0]["quantity"] == 100
+    assert account_after_buy["positions"][0]["average_cost"] == 8.05
     with pytest.raises(ValueError, match="already_executed"):
         store.execute_paper_trade(
             trade_id=str(uuid4()), symbol="600519", name="茅台", side="BUY", quantity=100,
@@ -28,6 +30,9 @@ def test_paper_ledger_moves_cash_and_blocks_duplicate_decision(tmp_path: Path) -
     assert sale["fee"] == 6
     assert sale["cash_after"] == 1_189
     assert store.paper_account()["positions"] == []
+    snapshot = store.record_paper_equity_snapshot()
+    assert snapshot["total_equity"] == 1_189
+    assert store.paper_equity_snapshots()[-1]["total_pnl"] == 189
 
 
 def test_paper_ledger_rejects_cash_and_position_overruns(tmp_path: Path) -> None:
