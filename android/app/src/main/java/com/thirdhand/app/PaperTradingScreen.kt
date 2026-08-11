@@ -23,6 +23,8 @@ fun PaperTradingScreen() {
     var account by remember { mutableStateOf<PaperTradingAccountDto?>(null) }
     var logs by remember { mutableStateOf<List<PaperTradingLogDto>>(emptyList()) }
     var snapshots by remember { mutableStateOf<List<PaperEquitySnapshotDto>>(emptyList()) }
+    var runningNow by remember { mutableStateOf(false) }
+    var runMessage by remember { mutableStateOf<String?>(null) }
     var error by remember { mutableStateOf<String?>(null) }
     fun refresh() = scope.launch {
         runCatching { Triple(api.paperTradingAccount(), api.paperTradingLogs(), api.paperTradingEquitySnapshots()) }.onSuccess { (loaded, events, equityHistory) ->
@@ -37,6 +39,18 @@ fun PaperTradingScreen() {
                 IconButton(onClick = ::refresh) { Icon(Icons.Filled.Refresh, "刷新模拟账本") }
             }
         }
+        item {
+            FilledTonalButton(enabled = !runningNow, onClick = { scope.launch {
+                runningNow = true
+                runMessage = runCatching { api.runPaperTradingNow() }.fold(
+                    onSuccess = { result -> "${result.message}：执行 ${result.executed} 笔，跳过 ${result.skipped} 笔" },
+                    onFailure = { "立即模拟失败：${it.message ?: "请检查服务连接"}" },
+                )
+                runningNow = false
+                refresh()
+            } }) { Text(if (runningNow) "正在模拟…" else "立即模拟一次") }
+        }
+        runMessage?.let { message -> item { Text(message, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant) } }
         item {
             Card(Modifier.fillMaxWidth()) { Column(Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
                 Text("模拟资金", fontWeight = FontWeight.Bold)

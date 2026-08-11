@@ -863,6 +863,17 @@ def paper_trading_equity_snapshots(limit: int = Query(default=120, ge=1, le=500)
     return [PaperEquitySnapshot.model_validate(item) for item in store.paper_equity_snapshots(limit)]
 
 
+@app.post("/v1/paper-trading/run")
+def run_paper_trading_now() -> dict[str, object]:
+    """User-triggered paper run; it does not bypass market/risk/ledger checks."""
+    symbols = list(dict.fromkeys(str(item["symbol"]).strip().upper() for item in [*store.list(), *store.watchlist()] if str(item.get("symbol", "")).strip()))
+    active = trading_calendar.open_symbols(symbols, moment=beijing_now())
+    if not active:
+        return {"status": "skipped", "message": "当前没有处于交易时段的模拟标的", "symbols": []}
+    result = run_paper_trading_cycle(active, force=True, allow_when_disabled=True)
+    return {"status": "completed", "message": "已完成一次模拟判断", "symbols": active, **result}
+
+
 @app.get("/v1/feed", response_model=list[NewsItem])
 def feed(background_tasks: BackgroundTasks, symbols: Annotated[list[str], Query()] = []) -> list[NewsItem]:
     requested = [symbol.strip().upper() for symbol in symbols if symbol.strip()]
@@ -1235,16 +1246,18 @@ def scheduled_market_refresh_loop() -> None:
     logger.info("行情定时刷新已停止")
 
 
-def run_paper_trading_cycle(symbols: list[str]) -> None:
+def run_paper_trading_cycle(symbols: list[str], force: bool = False, allow_when_disabled: bool = False) -> dict[str, int]:
     """Apply the sole persisted DecisionReport output to an isolated paper ledger."""
     global last_paper_trading_run_at
-    if not store.system_settings()["paper_trading_enabled"]:
-        return
+    if not allow_when_disabled and not store.system_settings()["paper_trading_enabled"]:
+        return {"executed": 0, "skipped": 0}
     configured_interval = int(store.system_settings().get("paper_trading_interval_seconds", PAPER_TRADING_INTERVAL_SECONDS))
-    if time.monotonic() - last_paper_trading_run_at < configured_interval:
-        return
+    if not force and time.monotonic() - last_paper_trading_run_at < configured_interval:
+        return {"executed": 0, "skipped": 0}
     last_paper_trading_run_at = time.monotonic()
     names = {str(x["symbol"]): str(x["name"]) for x in [*store.list(), *store.watchlist()]}
+    executed = 0
+    skipped = 0
     for symbol in symbols:
         report = (store.decision_reports(symbol, 1) or [None])[0]
         if not report or str(report.get("status", "")).upper() not in {"READY", "DEGRADED"}:
@@ -1258,6 +1271,7 @@ def run_paper_trading_cycle(symbols: list[str]) -> None:
             continue
         try:
             store.execute_paper_trade(trade_id=str(uuid4()), symbol=symbol, name=names.get(symbol, symbol), side=side, quantity=quantity, price=price, decision_id=str(report.get("decision_id") or "") or None, reason=f"统一 AI 决策：{action}；{str(report.get('summary') or '')[:180]}")
+            executed += 1
             logger.info("paper trading executed symbol=%s side=%s quantity=%s", symbol, side, quantity)
         except ValueError as error:
             logger.info("paper trading skipped symbol=%s reason=%s", symbol, error)
@@ -1265,7 +1279,9 @@ def run_paper_trading_cycle(symbols: list[str]) -> None:
             # it is not a new skipped trading decision and should not spam the journal.
             if str(error) != "paper_decision_already_executed":
                 store.record_paper_skip(symbol=symbol, name=names.get(symbol, symbol), decision_id=str(report.get("decision_id") or "") or None, reason=str(error), price=price)
+                skipped += 1
     store.record_paper_equity_snapshot()
+    return {"executed": executed, "skipped": skipped}
 
 
 def resolve_holding_drafts(draft_ids: list[str]) -> None:

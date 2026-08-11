@@ -48,8 +48,8 @@ import androidx.compose.ui.unit.dp
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 
-private val CompactCanvas = Color(0xFF111614)
-private val CompactPanel = Color(0xFF171E1B)
+private val CompactCanvas = Color(0xFF101715)
+private val CompactPanel = Color(0xFF1A2420)
 private val CompactMint = Color(0xFF9EFFBF)
 private val CompactTeal = Color(0xFF4ED6C2)
 private val CompactGold = Color(0xFFF4D35E)
@@ -122,7 +122,7 @@ fun CompactAdminDashboardScreen() {
             Text("可用资金（统一账本）", color = CompactText, fontWeight = FontWeight.Bold)
             Text("持仓页与模拟操盘均只读取该数据库余额。修改后立即保存。", color = CompactQuiet, style = MaterialTheme.typography.labelSmall)
             Row(verticalAlignment = Alignment.CenterVertically) {
-                OutlinedTextField(value = cashInput, onValueChange = { cashInput = it }, modifier = Modifier.weight(1f), singleLine = true, label = { Text("可用资金", color = CompactText) })
+                OutlinedTextField(value = cashInput, onValueChange = { cashInput = it }, modifier = Modifier.weight(1f), singleLine = true, label = { Text("可用资金") }, colors = compactFieldColors())
                 TextButton(onClick = { cashInput.toDoubleOrNull()?.takeIf { it >= 0 }?.let { value -> scope.launch { runCatching { api.saveAvailableCash(AvailableCashInputDto(value)) }.onSuccess { availableCash = it; cashInput = "%.2f".format(it.available_cash) }.onFailure { error = "保存可用资金失败：${it.message ?: "请稍后重试"}" } } } }) { Text("保存", color = CompactMint) }
             }
             availableCash?.updated_at?.let { Text("已保存：$it", color = CompactTeal, style = MaterialTheme.typography.labelSmall) }
@@ -133,20 +133,10 @@ fun CompactAdminDashboardScreen() {
             OutlinedTextField(
                 value = baseUrl,
                 onValueChange = { baseUrl = it },
-                label = { Text("服务地址，例如 http://192.168.1.10:8000/", color = Color.White) },
+                label = { Text("服务地址，例如 http://192.168.1.10:8000/") },
                 modifier = Modifier.fillMaxWidth().padding(top = 8.dp),
                 singleLine = true,
-                colors = OutlinedTextFieldDefaults.colors(
-                    focusedTextColor = CompactText,
-                    unfocusedTextColor = CompactText,
-                    focusedLabelColor = CompactMint,
-                    unfocusedLabelColor = CompactQuiet,
-                    focusedBorderColor = CompactMint,
-                    unfocusedBorderColor = CompactQuiet,
-                    cursorColor = CompactMint,
-                    focusedContainerColor = CompactPanel,
-                    unfocusedContainerColor = CompactPanel,
-                ),
+                colors = compactFieldColors(),
             )
             TextButton(onClick = {
                 EndpointStore.saveBaseUrl(context, baseUrl)
@@ -207,7 +197,7 @@ fun CompactAdminDashboardScreen() {
                 )
             }
             Row(verticalAlignment = Alignment.CenterVertically) {
-                OutlinedTextField(value = paperIntervalMinutes, onValueChange = { paperIntervalMinutes = it.filter(Char::isDigit) }, modifier = Modifier.weight(1f), singleLine = true, label = { Text("执行间隔（分钟，最低 5）", color = CompactText) })
+                OutlinedTextField(value = paperIntervalMinutes, onValueChange = { paperIntervalMinutes = it.filter(Char::isDigit) }, modifier = Modifier.weight(1f), singleLine = true, label = { Text("执行间隔（分钟，最低 5）") }, colors = compactFieldColors())
                 TextButton(onClick = {
                     val minutes = paperIntervalMinutes.toIntOrNull()
                     if (minutes == null || minutes < 5) { error = "执行间隔至少为 5 分钟" } else scope.launch {
@@ -352,3 +342,16 @@ private fun compactBytes(bytes: Long): String = when {
     bytes >= 1_024 -> "%.1f KB".format(bytes / 1_024.0)
     else -> "$bytes B"
 }
+
+@Composable
+private fun compactFieldColors() = OutlinedTextFieldDefaults.colors(
+    focusedTextColor = CompactText,
+    unfocusedTextColor = CompactText,
+    focusedLabelColor = CompactMint,
+    unfocusedLabelColor = CompactQuiet,
+    focusedBorderColor = CompactMint,
+    unfocusedBorderColor = CompactQuiet,
+    cursorColor = CompactMint,
+    focusedContainerColor = CompactPanel,
+    unfocusedContainerColor = CompactPanel,
+)
