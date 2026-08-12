@@ -644,20 +644,22 @@ private fun impactColor(direction: String?): Color = when (direction) {
 @Composable
 private fun TodayScreen(onOpenTradePlan: () -> Unit, onOpenRules: () -> Unit, onOpenPortfolio: () -> Unit) {
     val context = LocalContext.current
+    val uriHandler = LocalUriHandler.current
     val api = remember { ApiClient.service(context) }
     val scope = rememberCoroutineScope()
-    var recommendations by remember { mutableStateOf<List<DecisionReportDto>>(emptyList()) }
+    var news by remember { mutableStateOf<List<NewsItemDto>>(emptyList()) }
     var loading by remember { mutableStateOf(true) }
     var error by remember { mutableStateOf<String?>(null) }
     fun load() = scope.launch {
         loading = true
         error = null
         runCatching {
-            api.researchTargets().mapNotNull { target ->
-                runCatching { api.latestDecision(target.symbol) }.getOrNull()
-            }
-        }.onSuccess { recommendations = it.sortedBy { item -> todayAnalysisPriority(item.action) } }
-            .onFailure { error = "无法读取今日推荐：${it.message ?: "请确认后端正在运行"}" }
+            val symbols = api.researchTargets().map { it.symbol }.distinct()
+            (api.announcements(symbols) + api.feed(symbols))
+                .distinctBy { it.id }
+                .sortedByDescending { it.published_at }
+        }.onSuccess { news = it }
+            .onFailure { error = "无法读取新闻：${it.message ?: "请确认后端正在运行"}" }
         loading = false
     }
     LaunchedEffect(Unit) { load() }
@@ -665,39 +667,30 @@ private fun TodayScreen(onOpenTradePlan: () -> Unit, onOpenRules: () -> Unit, on
         item {
             Row(Modifier.padding(horizontal = 20.dp).fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
                 Column(Modifier.weight(1f)) {
-                    Text("今日推荐", style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.Bold)
-                    Text("只保留当前持仓和自选标的的推荐结论。", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    Text("今日资讯", style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.Bold)
+                    Text("优先展示持仓与自选股的公告、新闻和已保存的 AI 解读。", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
                 }
-                IconButton(onClick = ::load, enabled = !loading) { Icon(Icons.Filled.Refresh, "刷新今日推荐") }
+                IconButton(onClick = ::load, enabled = !loading) { Icon(Icons.Filled.Refresh, "刷新今日资讯") }
             }
         }
         if (loading) item {
             Row(Modifier.padding(horizontal = 20.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 CircularProgressIndicator(Modifier.width(18.dp), strokeWidth = 2.dp)
-                Text("正在读取今日推荐…", style = MaterialTheme.typography.bodySmall)
+                Text("正在读取公告与新闻…", style = MaterialTheme.typography.bodySmall)
             }
         }
         error?.let { message -> item {
             Card(Modifier.padding(horizontal = 20.dp).fillMaxWidth(), colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.errorContainer)) {
                 Column(Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
-                    Text("今日推荐不可用", fontWeight = FontWeight.Bold)
+                    Text("今日资讯不可用", fontWeight = FontWeight.Bold)
                     Text(message, style = MaterialTheme.typography.bodySmall)
                     TextButton(onClick = ::load) { Text("重试") }
                 }
             }
         } }
-        if (!loading && error == null && recommendations.isEmpty()) item { StatusCard("暂无可展示的今日推荐。请先添加持仓或自选标的并等待行情刷新。") }
-        items(recommendations, key = { item -> "recommendation-${item.symbol}" }) { item ->
-            Card(Modifier.padding(horizontal = 20.dp).fillMaxWidth()) {
-                Column(Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(5.dp)) {
-                    Row(verticalAlignment = Alignment.CenterVertically) {
-                    Text(item.symbol, modifier = Modifier.weight(1f), fontWeight = FontWeight.SemiBold)
-                        Text(analysisActionLabel(item.action), color = analysisActionColor(item.action), style = MaterialTheme.typography.labelMedium, fontWeight = FontWeight.Bold)
-                    }
-                    Text(item.summary, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                    Text("AI 分析：${item.generated_at.take(16)} · 行情截至 ${item.market_as_of ?: "未知"}", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                }
-            }
+        if (!loading && error == null && news.isEmpty()) item { StatusCard("暂无相关新闻。添加持仓或自选后，刷新即可检索公告与新闻。") }
+        items(news, key = { item -> "today-news-${item.id}" }) { item ->
+            FeedCard(item, uriHandler, if (item.source_name.contains("公告") || item.source_name.contains("交易所")) "公告" else "新闻")
         }
     }
 }
@@ -2099,20 +2092,7 @@ private fun WatchlistScreen(onOpenDetail: (ResearchTargetDto) -> Unit, onResearc
             StatusCard("还没有自选股。添加关注股票或录入持仓后，会自动显示在这里。")
         }
         items(targets, key = { "watchlist-target-${it.symbol}" }) { target ->
-            Card(Modifier.padding(horizontal = 20.dp).fillMaxWidth().clickable { onOpenDetail(target) }) {
-                Row(Modifier.padding(14.dp), verticalAlignment = Alignment.CenterVertically) {
-                    Icon(
-                        if (target.status == "active_holding") Icons.Filled.Wallet else Icons.Filled.Bookmark,
-                        contentDescription = null,
-                        tint = MaterialTheme.colorScheme.primary,
-                    )
-                    Column(Modifier.padding(start = 12.dp).weight(1f)) {
-                        Text(target.name, style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.SemiBold)
-                        Text("${target.symbol} · ${watchlistStatusLabel(target.status)}", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                    }
-                    TextButton(onClick = { onResearch(target) }) { Text("AI 分析") }
-                }
-            }
+            WatchlistTableRow(target, onOpenDetail = { onOpenDetail(target) }, onResearch = { onResearch(target) })
         }
         error?.let { item { StatusCard(it, error = true) } }
     }
@@ -2139,6 +2119,33 @@ private fun WatchlistScreen(onOpenDetail: (ResearchTargetDto) -> Unit, onResearc
         confirmButton = { Button(onClick = { selectedTarget = null; onResearch(target) }) { Text("AI 分析") } },
         dismissButton = { TextButton(onClick = { selectedTarget = null }) { Text("关闭") } },
     ) }
+}
+
+@Composable
+private fun WatchlistTableRow(
+    target: ResearchTargetDto,
+    onOpenDetail: () -> Unit,
+    onResearch: () -> Unit,
+) {
+    Row(
+        Modifier.fillMaxWidth()
+            .clickable(onClick = onOpenDetail)
+            .padding(horizontal = 20.dp, vertical = 10.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Icon(
+            if (target.status == "active_holding") Icons.Filled.Wallet else Icons.Filled.Bookmark,
+            contentDescription = watchlistStatusLabel(target.status),
+            tint = MaterialTheme.colorScheme.primary,
+        )
+        Column(Modifier.padding(start = 12.dp).weight(1f)) {
+            Text(target.name, maxLines = 1, overflow = TextOverflow.Ellipsis, fontWeight = FontWeight.SemiBold, style = MaterialTheme.typography.bodyLarge)
+            Text("${target.symbol} · ${watchlistStatusLabel(target.status)}", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+        }
+        TextButton(onClick = onResearch) { Text("AI 分析") }
+        Icon(Icons.Filled.ChevronRight, contentDescription = "打开 ${target.name}", tint = MaterialTheme.colorScheme.onSurfaceVariant)
+    }
+    HorizontalDivider(Modifier.padding(start = 20.dp), color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = .65f))
 }
 
 private fun watchlistStatusLabel(status: String) = when (status) {
@@ -3386,11 +3393,11 @@ private fun WatchlistDialog(onDismiss: () -> Unit, onSave: (WatchlistInputDto) -
                 lookupStatus?.let { Text(it, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant) }
                 Text("自选股不计入持仓，会保留在研究与复盘中。", style = MaterialTheme.typography.bodySmall)
                 OutlinedTextField(symbol, { symbol = it.uppercase() }, label = { Text("股票代码") }, singleLine = true, modifier = Modifier.fillMaxWidth())
-                OutlinedTextField(name, { name = it }, label = { Text("股票名称") }, singleLine = true, modifier = Modifier.fillMaxWidth())
+                OutlinedTextField(name, { name = it }, label = { Text("股票名称（可不填，后台自动补齐）") }, singleLine = true, modifier = Modifier.fillMaxWidth())
             }
         },
         confirmButton = {
-            Button(onClick = { onSave(WatchlistInputDto(symbol.trim(), name.trim())) }, enabled = symbol.isNotBlank() && name.isNotBlank()) { Text("保存关注") }
+            Button(onClick = { onSave(WatchlistInputDto(symbol.trim(), name.trim())) }, enabled = symbol.isNotBlank()) { Text("保存关注") }
         },
         dismissButton = { TextButton(onClick = onDismiss) { Text("取消") } },
     )

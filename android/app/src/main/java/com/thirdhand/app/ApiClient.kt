@@ -145,7 +145,7 @@ data class ResearchTargetDto(
     val status: String,
     val last_activity_at: String,
 )
-data class WatchlistInputDto(val symbol: String, val name: String)
+data class WatchlistInputDto(val symbol: String, val name: String = "")
 data class WatchlistItemDto(
     val symbol: String,
     val name: String,

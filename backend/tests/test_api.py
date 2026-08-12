@@ -479,6 +479,19 @@ def test_watchlist_is_available_for_research_without_becoming_a_holding():
     assert client.delete("/v1/watchlist/0700").status_code == 204
 
 
+def test_watchlist_code_only_resolves_name_server_side(monkeypatch):
+    monkeypatch.setattr(
+        market_data,
+        "lookup_symbols",
+        lambda _names: [{"query": "600519", "matches": [{"symbol": "600519", "name": "贵州茅台"}]}],
+    )
+
+    created = client.post("/v1/watchlist", json={"symbol": "600519"})
+
+    assert created.status_code == 201
+    assert created.json()["name"] == "贵州茅台"
+
+
 def test_holding_draft_can_be_confirmed_later(monkeypatch):
     monkeypatch.setattr(market_data, "lookup_symbols", lambda names: [{"query": name, "matches": []} for name in names])
     draft = client.post("/v1/holding-drafts", json={"name": "小米集团", "quantity": 100, "average_cost": 45.5})

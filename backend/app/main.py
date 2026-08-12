@@ -271,7 +271,7 @@ class ResearchTarget(BaseModel):
 
 class WatchlistInput(BaseModel):
     symbol: str = Field(min_length=1, max_length=16)
-    name: str = Field(min_length=1, max_length=100)
+    name: str = Field(default="", max_length=100)
 
     @field_validator("symbol")
     @classmethod
@@ -1965,7 +1965,22 @@ def list_watchlist() -> list[WatchlistItem]:
 
 @app.post("/v1/watchlist", response_model=WatchlistItem, status_code=status.HTTP_201_CREATED)
 def save_watchlist_item(payload: WatchlistInput) -> WatchlistItem:
-    return WatchlistItem.model_validate(store.save_watchlist_item(payload.symbol, payload.name))
+    name = payload.name.strip()
+    symbol = payload.symbol.strip().upper()
+    if not name:
+        cached = next(iter(store.cached_quotes([symbol])), None)
+        name = str((cached or {}).get("name") or "").strip()
+    if not name:
+        try:
+            result = market_data.lookup_symbols([symbol])
+            matches = (result[0] if result else {}).get("matches", [])
+            exact = next((item for item in matches if str(item.get("symbol", "")).strip().upper() == symbol), None)
+            name = str((exact or {}).get("name") or "").strip()
+        except MarketDataUnavailable as error:
+            raise HTTPException(status_code=503, detail=f"暂时无法补齐股票名称：{error}") from error
+    if not name:
+        raise HTTPException(status_code=422, detail="未能根据股票代码识别名称，请核对代码或手动填写名称")
+    return WatchlistItem.model_validate(store.save_watchlist_item(symbol, name))
 
 
 @app.delete("/v1/watchlist/{symbol}", status_code=status.HTTP_204_NO_CONTENT)
