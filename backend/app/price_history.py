@@ -34,6 +34,16 @@ class PriceHistoryService:
         return "a"
 
     @staticmethod
+    def _is_beijing_symbol(symbol: str) -> bool:
+        """Return whether an A-share code belongs to the Beijing exchange.
+
+        ``92xxxx`` is used by Beijing-listed companies, while other ``9``
+        prefixes may be Shanghai B shares.  Treating every 9-prefixed code as
+        Shanghai makes the Tushare fallback request the wrong market.
+        """
+        return len(symbol) == 6 and symbol.startswith(("4", "8", "92"))
+
+    @staticmethod
     def _trading_date(value: object) -> str | None:
         """Return an ISO trading date and reject provider row indexes such as ``999``."""
         raw = str(value).strip()
@@ -175,7 +185,7 @@ class PriceHistoryService:
 
     def _tencent_bars(self, symbol: str, start: str, end: str) -> list[dict[str, object]]:
         """Fetch A-share daily history from Tencent when Eastmoney is down."""
-        if self._kind(symbol) != "a":
+        if self._kind(symbol) != "a" or self._is_beijing_symbol(symbol):
             return []
         try:
             import akshare as ak
@@ -219,7 +229,7 @@ class PriceHistoryService:
     def _append_sina_closing_bar(self, symbol: str, bars: list[dict[str, object]]) -> None:
         """Append a complete post-close A-share bar from Sina minute history."""
         now = beijing_now()
-        if self._kind(symbol) != "a" or now.hour < 15:
+        if self._kind(symbol) != "a" or self._is_beijing_symbol(symbol) or now.hour < 15:
             return
         today = now.date().isoformat()
         if any(str(bar.get("trading_date")) == today for bar in bars):
@@ -334,7 +344,7 @@ class PriceHistoryService:
         try:
             import tushare as ts
             client = ts.pro_api(token)
-            exchange = "BJ" if symbol.startswith(("4", "8")) else ("SH" if symbol.startswith(("5", "6", "9")) else "SZ")
+            exchange = "BJ" if self._is_beijing_symbol(symbol) else ("SH" if symbol.startswith(("5", "6", "9")) else "SZ")
             is_etf = self._kind(symbol) == "etf"
             frame = (client.fund_daily if is_etf else client.daily)(ts_code=f"{symbol}.{exchange}", start_date=start, end_date=end)
             if frame is None or frame.empty:

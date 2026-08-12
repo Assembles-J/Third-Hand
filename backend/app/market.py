@@ -431,7 +431,10 @@ class MarketDataService:
             client = ts.pro_api(self._tushare_token)
             start_date = (beijing_now() - timedelta(days=10)).strftime("%Y%m%d")
             for symbol in symbols:
-                exchange = "BJ" if symbol.startswith(("4", "8")) else ("SH" if symbol.startswith(("5", "6", "9")) else "SZ")
+                # ``92xxxx`` is Beijing-listed; other 9-prefixed symbols can
+                # still be Shanghai B shares, so do not classify all of them
+                # as Beijing.
+                exchange = "BJ" if symbol.startswith(("4", "8", "92")) else ("SH" if symbol.startswith(("5", "6", "9")) else "SZ")
                 is_etf = symbol.startswith(("15", "16", "51", "56", "58"))
                 frame = (client.fund_daily if is_etf else client.daily)(ts_code=f"{symbol}.{exchange}", start_date=start_date)
                 if frame is None or frame.empty:

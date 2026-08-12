@@ -67,6 +67,7 @@ fun CompactAdminDashboardScreen() {
     var config by remember { mutableStateOf<SystemConfigDto?>(null) }
     var error by remember { mutableStateOf<String?>(null) }
     var savingConfig by remember { mutableStateOf(false) }
+    var configSaveMessage by remember { mutableStateOf<String?>(null) }
     var baseUrl by remember { mutableStateOf(EndpointStore.baseUrl(context)) }
     var connectionStatus by remember { mutableStateOf<String?>(null) }
     var updateStatus by remember { mutableStateOf<String?>(null) }
@@ -188,10 +189,11 @@ fun CompactAdminDashboardScreen() {
                     enabled = !savingConfig,
                     onCheckedChange = { enabled -> scope.launch {
                         savingConfig = true
+                        configSaveMessage = if (enabled) "正在开启自动执行并保存到服务器…" else "正在关闭自动执行并保存到服务器…"
                         val current = config ?: SystemConfigDto()
                         runCatching { api.saveAdminConfig(current.copy(paper_trading_enabled = enabled)) }
-                            .onSuccess { config = it }
-                            .onFailure { error = "保存模拟操盘配置失败：${it.message ?: "请稍后重试"}" }
+                            .onSuccess { config = it; configSaveMessage = if (enabled) "自动执行已开启；会在下一次行情刷新时按设定间隔检查。" else "自动执行已关闭。" }
+                            .onFailure { error = "保存模拟操盘配置失败：${it.message ?: "请稍后重试"}"; configSaveMessage = "保存失败，开关未生效。" }
                         savingConfig = false
                     } },
                 )
@@ -202,14 +204,17 @@ fun CompactAdminDashboardScreen() {
                     val minutes = paperIntervalMinutes.toIntOrNull()
                     if (minutes == null || minutes < 5) { error = "执行间隔至少为 5 分钟" } else scope.launch {
                         savingConfig = true
+                        configSaveMessage = "正在保存 ${minutes} 分钟执行间隔…"
                         val current = config ?: SystemConfigDto()
                         runCatching { api.saveAdminConfig(current.copy(paper_trading_interval_seconds = minutes * 60)) }
-                            .onSuccess { config = it; paperIntervalMinutes = (it.paper_trading_interval_seconds / 60).toString() }
-                            .onFailure { error = "保存执行间隔失败：${it.message ?: "请稍后重试"}" }
+                            .onSuccess { config = it; paperIntervalMinutes = (it.paper_trading_interval_seconds / 60).toString(); configSaveMessage = "执行间隔已保存，下次自动检查将采用新间隔。" }
+                            .onFailure { error = "保存执行间隔失败：${it.message ?: "请稍后重试"}"; configSaveMessage = "保存失败，请检查服务连接后重试。" }
                         savingConfig = false
                     }
                 }, enabled = !savingConfig) { Text("保存", color = CompactMint) }
             }
+            if (savingConfig) LinearProgressIndicator(Modifier.fillMaxWidth(), color = CompactMint)
+            configSaveMessage?.let { Text(it, color = if (it.contains("失败")) CompactCoral else CompactTeal, style = MaterialTheme.typography.labelSmall) }
         }
         FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
             CompactConsoleCard(Modifier.weight(1f).widthIn(min = 150.dp)) {

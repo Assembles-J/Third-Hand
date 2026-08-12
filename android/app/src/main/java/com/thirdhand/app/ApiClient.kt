@@ -249,6 +249,19 @@ data class PaperTradingConfigDto(val available_cash: Double)
 data class PaperTradingPositionDto(val symbol: String, val name: String, val quantity: Double, val average_cost: Double, val last_price: Double = 0.0, val market_value: Double = 0.0, val unrealized_pnl: Double = 0.0, val unrealized_return_percent: Double = 0.0, val updated_at: String)
 data class PaperEquitySnapshotDto(val total_equity: Double, val available_cash: Double, val market_value: Double, val total_pnl: Double, val recorded_at: String)
 data class PaperTradingRunDto(val status: String, val message: String, val symbols: List<String> = emptyList(), val executed: Int = 0, val skipped: Int = 0)
+data class PaperTradingStatusDto(
+    val enabled: Boolean,
+    val interval_seconds: Int,
+    val running: Boolean,
+    val last_started_at: String? = null,
+    val last_finished_at: String? = null,
+    val last_status: String = "never_run",
+    val last_message: String = "",
+    val last_executed: Int = 0,
+    val last_skipped: Int = 0,
+    val last_symbols: List<String> = emptyList(),
+    val seconds_until_next_run: Int = 0,
+)
 data class PaperTradingLogDto(val id: String, val symbol: String, val name: String, val side: String, val quantity: Double, val price: Double, val fee: Double = 0.0, val cash_before: Double, val cash_after: Double, val decision_id: String? = null, val reason: String, val status: String = "executed", val executed_at: String)
 data class PaperTradingAccountDto(val available_cash: Double, val initial_cash: Double = 0.0, val market_value: Double = 0.0, val total_equity: Double = 0.0, val total_pnl: Double = 0.0, val total_return_percent: Double = 0.0, val updated_at: String, val enabled: Boolean, val positions: List<PaperTradingPositionDto> = emptyList())
 data class AnalysisTraceStepDto(val stage: String, val status: String, val detail: String)
@@ -437,6 +450,8 @@ interface ThirdHandApi {
     suspend fun paperTradingLogs(@Query("symbol") symbol: String? = null, @Query("limit") limit: Int = 100): List<PaperTradingLogDto>
     @GET("v1/paper-trading/equity-snapshots")
     suspend fun paperTradingEquitySnapshots(@Query("limit") limit: Int = 120): List<PaperEquitySnapshotDto>
+    @GET("v1/paper-trading/status")
+    suspend fun paperTradingStatus(): PaperTradingStatusDto
     @POST("v1/paper-trading/run")
     suspend fun runPaperTradingNow(): PaperTradingRunDto
 

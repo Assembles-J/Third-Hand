@@ -151,6 +151,31 @@ def test_tencent_daily_fallback_replaces_failed_eastmoney_history(monkeypatch, t
     assert bar["turnover_rate"] == "0.21"
 
 
+def test_beijing_history_uses_tushare_bj_fallback_and_skips_tencent(monkeypatch, tmp_path):
+    requested_codes = []
+
+    class Client:
+        def daily(self, **kwargs):
+            requested_codes.append(kwargs["ts_code"])
+            return pd.DataFrame([{
+                "trade_date": "20260804", "open": 10, "close": 10.2,
+                "high": 10.3, "low": 9.9, "vol": 100, "amount": 1000,
+            }])
+
+    monkeypatch.setenv("TUSHARE_TOKEN", "configured")
+    monkeypatch.setitem(sys.modules, "akshare", SimpleNamespace(
+        stock_zh_a_hist=lambda **_: (_ for _ in ()).throw(ConnectionError("eastmoney unavailable")),
+        stock_zh_a_hist_tx=lambda **_: pytest.fail("Tencent does not support Beijing history"),
+    ))
+    monkeypatch.setitem(sys.modules, "tushare", SimpleNamespace(pro_api=lambda token: Client()))
+    monkeypatch.setattr("app.price_history.beijing_now", lambda: datetime(2026, 8, 4, 14, 30))
+
+    store = PortfolioStore(tmp_path / "history.db")
+    assert PriceHistoryService().refresh(store, "920138") == 1
+    assert requested_codes == ["920138.BJ"]
+    assert store.daily_prices("920138")[0]["source"] == "Tushare daily history"
+
+
 def test_post_close_sina_minutes_supply_missing_current_daily_bar(monkeypatch, tmp_path):
     eastmoney_frame = _Frame([{
         "日期": "2026-08-03", "开盘": "94", "收盘": "95", "最高": "96", "最低": "93",
