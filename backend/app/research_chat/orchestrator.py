@@ -101,7 +101,14 @@ class ResearchChatOrchestrator:
             if not self.stream_client.enabled:
                 raise LlmClientError("未配置 DeepSeek 研究模型。", code="model_not_configured", retryable=False)
 
-            messages = build_messages(context, self.repo.history(session.id), user_message)
+            # Both the workbench and research chat now point to this exact
+            # persisted report. The chat only explains it; it never creates a
+            # second, potentially conflicting action recommendation.
+            report = await asyncio.to_thread(self.decision_orchestrator.generate, context)
+            self.store.save_decision_report(report.model_dump(mode="json"))
+            decision_id = report.decision_id
+            yield emit(ResearchSseEventType.decision, {"decision_report": report.model_dump(mode="json")})
+            messages = build_messages(context, self.repo.history(session.id), user_message, report)
             self.repo.update_turn(turn.id, status=ResearchTurnStatus.streaming.value)
             yield emit(ResearchSseEventType.phase, {"phase": "streaming", "label": "正在进行研究分析"})
             tool_calls_used = 0
@@ -253,40 +260,8 @@ class ResearchChatOrchestrator:
                 self.repo.add_message(session.id, turn.id, str(message["role"]), content_type, json.dumps(message, ensure_ascii=False, default=str))
             self.repo.add_message(session.id, turn.id, "assistant", "assistant_answer", final_answer)
             answer_persisted = True
-            decision_id = None
-            if _flag("RESEARCH_CHAT_DECISION_OUTPUT_ENABLED"):
-                evidence = self.decision_orchestrator.evidence_engine.build(context)
-                output = await asyncio.to_thread(self._decision_output, context, final_answer, [item.evidence_id for item in evidence])
-                candidates = self.decision_orchestrator.policy_engine.evaluate(context, evidence)
-                assessment = validate_output(output, {item.evidence_id for item in evidence}, candidates)
-                if assessment is None:
-                    yield emit(ResearchSseEventType.warning, {"code": "decision_guard_blocked", "message": "研究结论未通过证据与动作边界校验，未生成决策报告。"})
-                    raise LlmClientError("研究结论未通过决策保护。", code="decision_guard_blocked", retryable=False)
-                sizing = self.decision_orchestrator.sizing_engine.size(context, assessment.preferred_action)
-                report = DecisionReport(
-                    decision_id=__import__("uuid").uuid4().hex,
-                    context_id=context.context_id,
-                    symbol=context.symbol,
-                    generated_at=beijing_now(),
-                    status="BLOCKED" if context.data_quality.status == "blocked" else "DEGRADED" if context.data_quality.status == "degraded" else "READY",
-                    action=assessment.preferred_action,
-                    summary=output.answer_summary,
-                    evidence=evidence,
-                    action_candidates=candidates,
-                    ai_assessment=assessment,
-                    ai_status="succeeded",
-                    market_price=context.quote.price if context.quote else None,
-                    market_change_percent=context.quote.change_percent if context.quote else None,
-                    market_as_of=context.quote.as_of if context.quote else None,
-                    sizing=sizing,
-                    policy_version=self.decision_orchestrator.policy_engine.version,
-                    prompt_version="research-chat-decision-v1",
-                    model=self.json_client.settings.model,
-                    input_hash=context.input_hash,
-                )
-                self.store.save_decision_report(report.model_dump(mode="json"))
-                decision_id = report.decision_id
-                yield emit(ResearchSseEventType.decision, {"decision_report": report.model_dump(mode="json")})
+            # ``decision_id`` belongs to the canonical report emitted before
+            # streaming. Do not derive another report from chat prose.
             self.repo.update_turn(turn.id, status=ResearchTurnStatus.completed.value, answer_text=final_answer, decision_report_id=decision_id, prompt_tokens=int(usage.get("prompt_tokens") or 0), completion_tokens=int(usage.get("completion_tokens") or 0), latency_ms=int((time.monotonic() - started) * 1000), completed_at=beijing_now().isoformat())
             inc("research_chat_turn_completed")
             logger.info("Research turn completed turn_id=%s model=%s latency_ms=%s prompt_tokens=%s completion_tokens=%s", turn.id, self.stream_client.settings.reasoning_model, int((time.monotonic() - started) * 1000), int(usage.get("prompt_tokens") or 0), int(usage.get("completion_tokens") or 0))
