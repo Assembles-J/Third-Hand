@@ -106,6 +106,9 @@ fun PaperTradingScreen() {
                             else -> "下一轮行情刷新会触发检查"
                         }
                         Text("间隔 ${intervalMinutes} 分钟 · $nextHint", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                        if (it.last_symbols.isNotEmpty()) {
+                            Text("本轮优先分析：${it.last_symbols.joinToString("、")}", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                        }
                         it.last_finished_at?.let { time -> Text("最近完成：${paperBeijingTimestamp(time)} · 执行 ${it.last_executed} 笔，跳过 ${it.last_skipped} 笔", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant) }
                     }
                 }
@@ -140,8 +143,11 @@ fun PaperTradingScreen() {
 
 private fun paperBeijingTimestamp(value: String): String = runCatching {
     OffsetDateTime.parse(value).withOffsetSameInstant(ZoneOffset.ofHours(8))
-        .format(DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss +08:00"))
-}.getOrElse { value.replace('T', ' ').substringBefore("+").substringBefore("Z") + " +08:00" }
+        .format(DateTimeFormatter.ofPattern("MM-dd HH:mm"))
+}.getOrElse {
+    Regex("\\d{2}-\\d{2}[ T]\\d{2}:\\d{2}").find(value)?.value?.replace('T', ' ')
+        ?: value.replace('T', ' ').substringBefore("+").substringBefore("Z")
+}
 
 private fun paperSkipReason(reason: String): String = when {
     reason.contains("missing_saved_decision_report") -> "尚未完成该标的的决策数据准备"

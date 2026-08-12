@@ -917,13 +917,22 @@ def paper_trading_dashboard() -> PaperTradingDashboard:
 
 @app.post("/v1/paper-trading/run")
 def run_paper_trading_now() -> dict[str, object]:
-    """Run a requested paper pass, using saved data when the market is closed."""
+    """Run a requested paper pass and bootstrap the market pool when needed."""
     symbols = paper_trading_symbols()
     active = trading_calendar.open_symbols(symbols, moment=beijing_now())
     if not symbols:
+        try:
+            refresh_universe_opportunity_inputs("paper-trading-manual-bootstrap")
+            symbols = paper_trading_symbols()
+        except MarketDataUnavailable as error:
+            with paper_trading_state_lock:
+                paper_trading_state.update({"last_finished_at": beijing_now(), "last_status": "market_data_unavailable", "last_message": "无法建立全市场行情池；行情源暂不可用，稍后会自动重试。", "last_executed": 0, "last_skipped": 0, "last_symbols": []})
+            return {"status": "queued", "message": f"正在等待行情源恢复：{error.code}", "symbols": []}
+        active = trading_calendar.open_symbols(symbols, moment=beijing_now())
+    if not symbols:
         with paper_trading_state_lock:
-            paper_trading_state.update({"last_finished_at": beijing_now(), "last_status": "no_symbols", "last_message": "没有持仓或自选标的，无法执行模拟判断。", "last_executed": 0, "last_skipped": 0, "last_symbols": []})
-        return {"status": "skipped", "message": "没有持仓或自选标的", "symbols": []}
+            paper_trading_state.update({"last_finished_at": beijing_now(), "last_status": "market_scan_pending", "last_message": "全市场行情池正在建立；候选的日线、风险和新闻数据准备完成后会自动决策。", "last_executed": 0, "last_skipped": 0, "last_symbols": []})
+        return {"status": "queued", "message": "正在建立全市场候选与历史数据", "symbols": []}
     selected = active or symbols
     result = run_paper_trading_cycle(selected, force=True, allow_when_disabled=True)
     if not active:
@@ -1325,6 +1334,25 @@ def refresh_paper_market_intelligence(symbols: list[str], names: dict[str, str])
         logger.exception("paper intelligence refresh failed")
 
 
+def refresh_paper_candidate_data(symbols: list[str], *, force_refresh: bool) -> None:
+    """Make cached holdings/watchlist data decision-ready before paper simulation."""
+    if not symbols:
+        return
+    with paper_trading_state_lock:
+        paper_trading_state.update({
+            "last_status": "preparing_data",
+            "last_message": f"正在优先补齐 {len(symbols)} 只持仓、自选及市场候选的行情、日线和风险数据。",
+            "last_symbols": symbols,
+        })
+    try:
+        fetch_and_store_quotes(symbols, force_refresh=force_refresh, trigger="paper-trading-decision")
+    except MarketDataUnavailable as error:
+        logger.info("paper candidate quote refresh unavailable: %s", error)
+    # The routine persists daily bars and risk data. It deliberately keeps
+    # its own lock, so a scheduler refresh cannot duplicate provider calls.
+    refresh_derived_cache(symbols, "paper-trading-decision", force_history=force_refresh)
+
+
 def prepare_paper_decisions(symbols: list[str]) -> int:
     """Create a fresh, auditable decision only for a bounded market slice."""
     generated = 0
@@ -1370,6 +1398,10 @@ def run_paper_trading_cycle(symbols: list[str], force: bool = False, allow_when_
     skipped = 0
     no_action_reasons: list[str] = []
     try:
+        refresh_paper_candidate_data(symbols, force_refresh=force)
+        names = paper_trading_names(symbols)
+        with paper_trading_state_lock:
+            paper_trading_state.update({"last_status": "researching", "last_message": "行情已同步，正在检索新闻并为可用候选生成 AI 决策。"})
         refresh_paper_market_intelligence(symbols, names)
         generated_reports = prepare_paper_decisions(symbols)
         for symbol in symbols:
