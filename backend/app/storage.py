@@ -612,7 +612,7 @@ class PortfolioStore:
         with self._connect() as connection:
             rows = connection.execute("SELECT setting_key, setting_value FROM system_settings").fetchall()
         stored = {str(row["setting_key"]): str(row["setting_value"]) for row in rows}
-        interval = int(stored.get("paper_trading_interval_seconds", "3600")) if stored.get("paper_trading_interval_seconds", "").isdigit() else 3600
+        interval = int(stored.get("paper_trading_interval_seconds", "600")) if stored.get("paper_trading_interval_seconds", "").isdigit() else 600
         return {"update_check_enabled": stored.get("update_check_enabled", "true").lower() == "true", "paper_trading_enabled": stored.get("paper_trading_enabled", "false").lower() == "true", "paper_trading_interval_seconds": max(300, interval)}
 
     def save_system_settings(self, settings: dict[str, object]) -> dict[str, object]:
@@ -625,6 +625,25 @@ class PortfolioStore:
                 rows,
             )
         return self.system_settings()
+
+    def migrate_paper_trading_default_interval(self, interval_seconds: int = 600) -> None:
+        """Apply the product's 10-minute default once to existing local ledgers."""
+        with self._connect() as connection:
+            migrated = connection.execute(
+                "SELECT 1 FROM system_settings WHERE setting_key='paper_trading_interval_default_migrated_v2'"
+            ).fetchone()
+            if migrated:
+                return
+            now = beijing_now().isoformat()
+            connection.execute(
+                "INSERT INTO system_settings (setting_key, setting_value, updated_at) VALUES ('paper_trading_interval_seconds', ?, ?) "
+                "ON CONFLICT(setting_key) DO UPDATE SET setting_value=excluded.setting_value, updated_at=excluded.updated_at",
+                (str(max(300, interval_seconds)), now),
+            )
+            connection.execute(
+                "INSERT INTO system_settings (setting_key, setting_value, updated_at) VALUES ('paper_trading_interval_default_migrated_v2', 'true', ?)",
+                (now,),
+            )
 
     def cached_analysis(self, cache_key: str) -> dict[str, object] | None:
         with self._connect() as connection:

@@ -51,7 +51,7 @@ def test_paper_ledger_rejects_cash_and_position_overruns(tmp_path: Path) -> None
 
 def test_paper_interval_is_persisted_and_has_a_safe_minimum(tmp_path: Path) -> None:
     store = PortfolioStore(tmp_path / "paper.db")
-    assert store.system_settings()["paper_trading_interval_seconds"] == 3600
+    assert store.system_settings()["paper_trading_interval_seconds"] == 600
     store.save_system_settings({"paper_trading_enabled": True, "paper_trading_interval_seconds": 1200, "update_check_enabled": True})
     assert store.system_settings()["paper_trading_interval_seconds"] == 1200
 

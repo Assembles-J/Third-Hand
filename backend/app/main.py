@@ -85,7 +85,8 @@ def positive_environment_integer(name: str, default: int, minimum: int) -> int:
 MARKET_REFRESH_ENABLED = os.getenv("MARKET_REFRESH_ENABLED", "true").lower() not in {"0", "false", "no"}
 MARKET_REFRESH_INTERVAL_SECONDS = positive_environment_integer("MARKET_REFRESH_INTERVAL_SECONDS", 60, 30)
 MARKET_UNIVERSE_SCAN_INTERVAL_SECONDS = positive_environment_integer("MARKET_UNIVERSE_SCAN_INTERVAL_SECONDS", 300, 60)
-PAPER_TRADING_INTERVAL_SECONDS = positive_environment_integer("PAPER_TRADING_INTERVAL_SECONDS", 3600, 300)
+PAPER_TRADING_INTERVAL_SECONDS = positive_environment_integer("PAPER_TRADING_INTERVAL_SECONDS", 600, 300)
+PAPER_TRADING_CANDIDATE_LIMIT = positive_environment_integer("PAPER_TRADING_CANDIDATE_LIMIT", 8, 1)
 DAILY_HISTORY_RETRY_SECONDS = positive_environment_integer("DAILY_HISTORY_RETRY_SECONDS", 300, 30)
 market_refresh_stop = Event()
 market_refresh_thread: Thread | None = None
@@ -172,7 +173,7 @@ class AdminOverview(BaseModel):
 class SystemConfig(BaseModel):
     update_check_enabled: bool = True
     paper_trading_enabled: bool = False
-    paper_trading_interval_seconds: int = Field(default=3600, ge=300, le=86_400)
+    paper_trading_interval_seconds: int = Field(default=600, ge=300, le=86_400)
 
 
 class PaperTradingConfig(BaseModel):
@@ -643,6 +644,10 @@ class TradePlanDraft(BaseModel):
 
 
 store = PortfolioStore()
+# Existing local databases used a one-hour default.  Migrate once to the
+# product's current ten-minute simulation cadence; later admin changes remain
+# fully user-controlled.
+store.migrate_paper_trading_default_interval(PAPER_TRADING_INTERVAL_SECONDS)
 market_data = MarketDataService()
 trading_calendar = TradingCalendarService()
 
@@ -913,7 +918,7 @@ def paper_trading_dashboard() -> PaperTradingDashboard:
 @app.post("/v1/paper-trading/run")
 def run_paper_trading_now() -> dict[str, object]:
     """Run a requested paper pass, using saved data when the market is closed."""
-    symbols = list(dict.fromkeys(str(item["symbol"]).strip().upper() for item in [*store.list(), *store.watchlist()] if str(item.get("symbol", "")).strip()))
+    symbols = paper_trading_symbols()
     active = trading_calendar.open_symbols(symbols, moment=beijing_now())
     if not symbols:
         with paper_trading_state_lock:
@@ -1232,13 +1237,7 @@ def scheduled_market_refresh_loop() -> None:
                     refresh_universe_opportunity_inputs("scheduler-whole-market")
                 finally:
                     last_universe_scan_at = time.monotonic()
-            all_symbols = list(
-                dict.fromkeys(
-                    str(item["symbol"]).strip().upper()
-                    for item in [*store.list(), *store.watchlist()]
-                    if str(item.get("symbol", "")).strip()
-                )
-            )
+            all_symbols = paper_trading_symbols()
 
             # 只保留当前交易所正在开盘的证券。
             #
@@ -1300,6 +1299,56 @@ def scheduled_market_refresh_loop() -> None:
     logger.info("行情定时刷新已停止")
 
 
+def paper_trading_symbols() -> list[str]:
+    """Bounded active set selected from a persisted whole-market snapshot."""
+    with universe_scan_state_lock:
+        market_candidates = list((universe_scan_state.get("candidates") or {}).keys())
+    positions = [str(item["symbol"]).strip().upper() for item in store.paper_account().get("positions", [])]
+    user_symbols = [str(item["symbol"]).strip().upper() for item in [*store.list(), *store.watchlist()]]
+    ready_market = store.opportunity_symbols(minimum_daily_bars=60, limit=PAPER_TRADING_CANDIDATE_LIMIT * 3)
+    return list(dict.fromkeys([*positions, *user_symbols, *market_candidates, *ready_market]))[:PAPER_TRADING_CANDIDATE_LIMIT]
+
+
+def paper_trading_names(symbols: list[str]) -> dict[str, str]:
+    names = {str(x["symbol"]): str(x["name"]) for x in [*store.list(), *store.watchlist()]}
+    names.update({str(x["symbol"]): str(x.get("name") or x["symbol"]) for x in store.cached_quotes(symbols)})
+    return names
+
+
+def refresh_paper_market_intelligence(symbols: list[str], names: dict[str, str]) -> None:
+    """Persist current news for the active market candidates without blocking the cycle."""
+    try:
+        store.save_content(news_service.fetch(symbols, names))
+    except NewsDataUnavailable as error:
+        logger.info("paper intelligence news unavailable: %s", error)
+    except Exception:
+        logger.exception("paper intelligence refresh failed")
+
+
+def prepare_paper_decisions(symbols: list[str]) -> int:
+    """Create a fresh, auditable decision only for a bounded market slice."""
+    generated = 0
+    for symbol in symbols:
+        quote = next(iter(store.cached_quotes([symbol])), None)
+        if not quote or quote.get("price") is None or len(store.daily_prices(symbol, 60)) < 60:
+            continue
+        latest = (store.decision_reports(symbol, 1) or [None])[0]
+        if latest:
+            try:
+                if (beijing_now() - datetime.fromisoformat(str(latest["generated_at"]))).total_seconds() < PAPER_TRADING_INTERVAL_SECONDS:
+                    generated += 1
+                    continue
+            except ValueError:
+                pass
+        if not store.instrument_metadata(symbol):
+            store.save_instrument_metadata({"symbol": symbol, "market": "CN", "currency": "CNY", "lot_size": 100, "price_tick": 0.01, "source": "paper_market_default", "as_of": str(quote.get("as_of") or beijing_now().isoformat())})
+        context = decision_context_builder.build(symbol)
+        store.save_decision_context(context.model_dump(mode="json"))
+        store.save_decision_report(decision_orchestrator.generate(context).model_dump(mode="json"))
+        generated += 1
+    return generated
+
+
 def run_paper_trading_cycle(symbols: list[str], force: bool = False, allow_when_disabled: bool = False) -> dict[str, int]:
     """Apply the sole persisted DecisionReport output to an isolated paper ledger."""
     global last_paper_trading_run_at
@@ -1315,28 +1364,29 @@ def run_paper_trading_cycle(symbols: list[str], force: bool = False, allow_when_
     with paper_trading_state_lock:
         paper_trading_state.update({"running": True, "last_started_at": beijing_now(), "last_status": "running", "last_message": "正在读取已保存的统一 AI 决策与模拟账本", "last_symbols": symbols})
     last_paper_trading_run_at = time.monotonic()
-    names = {str(x["symbol"]): str(x["name"]) for x in [*store.list(), *store.watchlist()]}
+    symbols = list(dict.fromkeys([*symbols, *paper_trading_symbols()]))[:PAPER_TRADING_CANDIDATE_LIMIT]
+    names = paper_trading_names(symbols)
     executed = 0
     skipped = 0
+    no_action_reasons: list[str] = []
     try:
+        refresh_paper_market_intelligence(symbols, names)
+        generated_reports = prepare_paper_decisions(symbols)
         for symbol in symbols:
             report = (store.decision_reports(symbol, 1) or [None])[0]
             if not report:
-                store.record_paper_skip(symbol=symbol, name=names.get(symbol, symbol), decision_id=None, reason="missing_saved_decision_report")
-                skipped += 1
+                no_action_reasons.append(f"{names.get(symbol, symbol)}：行情或日线仍在补齐")
                 continue
             if str(report.get("status", "")).upper() not in {"READY", "DEGRADED"}:
-                store.record_paper_skip(symbol=symbol, name=names.get(symbol, symbol), decision_id=str(report.get("decision_id") or "") or None, reason=f"decision_status_{str(report.get('status'))}")
-                skipped += 1
+                no_action_reasons.append(f"{names.get(symbol, symbol)}：决策输入尚不完整")
                 continue
             action = str(report.get("action") or report.get("ai_assessment", {}).get("preferred_action") or "").upper()
             sizing = report.get("sizing") or {}
             quantity = float(sizing.get("suggested_quantity") or sizing.get("target_quantity") or 0)
             price = float(report.get("market_price") or 0)
-            side = "BUY" if action in {"BUY", "ADD"} else "SELL" if action in {"REDUCE", "SELL", "STOP"} else None
+            side = "BUY" if action in {"BUY", "ADD", "OPEN"} else "SELL" if action in {"REDUCE", "SELL", "STOP", "EXIT"} else None
             if not side or quantity <= 0 or price <= 0:
-                store.record_paper_skip(symbol=symbol, name=names.get(symbol, symbol), decision_id=str(report.get("decision_id") or "") or None, reason="decision_has_no_executable_action_or_quantity", price=price)
-                skipped += 1
+                no_action_reasons.append(f"{names.get(symbol, symbol)}：当前没有满足条件的买卖信号")
                 continue
             try:
                 store.execute_paper_trade(trade_id=str(uuid4()), symbol=symbol, name=names.get(symbol, symbol), side=side, quantity=quantity, price=price, decision_id=str(report.get("decision_id") or "") or None, reason=f"统一 AI 决策：{action}；{str(report.get('summary') or '')[:180]}")
@@ -1352,7 +1402,10 @@ def run_paper_trading_cycle(symbols: list[str], force: bool = False, allow_when_
         store.record_paper_equity_snapshot()
         result = {"executed": executed, "skipped": skipped}
         with paper_trading_state_lock:
-            paper_trading_state.update({"running": False, "last_finished_at": beijing_now(), "last_status": "completed", "last_message": f"本次检查完成：执行 {executed} 笔，跳过 {skipped} 笔。可在模拟日志查看原因。", "last_executed": executed, "last_skipped": skipped})
+            summary = f"本轮主动检索 {len(symbols)} 只市场候选，生成或复用 {generated_reports} 份 AI 决策，执行 {executed} 笔。"
+            if not executed and no_action_reasons:
+                summary += " 暂不交易：" + "；".join(no_action_reasons[:2]) + "。"
+            paper_trading_state.update({"running": False, "last_finished_at": beijing_now(), "last_status": "completed", "last_message": summary, "last_executed": executed, "last_skipped": skipped})
         return result
     except Exception as error:
         with paper_trading_state_lock:
@@ -2181,7 +2234,11 @@ def opportunity_scan(limit: int = Query(default=15, ge=1, le=15)) -> Opportunity
             avoid_condition=f"若跌破 {low20 * .97:.2f}，或高开后快速回落，就停止关注本次机会。",
             invalidation_price=round(low20 * .97, 2), data_as_of=str(bars[-1]["trading_date"]),
         ))
-    ordered = sorted(candidates, key=lambda item: (item.score, item.confidence), reverse=True)[:limit]
+    # Actual position actions must be visible before informational WATCH items.
+    ordered = sorted(
+        candidates,
+        key=lambda item: (0 if item.action == "trim" else 1, -item.score, -item.confidence),
+    )[:limit]
     sector_labels = [f"{item['name']} {float(item['change_percent']):+.2f}%" for item in state.get("hot_sectors", [])]
     coverage = (
         f"全市场定时扫描已选出 {len(candidate_metadata)} 只热点候选，其中 {len(symbols)} 只已补齐至少 60 日日线并进入分析。"

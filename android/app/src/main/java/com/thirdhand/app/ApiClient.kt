@@ -244,7 +244,7 @@ data class AdminOverviewDto(
     val market_last_success_at: String? = null,
     val market_last_error: String? = null,
 )
-data class SystemConfigDto(val update_check_enabled: Boolean = true, val paper_trading_enabled: Boolean = false, val paper_trading_interval_seconds: Int = 3600)
+data class SystemConfigDto(val update_check_enabled: Boolean = true, val paper_trading_enabled: Boolean = false, val paper_trading_interval_seconds: Int = 600)
 data class PaperTradingConfigDto(val available_cash: Double)
 data class PaperTradingPositionDto(val symbol: String, val name: String, val quantity: Double, val average_cost: Double, val last_price: Double = 0.0, val market_value: Double = 0.0, val unrealized_pnl: Double = 0.0, val unrealized_return_percent: Double = 0.0, val updated_at: String)
 data class PaperEquitySnapshotDto(val total_equity: Double, val available_cash: Double, val market_value: Double, val total_pnl: Double, val recorded_at: String)

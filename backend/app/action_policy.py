@@ -31,7 +31,13 @@ class ActionPolicyEngine:
         else:
             candidates.append(self._candidate("WATCH", 30, (), (), ("default.watch",)))
 
-        if context.data_quality.status == "degraded" and candidates[0].action in {"ADD", "OPEN", "HOLD"}:
+        # A missing user-authored plan, event enrichment, or relative-strength
+        # comparison should lower confidence, not turn every whole-market paper
+        # candidate into WATCH.  Quote, bars, risk, and portfolio inputs remain
+        # the hard prerequisites for an autonomous simulated action.
+        critical_degradation = ("daily_bars.minimum_60", "account.total_assets", "risk")
+        has_critical_degradation = any(warning.startswith(critical_degradation) for warning in context.data_quality.warnings)
+        if context.data_quality.status == "degraded" and candidates[0].action in {"ADD", "OPEN", "HOLD"} and has_critical_degradation:
             candidates.insert(0, self._candidate("WATCH", 60, ("data_quality.summary",), (), ("data_quality.degraded",), context.data_quality.warnings))
         return tuple(candidates[:3])
 

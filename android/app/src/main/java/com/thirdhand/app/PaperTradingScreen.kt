@@ -13,6 +13,9 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import kotlinx.coroutines.delay
+import java.time.OffsetDateTime
+import java.time.ZoneOffset
+import java.time.format.DateTimeFormatter
 import kotlinx.coroutines.launch
 import java.util.Locale
 
@@ -103,7 +106,7 @@ fun PaperTradingScreen() {
                             else -> "下一轮行情刷新会触发检查"
                         }
                         Text("间隔 ${intervalMinutes} 分钟 · $nextHint", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                        it.last_finished_at?.let { time -> Text("最近完成：${time.take(16)} · 执行 ${it.last_executed} 笔，跳过 ${it.last_skipped} 笔", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant) }
+                        it.last_finished_at?.let { time -> Text("最近完成：${paperBeijingTimestamp(time)} · 执行 ${it.last_executed} 笔，跳过 ${it.last_skipped} 笔", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant) }
                     }
                 }
             }
@@ -113,7 +116,7 @@ fun PaperTradingScreen() {
                 Text("模拟资金", fontWeight = FontWeight.Bold)
                 Text("可用现金 ¥${account?.available_cash?.let { "%.2f".format(Locale.US, it) } ?: "--"}", style = MaterialTheme.typography.titleLarge)
                 Text("总资产 ¥${account?.total_equity?.let { "%.2f".format(Locale.US, it) } ?: "--"} · 浮动/累计 ¥${account?.total_pnl?.let { "%.2f".format(Locale.US, it) } ?: "--"} (${account?.total_return_percent?.let { "%.2f%%".format(Locale.US, it) } ?: "--"})", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                snapshots.lastOrNull()?.let { Text("最近净值快照：${it.recorded_at.take(16)} · ¥${"%.2f".format(Locale.US, it.total_equity)}", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant) }
+                snapshots.lastOrNull()?.let { Text("最近净值快照：${paperBeijingTimestamp(it.recorded_at)} · ¥${"%.2f".format(Locale.US, it.total_equity)}", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant) }
                 Text("资金由数据库的统一“可用资金”提供；请到系统管理页修改。", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
                 Text("自动执行：${if (account?.enabled == true) "已开启（仅开盘期间，按已设定间隔）" else "已关闭，请在系统管理中开启"}", style = MaterialTheme.typography.labelMedium)
             } }
@@ -128,8 +131,25 @@ fun PaperTradingScreen() {
         if (logs.isEmpty()) item { Text("暂无模拟操作日志", color = MaterialTheme.colorScheme.onSurfaceVariant) }
         items(logs, key = { it.id }) { log ->
             val action = when (log.side) { "BUY" -> "模拟买入 B"; "SELL" -> "模拟卖出 S"; else -> "规则跳过" }
-            val detail = if (log.status == "skipped") "${log.executed_at.take(16)}\n未执行：${log.reason}" else "${log.executed_at.take(16)}  ${log.quantity} 股 × ¥${"%.2f".format(Locale.US, log.price)} · 费用 ¥${"%.2f".format(Locale.US, log.fee)}\n现金 ¥${"%.2f".format(Locale.US, log.cash_before)} → ¥${"%.2f".format(Locale.US, log.cash_after)}"
+            val time = paperBeijingTimestamp(log.executed_at)
+            val detail = if (log.status == "skipped") "$time\n未执行：${paperSkipReason(log.reason)}" else "$time  ${log.quantity} 股 × ¥${"%.2f".format(Locale.US, log.price)} · 费用 ¥${"%.2f".format(Locale.US, log.fee)}\n现金 ¥${"%.2f".format(Locale.US, log.cash_before)} → ¥${"%.2f".format(Locale.US, log.cash_after)}"
             ListItem(headlineContent = { Text("$action · ${log.name} ${log.symbol}", fontWeight = FontWeight.SemiBold) }, supportingContent = { Text(detail) }, trailingContent = { Text(if (log.side == "BUY") "B" else if (log.side == "SELL") "S" else "跳过", color = if (log.status == "skipped") MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.primary) })
         }
     }
+}
+
+private fun paperBeijingTimestamp(value: String): String = runCatching {
+    OffsetDateTime.parse(value).withOffsetSameInstant(ZoneOffset.ofHours(8))
+        .format(DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss +08:00"))
+}.getOrElse { value.replace('T', ' ').substringBefore("+").substringBefore("Z") + " +08:00" }
+
+private fun paperSkipReason(reason: String): String = when {
+    reason.contains("missing_saved_decision_report") -> "尚未完成该标的的决策数据准备"
+    reason.contains("decision_has_no_executable") -> "当前没有满足条件的买卖信号"
+    reason.contains("insufficient_paper_cash") -> "可用模拟资金不足，未买入"
+    reason.contains("insufficient_paper_position") -> "模拟持仓数量不足，未卖出"
+    reason.contains("paper_decision_already_executed") -> "该份决策已执行，避免重复交易"
+    reason.contains("100_share_lot") -> "数量不符合 A 股 100 股一手规则"
+    reason.contains("decision_status_") -> "决策数据尚未准备完成"
+    else -> "本次条件未满足：$reason"
 }

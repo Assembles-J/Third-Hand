@@ -76,7 +76,7 @@ fun CompactAdminDashboardScreen() {
     var updateProgress by remember { mutableStateOf<UpdateDownloadProgress?>(null) }
     var availableCash by remember { mutableStateOf<AvailableCashDto?>(null) }
     var cashInput by remember { mutableStateOf("") }
-    var paperIntervalMinutes by remember { mutableStateOf("60") }
+    var paperIntervalMinutes by remember { mutableStateOf("10") }
     val scope = rememberCoroutineScope()
     LaunchedEffect(refreshKey) {
         error = null
