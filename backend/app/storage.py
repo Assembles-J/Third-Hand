@@ -16,20 +16,29 @@ from app.decimal_utils import decimal_text
 class PortfolioStore:
     """SQLite-backed portfolio store; it never stores broker credentials or raw CSV files."""
 
+    SQLITE_BUSY_TIMEOUT_SECONDS = 15
+
     def __init__(self, database_path: str | Path | None = None) -> None:
         self.database_path = Path(database_path or os.getenv("THIRD_HAND_DB_PATH", "data/third_hand.db"))
         self._schema_lock = Lock()
         self._initialize()
 
     def _connect(self) -> sqlite3.Connection:
-        connection = sqlite3.connect(self.database_path)
+        # Background refreshes and foreground changes use separate connections.
+        # Wait for an active writer instead of surfacing ordinary contention as
+        # a 500 response.
+        connection = sqlite3.connect(self.database_path, timeout=self.SQLITE_BUSY_TIMEOUT_SECONDS)
         connection.row_factory = sqlite3.Row
+        connection.execute(f"PRAGMA busy_timeout = {self.SQLITE_BUSY_TIMEOUT_SECONDS * 1000}")
         return connection
 
     def _initialize(self) -> None:
         with self._schema_lock:
             self.database_path.parent.mkdir(parents=True, exist_ok=True)
             with self._connect() as connection:
+                # WAL lets readers continue while a writer commits. SQLite
+                # still has one writer, so retain the busy timeout above.
+                connection.execute("PRAGMA journal_mode = WAL")
                 connection.execute("""
                     CREATE TABLE IF NOT EXISTS holdings (
                         id TEXT PRIMARY KEY,

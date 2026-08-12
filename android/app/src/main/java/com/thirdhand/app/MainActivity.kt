@@ -67,6 +67,7 @@ import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
+import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.DatePickerDialog
 import androidx.compose.material3.DateRangePicker
 import androidx.compose.material3.ExperimentalMaterial3Api
@@ -642,6 +643,67 @@ private fun impactColor(direction: String?): Color = when (direction) {
 
 @Composable
 private fun TodayScreen(onOpenTradePlan: () -> Unit, onOpenRules: () -> Unit, onOpenPortfolio: () -> Unit) {
+    val context = LocalContext.current
+    val api = remember { ApiClient.service(context) }
+    val scope = rememberCoroutineScope()
+    var recommendations by remember { mutableStateOf<List<DecisionReportDto>>(emptyList()) }
+    var loading by remember { mutableStateOf(true) }
+    var error by remember { mutableStateOf<String?>(null) }
+    fun load() = scope.launch {
+        loading = true
+        error = null
+        runCatching {
+            api.researchTargets().mapNotNull { target ->
+                runCatching { api.latestDecision(target.symbol) }.getOrNull()
+            }
+        }.onSuccess { recommendations = it.sortedBy { item -> todayAnalysisPriority(item.action) } }
+            .onFailure { error = "无法读取今日推荐：${it.message ?: "请确认后端正在运行"}" }
+        loading = false
+    }
+    LaunchedEffect(Unit) { load() }
+    LazyColumn(contentPadding = androidx.compose.foundation.layout.PaddingValues(bottom = 24.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+        item {
+            Row(Modifier.padding(horizontal = 20.dp).fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+                Column(Modifier.weight(1f)) {
+                    Text("今日推荐", style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.Bold)
+                    Text("只保留当前持仓和自选标的的推荐结论。", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                }
+                IconButton(onClick = ::load, enabled = !loading) { Icon(Icons.Filled.Refresh, "刷新今日推荐") }
+            }
+        }
+        if (loading) item {
+            Row(Modifier.padding(horizontal = 20.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                CircularProgressIndicator(Modifier.width(18.dp), strokeWidth = 2.dp)
+                Text("正在读取今日推荐…", style = MaterialTheme.typography.bodySmall)
+            }
+        }
+        error?.let { message -> item {
+            Card(Modifier.padding(horizontal = 20.dp).fillMaxWidth(), colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.errorContainer)) {
+                Column(Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                    Text("今日推荐不可用", fontWeight = FontWeight.Bold)
+                    Text(message, style = MaterialTheme.typography.bodySmall)
+                    TextButton(onClick = ::load) { Text("重试") }
+                }
+            }
+        } }
+        if (!loading && error == null && recommendations.isEmpty()) item { StatusCard("暂无可展示的今日推荐。请先添加持仓或自选标的并等待行情刷新。") }
+        items(recommendations, key = { item -> "recommendation-${item.symbol}" }) { item ->
+            Card(Modifier.padding(horizontal = 20.dp).fillMaxWidth()) {
+                Column(Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(5.dp)) {
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                    Text(item.symbol, modifier = Modifier.weight(1f), fontWeight = FontWeight.SemiBold)
+                        Text(analysisActionLabel(item.action), color = analysisActionColor(item.action), style = MaterialTheme.typography.labelMedium, fontWeight = FontWeight.Bold)
+                    }
+                    Text(item.summary, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    Text("AI 分析：${item.generated_at.take(16)} · 行情截至 ${item.market_as_of ?: "未知"}", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun LegacyTodayScreen(onOpenTradePlan: () -> Unit, onOpenRules: () -> Unit, onOpenPortfolio: () -> Unit) {
     val context = LocalContext.current
     val api = ApiClient.service(context)
     var holdings by remember { mutableStateOf<List<HoldingDto>>(emptyList()) }

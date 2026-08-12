@@ -1,4 +1,7 @@
 from pathlib import Path
+import sqlite3
+from threading import Event, Thread
+import time
 from uuid import uuid4
 
 import pytest
@@ -51,3 +54,24 @@ def test_paper_interval_is_persisted_and_has_a_safe_minimum(tmp_path: Path) -> N
     assert store.system_settings()["paper_trading_interval_seconds"] == 3600
     store.save_system_settings({"paper_trading_enabled": True, "paper_trading_interval_seconds": 1200, "update_check_enabled": True})
     assert store.system_settings()["paper_trading_interval_seconds"] == 1200
+
+
+def test_system_settings_waits_for_a_brief_concurrent_writer(tmp_path: Path) -> None:
+    store = PortfolioStore(tmp_path / "locked-settings.db")
+    lock_acquired = Event()
+
+    def hold_lock() -> None:
+        blocker = sqlite3.connect(store.database_path)
+        blocker.execute("BEGIN IMMEDIATE")
+        lock_acquired.set()
+        time.sleep(0.05)
+        blocker.commit()
+        blocker.close()
+
+    release_thread = Thread(target=hold_lock)
+    release_thread.start()
+    assert lock_acquired.wait(timeout=1)
+    saved = store.save_system_settings({"update_check_enabled": False})
+    release_thread.join()
+
+    assert saved["update_check_enabled"] is False

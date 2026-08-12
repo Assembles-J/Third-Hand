@@ -262,6 +262,12 @@ data class PaperTradingStatusDto(
     val last_symbols: List<String> = emptyList(),
     val seconds_until_next_run: Int = 0,
 )
+data class PaperTradingDashboardDto(
+    val account: PaperTradingAccountDto,
+    val logs: List<PaperTradingLogDto> = emptyList(),
+    val snapshots: List<PaperEquitySnapshotDto> = emptyList(),
+    val status: PaperTradingStatusDto,
+)
 data class PaperTradingLogDto(val id: String, val symbol: String, val name: String, val side: String, val quantity: Double, val price: Double, val fee: Double = 0.0, val cash_before: Double, val cash_after: Double, val decision_id: String? = null, val reason: String, val status: String = "executed", val executed_at: String)
 data class PaperTradingAccountDto(val available_cash: Double, val initial_cash: Double = 0.0, val market_value: Double = 0.0, val total_equity: Double = 0.0, val total_pnl: Double = 0.0, val total_return_percent: Double = 0.0, val updated_at: String, val enabled: Boolean, val positions: List<PaperTradingPositionDto> = emptyList())
 data class AnalysisTraceStepDto(val stage: String, val status: String, val detail: String)
@@ -452,6 +458,8 @@ interface ThirdHandApi {
     suspend fun paperTradingEquitySnapshots(@Query("limit") limit: Int = 120): List<PaperEquitySnapshotDto>
     @GET("v1/paper-trading/status")
     suspend fun paperTradingStatus(): PaperTradingStatusDto
+    @GET("v1/paper-trading/dashboard")
+    suspend fun paperTradingDashboard(): PaperTradingDashboardDto
     @POST("v1/paper-trading/run")
     suspend fun runPaperTradingNow(): PaperTradingRunDto
 

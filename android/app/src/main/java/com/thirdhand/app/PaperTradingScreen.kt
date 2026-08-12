@@ -16,13 +16,6 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import java.util.Locale
 
-private data class PaperTradingScreenPayload(
-    val account: PaperTradingAccountDto,
-    val logs: List<PaperTradingLogDto>,
-    val snapshots: List<PaperEquitySnapshotDto>,
-    val status: PaperTradingStatusDto,
-)
-
 @Composable
 fun PaperTradingScreen() {
     val context = LocalContext.current
@@ -41,12 +34,7 @@ fun PaperTradingScreen() {
         scope.launch {
         refreshing = true
         runCatching {
-            PaperTradingScreenPayload(
-                account = api.paperTradingAccount(),
-                logs = api.paperTradingLogs(),
-                snapshots = api.paperTradingEquitySnapshots(),
-                status = api.paperTradingStatus(),
-            )
+            api.paperTradingDashboard()
         }.onSuccess { loaded ->
             account = loaded.account; logs = loaded.logs; snapshots = loaded.snapshots; runtimeStatus = loaded.status; error = null
         }.onFailure { error = "无法读取模拟账本：${it.message ?: "请检查服务连接"}" }
@@ -127,7 +115,7 @@ fun PaperTradingScreen() {
                 Text("总资产 ¥${account?.total_equity?.let { "%.2f".format(Locale.US, it) } ?: "--"} · 浮动/累计 ¥${account?.total_pnl?.let { "%.2f".format(Locale.US, it) } ?: "--"} (${account?.total_return_percent?.let { "%.2f%%".format(Locale.US, it) } ?: "--"})", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
                 snapshots.lastOrNull()?.let { Text("最近净值快照：${it.recorded_at.take(16)} · ¥${"%.2f".format(Locale.US, it.total_equity)}", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant) }
                 Text("资金由数据库的统一“可用资金”提供；请到系统管理页修改。", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                Text("自动执行：${if (account?.enabled == true) "已开启（开盘期间每小时）" else "已关闭，请在系统管理中开启"}", style = MaterialTheme.typography.labelMedium)
+                Text("自动执行：${if (account?.enabled == true) "已开启（仅开盘期间，按已设定间隔）" else "已关闭，请在系统管理中开启"}", style = MaterialTheme.typography.labelMedium)
             } }
         }
         error?.let { item { Text(it, color = MaterialTheme.colorScheme.error) } }

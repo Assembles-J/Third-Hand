@@ -182,7 +182,7 @@ fun CompactAdminDashboardScreen() {
             Row(verticalAlignment = Alignment.CenterVertically) {
                 Column(Modifier.weight(1f)) {
                     Text("模拟操盘自动执行", color = CompactText, fontWeight = FontWeight.Bold)
-                    Text("开盘期间每小时读取统一 AI 决策；直接使用数据库可用资金，模拟持仓不连接券商。", color = CompactQuiet, style = MaterialTheme.typography.labelSmall)
+                    Text("仅在开盘期间按所设间隔读取统一 AI 决策；直接使用数据库可用资金，模拟持仓不连接券商。", color = CompactQuiet, style = MaterialTheme.typography.labelSmall)
                 }
                 Switch(
                     checked = config?.paper_trading_enabled == true,

@@ -203,6 +203,13 @@ class PaperTradingStatus(BaseModel):
     seconds_until_next_run: int = 0
 
 
+class PaperTradingDashboard(BaseModel):
+    account: PaperTradingAccount
+    logs: list[PaperTradingLog] = Field(default_factory=list)
+    snapshots: list[PaperEquitySnapshot] = Field(default_factory=list)
+    status: PaperTradingStatus
+
+
 class AppUpdate(BaseModel):
     version_code: int = Field(ge=1)
     version_name: str = Field(min_length=1)
@@ -892,17 +899,33 @@ def paper_trading_status() -> PaperTradingStatus:
     )
 
 
+@app.get("/v1/paper-trading/dashboard", response_model=PaperTradingDashboard)
+def paper_trading_dashboard() -> PaperTradingDashboard:
+    """Return the complete paper-ledger view in one bounded request."""
+    return PaperTradingDashboard(
+        account=paper_trading_account(),
+        logs=paper_trading_logs(limit=100),
+        snapshots=paper_trading_equity_snapshots(limit=120),
+        status=paper_trading_status(),
+    )
+
+
 @app.post("/v1/paper-trading/run")
 def run_paper_trading_now() -> dict[str, object]:
-    """User-triggered paper run; it does not bypass market/risk/ledger checks."""
+    """Run a requested paper pass, using saved data when the market is closed."""
     symbols = list(dict.fromkeys(str(item["symbol"]).strip().upper() for item in [*store.list(), *store.watchlist()] if str(item.get("symbol", "")).strip()))
     active = trading_calendar.open_symbols(symbols, moment=beijing_now())
+    if not symbols:
+        with paper_trading_state_lock:
+            paper_trading_state.update({"last_finished_at": beijing_now(), "last_status": "no_symbols", "last_message": "没有持仓或自选标的，无法执行模拟判断。", "last_executed": 0, "last_skipped": 0, "last_symbols": []})
+        return {"status": "skipped", "message": "没有持仓或自选标的", "symbols": []}
+    selected = active or symbols
+    result = run_paper_trading_cycle(selected, force=True, allow_when_disabled=True)
     if not active:
         with paper_trading_state_lock:
-            paper_trading_state.update({"last_finished_at": beijing_now(), "last_status": "market_closed", "last_message": "当前没有处于交易时段的模拟标的；未执行买卖", "last_executed": 0, "last_skipped": 0, "last_symbols": []})
-        return {"status": "skipped", "message": "当前没有处于交易时段的模拟标的", "symbols": []}
-    result = run_paper_trading_cycle(active, force=True, allow_when_disabled=True)
-    return {"status": "completed", "message": "已完成一次模拟判断", "symbols": active, **result}
+            paper_trading_state.update({"last_status": "completed_closed_market_snapshot", "last_message": "休市期间已按最近保存的决策和价格快照完成手动模拟；这不是实时行情或真实交易。"})
+    message = "已完成一次模拟判断" if active else "休市期间已按最近保存的决策和价格快照完成一次手动模拟"
+    return {"status": "completed", "message": message, "symbols": selected, **result}
 
 
 @app.get("/v1/feed", response_model=list[NewsItem])

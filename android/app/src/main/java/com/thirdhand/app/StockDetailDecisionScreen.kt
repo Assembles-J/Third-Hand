@@ -64,6 +64,86 @@ fun StockDetailDecisionRoute(
     val context = LocalContext.current
     val api = remember { ApiClient.service(context) }
     val scope = rememberCoroutineScope()
+    var quote by remember(target.symbol) { mutableStateOf<MarketQuoteDto?>(null) }
+    var holding by remember(target.symbol) { mutableStateOf<HoldingDto?>(null) }
+    var report by remember(target.symbol) { mutableStateOf<DecisionReportDto?>(null) }
+    var loading by remember(target.symbol) { mutableStateOf(true) }
+    var error by remember(target.symbol) { mutableStateOf<String?>(null) }
+
+    fun load() = scope.launch {
+        loading = true
+        error = null
+        supervisorScope {
+            val quoteResult = async { runCatching { ApiClient.marketQuotes(api, MarketQuoteBatchRequestDto(listOf(target.symbol), refresh = true)).firstOrNull() } }
+            val holdingResult = async { runCatching { api.holdings().firstOrNull { it.symbol == target.symbol } } }
+            val reportResult = async { runCatching { api.latestDecision(target.symbol) } }
+            quoteResult.await().onSuccess { quote = it }.onFailure { error = "行情读取失败：${it.message ?: "请稍后重试"}" }
+            holdingResult.await().onSuccess { holding = it }
+            reportResult.await().onSuccess { report = it }
+        }
+        loading = false
+    }
+
+    LaunchedEffect(target.symbol) { load() }
+    LazyColumn(
+        modifier = Modifier.fillMaxWidth(),
+        contentPadding = androidx.compose.foundation.layout.PaddingValues(bottom = 24.dp),
+    ) {
+        item {
+            Row(Modifier.fillMaxWidth().padding(horizontal = 8.dp), horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+                TextButton(onClick = onBack) { Icon(Icons.AutoMirrored.Filled.ArrowBack, "返回"); Text("返回") }
+                Spacer(Modifier.weight(1f))
+                TextButton(onClick = ::load, enabled = !loading) { Icon(Icons.Filled.Refresh, "刷新行情"); Text(if (loading) "刷新中" else "刷新") }
+            }
+        }
+        item {
+            Column(Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 10.dp), verticalArrangement = Arrangement.spacedBy(5.dp)) {
+                Text(target.name, style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold)
+                Text("${target.symbol} · 数据 ${quote?.as_of ?: quote?.retrieved_at ?: "暂不可用"}", style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                Text(quote?.price?.money() ?: "—", style = MaterialTheme.typography.displaySmall, fontWeight = FontWeight.Bold)
+                quote?.let {
+                    val rise = (it.change_percent ?: 0.0) >= 0
+                    Text("${if (rise) "↑" else "↓"} ${(it.change ?: 0.0).signedMoney()}  ${(it.change_percent ?: 0.0).signedPercent()}", color = if (rise) MaterialTheme.marketColors.rise else MaterialTheme.marketColors.fall, fontWeight = FontWeight.SemiBold)
+                }
+                holding?.let { Text("持仓 ${it.quantity.formatQuantity()} · 成本 ${it.average_cost.money()}", style = MaterialTheme.typography.bodyMedium) }
+                Text("行情来源 ${quote?.source ?: "—"} · ${quote?.freshness_note ?: "等待行情"}", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            }
+        }
+        error?.let { message -> item { ErrorCard("行情不可用", message, ::load) } }
+        if (loading && quote == null) item { LoadingCard("正在读取行情…") }
+        item { DenseDivider() }
+        item { TradingPeriodKLinePanel(symbol = target.symbol, quote = quote) }
+        item { DenseDivider() }
+        item {
+            Column(Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 10.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                Text("AI 分析工作台", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
+                if (report == null) {
+                    Text("尚无已保存的统一分析。可在 AI 研究中提问，系统会先生成并保存一份分析报告。", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                } else {
+                    Text("${report!!.action.actionLabel()} · ${report!!.status}", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold)
+                    Text(report!!.summary, style = MaterialTheme.typography.bodySmall)
+                    Text("报告 ${report!!.decision_id.take(8)} · ${report!!.generated_at.take(16)} · 行情截至 ${report!!.market_as_of ?: "未知"}", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                }
+                FilledTonalButton(onClick = { onResearch(target) }, modifier = Modifier.fillMaxWidth()) {
+                    Icon(Icons.Filled.AutoGraph, "打开 AI 研究")
+                    Spacer(Modifier.width(8.dp))
+                    Text(if (report == null) "开始 AI 分析" else "在 AI 研究中解释这份报告")
+                }
+            }
+        }
+        item { Text("模拟操作请在“模拟”页执行。", modifier = Modifier.padding(horizontal = 12.dp, vertical = 10.dp), style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant) }
+    }
+}
+
+@Composable
+private fun LegacyStockDetailDecisionRoute(
+    target: ResearchTargetDto,
+    onBack: () -> Unit,
+    onResearch: (ResearchTargetDto) -> Unit,
+) {
+    val context = LocalContext.current
+    val api = remember { ApiClient.service(context) }
+    val scope = rememberCoroutineScope()
     var state by remember(target.symbol) { mutableStateOf(StockDetailDecisionUiState()) }
     var decisionGenerating by remember(target.symbol) { mutableStateOf(false) }
     var executionDialogOpen by remember(target.symbol) { mutableStateOf(false) }

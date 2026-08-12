@@ -22,6 +22,34 @@ def test_health():
     assert client.get("/health").json() == {"status": "ok"}
 
 
+def test_manual_paper_run_uses_saved_snapshot_when_market_is_closed(monkeypatch):
+    store.add("holding-1", "600519", "test", 100, 10)
+    monkeypatch.setattr(main.trading_calendar, "open_symbols", lambda *_args, **_kwargs: [])
+    calls = []
+    monkeypatch.setattr(
+        main,
+        "run_paper_trading_cycle",
+        lambda symbols, force, allow_when_disabled: calls.append((symbols, force, allow_when_disabled)) or {"executed": 1, "skipped": 0},
+    )
+
+    response = client.post("/v1/paper-trading/run")
+
+    assert response.status_code == 200
+    assert response.json()["status"] == "completed"
+    assert response.json()["symbols"] == ["600519"]
+    assert calls == [(["600519"], True, True)]
+
+
+def test_paper_dashboard_returns_the_ledger_in_one_request():
+    store.save_paper_account(10_000)
+
+    response = client.get("/v1/paper-trading/dashboard")
+
+    assert response.status_code == 200
+    assert response.json()["account"]["available_cash"] == 10_000
+    assert response.json()["logs"] == []
+
+
 def test_derived_refresh_skips_empty_daily_history_without_aborting(monkeypatch):
     class MarketRegimeFixture:
         def assess(self):
