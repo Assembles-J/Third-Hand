@@ -2730,7 +2730,7 @@ fun TradingPeriodKLinePanel(symbol: String, quote: MarketQuoteDto?) {
                 FilledTonalButton(onClick = { monthRangePickerOpen = true }) { Text("${monthRangeStart} 至 ${monthRangeEnd}") }
             }
             if (chartBars.size >= 2) {
-                KLineChart(chartBars, quote.takeIf { period == "日线" || period == "今日" }, useTimeAxis = period == "今日")
+                KLineChart(chartBars, quote.takeIf { period == "日线" || period == "今日" }, useTimeAxis = period == "今日", paperMarkers = paperTradeMarkers)
             } else {
                 Text(
                     when {
@@ -2742,7 +2742,7 @@ fun TradingPeriodKLinePanel(symbol: String, quote: MarketQuoteDto?) {
                 )
             }
     }
-    if (paperTradeMarkers.isNotEmpty()) {
+    if (false && paperTradeMarkers.isNotEmpty()) {
         Text("模拟 B/S 标记（紫色，与真实操作区分）", style = MaterialTheme.typography.labelSmall, color = Color(0xFF7E57C2))
         Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
             paperTradeMarkers.take(4).forEach { marker ->
@@ -2844,18 +2844,22 @@ fun KLineChart(
                 drawLine(color.copy(alpha = .7f), Offset(x, size.height), Offset(x, size.height - volumeHeight), strokeWidth = candleWidth)
             }
             (if (paperMarkers.isEmpty()) paperChartMarkers else paperMarkers).forEach { marker ->
-                val markerIndex = visible.indexOfLast { it.trading_date.take(10) == marker.executed_at.take(10) }
+                val markerTime = marker.executed_at.replace('T', ' ').substringBefore("+").take(16)
+                val markerIndex = if (useTimeAxis) {
+                    visible.indexOfLast { it.trading_date.replace('T', ' ').take(16) <= markerTime }
+                } else {
+                    visible.indexOfLast { it.trading_date.take(10) == marker.executed_at.take(10) }
+                }
                 if (markerIndex >= 0) {
                     val markerPrice = marker.price.coerceIn(minimum, maximum)
                     val markerColor = if (marker.side == "BUY") Color(0xFF7E57C2) else Color(0xFFAB47BC)
                     val markerX = step * markerIndex + step / 2
-                    drawCircle(markerColor, radius = 7f, center = Offset(markerX, y(markerPrice)))
-                    drawCircle(Color.White, radius = 2.5f, center = Offset(markerX, y(markerPrice)))
+                    drawCircle(markerColor, radius = 13f, center = Offset(markerX, y(markerPrice)))
                     drawContext.canvas.nativeCanvas.drawText(
                         if (marker.side == "BUY") "B" else "S",
-                        markerX - 4f,
-                        y(markerPrice) + 4f,
-                        Paint().apply { color = android.graphics.Color.BLACK; textSize = 10f; isFakeBoldText = true },
+                        markerX - 6f,
+                        y(markerPrice) + 6f,
+                        Paint().apply { color = android.graphics.Color.WHITE; textSize = 16f; isFakeBoldText = true },
                     )
                 }
             }

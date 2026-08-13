@@ -97,9 +97,19 @@ class EvidenceEngine:
 
     @staticmethod
     def _market(context: DecisionContext) -> list[EvidenceItem]:
+        flow_evidence: list[EvidenceItem] = []
+        flow = context.market_flow
+        if flow and flow.data_health == "fresh" and flow.main_net_amount is not None:
+            direction = "positive" if flow.main_net_amount > 0 else "negative" if flow.main_net_amount < 0 else "neutral"
+            flow_evidence.append(_item(
+                "market.main_fund_flow", "market", direction, .35,
+                "大盘主力资金", f"主力净流入 {flow.main_net_amount:.0f}",
+                value=flow.main_net_amount, threshold=0, source=flow.source,
+                as_of=flow.retrieved_at, fresh=True,
+            ))
         market = context.market_regime
         if not market or market.status != "ready" or market.regime not in {"supportive", "mixed", "defensive"}:
-            return []
+            return flow_evidence
         direction = "positive" if market.regime == "supportive" else "negative" if market.regime == "defensive" else "neutral"
         return [_item(f"market.{market.regime}", "market", direction, .6 if market.regime != "mixed" else .3, "市场环境", f"市场环境为 {market.regime}", value=market.regime, source=market.source or "market_regime", as_of=market.as_of, fresh=True)]
 

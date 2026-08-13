@@ -346,6 +346,135 @@ class MarketDataService:
             logger.warning("Industry-board constituents unavailable sector=%s error_type=%s", sector, type(error).__name__)
             return []
 
+    def market_intelligence(self) -> dict[str, object]:
+        """Collect bounded, display-ready market breadth, flow and ranking snapshots.
+
+        This deliberately normalizes AKShare columns here.  The mobile client must
+        never be coupled to an upstream Chinese column name or to a raw DataFrame.
+        """
+        import akshare as ak
+        retrieved_at = beijing_now()
+        universe = self.a_share_universe_snapshot(force_refresh=False)
+        priced = [item for item in universe if isinstance(item.get("change_percent"), (int, float))]
+        breadth = {
+            "rise_count": sum(float(item["change_percent"]) > 0 for item in priced),
+            "fall_count": sum(float(item["change_percent"]) < 0 for item in priced),
+            "flat_count": sum(float(item["change_percent"]) == 0 for item in priced),
+            "total_amount": round(sum(float(item.get("amount") or 0) for item in priced), 2),
+        }
+        indices: list[dict[str, object]] = []
+        try:
+            frame = ak.stock_zh_index_spot_em(symbol="沪深重要指数")
+            wanted = {"000001": "上证指数", "399001": "深证成指", "399006": "创业板指"}
+            for _, row in frame.iterrows():
+                code = str(row.get("代码", "")).zfill(6)
+                if code in wanted:
+                    indices.append({"symbol": code, "name": str(row.get("名称") or wanted[code]), "price": self._number(row.get("最新价")), "change": self._number(row.get("涨跌额")), "change_percent": self._number(row.get("涨跌幅")), "amount": self._number(row.get("成交额"))})
+        except Exception as error:
+            logger.warning("index snapshot unavailable error_type=%s", type(error).__name__)
+        flows: dict[str, object] = {}
+        try:
+            row = ak.stock_market_fund_flow().iloc[-1]
+            for label in ("主力", "超大单", "大单", "中单", "小单"):
+                flows[label] = {"net_amount": self._number(row.get(f"{label}净流入-净额")), "net_percent": self._number(row.get(f"{label}净流入-净占比"))}
+        except Exception as error:
+            logger.warning("market fund flow unavailable error_type=%s", type(error).__name__)
+        sectors: list[dict[str, object]] = []
+        try:
+            frame = ak.stock_sector_fund_flow_rank(indicator="今日", sector_type="行业资金流")
+            for _, row in frame.head(30).iterrows():
+                sectors.append({"name": str(row.get("名称") or ""), "change_percent": self._number(row.get("今日涨跌幅")), "net_amount": self._number(row.get("今日主力净流入-净额")), "net_percent": self._number(row.get("今日主力净流入-净占比")), "leader": str(row.get("今日主力净流入最大股") or "")})
+        except Exception as error:
+            logger.warning("sector fund ranking unavailable error_type=%s", type(error).__name__)
+        rankings = self._rank_universe(priced)
+        rankings.update(self._main_flow_rankings(ak))
+        northbound = self._northbound_flow(ak)
+        return {"retrieved_at": retrieved_at, "source": "AKShare", "breadth": breadth, "indices": indices, "fund_flow": flows, "northbound": northbound, "sectors": sectors, "rankings": rankings, "data_health": "fresh" if indices and priced else "partial"}
+
+    def _main_flow_rankings(self, ak) -> dict[str, list[dict[str, object]]]:
+        """Best-effort individual main-fund rankings with a compatible fallback."""
+        try:
+            frame = ak.stock_individual_fund_flow_rank(indicator="今日")
+            rows = []
+            for _, row in frame.iterrows():
+                net = self._number(self._row_value(row, "今日主力净流入-净额", "主力净流入-净额"))
+                rows.append({
+                    "symbol": str(self._row_value(row, "代码") or "").zfill(6),
+                    "name": str(self._row_value(row, "名称") or ""),
+                    "price": self._number(self._row_value(row, "最新价")),
+                    "change_percent": self._number(self._row_value(row, "今日涨跌幅", "涨跌幅")),
+                    "amount": None,
+                    "net_amount": net,
+                    "net_percent": self._number(self._row_value(row, "今日主力净流入-净占比", "主力净流入-净占比")),
+                })
+            rows = [item for item in rows if item["symbol"].isdigit() and item["net_amount"] is not None]
+            return {"main_inflow": sorted(rows, key=lambda item: float(item["net_amount"]), reverse=True)[:20], "main_outflow": sorted(rows, key=lambda item: float(item["net_amount"]))[:20]}
+        except Exception as error:
+            logger.warning("individual fund-flow ranking unavailable error_type=%s", type(error).__name__)
+            return {"main_inflow": [], "main_outflow": []}
+
+    def _northbound_flow(self, ak) -> list[dict[str, object]]:
+        try:
+            frame = ak.stock_hsgt_fund_flow_summary_em()
+            rows = []
+            for _, row in frame.iterrows():
+                rows.append({
+                    "trading_date": str(self._row_value(row, "交易日") or ""),
+                    "type": str(self._row_value(row, "类型") or ""),
+                    "board": str(self._row_value(row, "板块") or ""),
+                    "direction": str(self._row_value(row, "资金方向") or ""),
+                    "net_amount": self._number(self._row_value(row, "资金净流入", "成交净买额")),
+                    "rise_count": self._number(self._row_value(row, "上涨数")),
+                    "fall_count": self._number(self._row_value(row, "下跌数")),
+                })
+            return rows[-8:]
+        except Exception as error:
+            logger.warning("northbound fund flow unavailable error_type=%s", type(error).__name__)
+            return []
+
+    def sector_intelligence(self, sector: str) -> dict[str, object]:
+        """Return one industry constituent snapshot, normalized for mobile drill-down."""
+        cleaned = sector.strip()
+        if not cleaned:
+            raise ValueError("sector must not be blank")
+        import akshare as ak
+        frame = ak.stock_sector_fund_flow_summary(symbol=cleaned, indicator="今日")
+        rows = []
+        for _, row in frame.iterrows():
+            rows.append({
+                "symbol": str(self._row_value(row, "代码") or "").zfill(6),
+                "name": str(self._row_value(row, "名称") or ""),
+                "price": self._number(self._row_value(row, "最新价")),
+                "change_percent": self._number(self._row_value(row, "今日涨跌幅", "涨跌幅")),
+                "net_amount": self._number(self._row_value(row, "今日主力净流入-净额", "主力净流入-净额")),
+                "net_percent": self._number(self._row_value(row, "今日主力净流入-净占比", "主力净流入-净占比")),
+            })
+        rows = [item for item in rows if len(item["symbol"]) == 6 and item["symbol"].isdigit()]
+        return {"sector": cleaned, "retrieved_at": beijing_now(), "source": "AKShare", "rows": rows, "data_health": "fresh"}
+
+    @staticmethod
+    def _row_value(row, *names: str) -> object | None:
+        for name in names:
+            if name in row.index:
+                return row.get(name)
+        for column in row.index:
+            text = str(column)
+            if any(text.endswith(name) for name in names):
+                return row.get(column)
+        return None
+
+    @staticmethod
+    def _number(value: object) -> float | None:
+        try:
+            return round(float(value), 4)
+        except (TypeError, ValueError):
+            return None
+
+    @staticmethod
+    def _rank_universe(items: list[dict[str, object]]) -> dict[str, list[dict[str, object]]]:
+        rows = [{"symbol": str(item.get("symbol") or ""), "name": str(item.get("name") or ""), "price": item.get("price"), "change_percent": item.get("change_percent"), "amount": item.get("amount")} for item in items]
+        return {"gainers": sorted(rows, key=lambda item: float(item.get("change_percent") or -999), reverse=True)[:20], "losers": sorted(rows, key=lambda item: float(item.get("change_percent") or 999))[:20], "amount": sorted(rows, key=lambda item: float(item.get("amount") or 0), reverse=True)[:20]}
+
     def _auto_a_quotes(self, symbols: list[str], market: str, force_refresh: bool) -> list[dict[str, object]]:
         try:
             return self._public_a_quotes(

@@ -80,14 +80,21 @@ fun CompactAdminDashboardScreen() {
     }
     LaunchedEffect(availableUpdate) {
         val update = availableUpdate ?: return@LaunchedEffect
+        var emptyPolls = 0
         while (true) {
             val progress = AppUpdateManager.refreshDownloadState(context)
             updateProgress = progress
-            if (progress?.state?.isActive != true) {
-                if (AppUpdateManager.hasCompletedDownload(context, update)) updateStatus = "更新包已下载完成，可安装。"
-                else if (progress?.state == UpdateDownloadState.FAILED) updateStatus = progress.message
+            if (AppUpdateManager.hasCompletedDownload(context, update)) {
+                updateStatus = "下载完成，安装包已通过校验；请点击“安装更新”。"
                 break
             }
+            if (progress?.state == UpdateDownloadState.FAILED) {
+                updateStatus = progress.message
+                break
+            }
+            // DownloadManager can briefly return null just after enqueueing.
+            emptyPolls = if (progress == null) emptyPolls + 1 else 0
+            if (emptyPolls >= 20) { updateStatus = "下载任务尚未返回进度，请稍后再次点击“下载或安装更新”。"; break }
             delay(500)
         }
     }
@@ -206,7 +213,7 @@ fun CompactAdminDashboardScreen() {
                 availableUpdate?.let { update ->
                     Button(modifier = Modifier.fillMaxWidth(), onClick = {
                         updateStatus = when (AppUpdateManager.downloadAndInstall(context, update)) {
-                            UpdateLaunchResult.DOWNLOAD_STARTED -> "正在下载 v${update.versionName}…"
+                            UpdateLaunchResult.DOWNLOAD_STARTED -> "正在下载 v${update.versionName}，进度会持续显示在这里。"
                             UpdateLaunchResult.INSTALLER_OPENED -> "已打开系统安装页。"
                             UpdateLaunchResult.NEED_INSTALL_PERMISSION -> "请允许本应用安装未知来源应用后重试。"
                             UpdateLaunchResult.NEED_STORAGE_PERMISSION -> "请允许保存安装包后重试。"

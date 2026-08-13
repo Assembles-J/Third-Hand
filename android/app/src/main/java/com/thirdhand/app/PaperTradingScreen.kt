@@ -278,6 +278,11 @@ fun PaperTradingScreen(onOpenDetail: (ResearchTargetDto) -> Unit) {
     field("position", "quantity")?.let { DecisionAuditLine("模拟持仓数量", "$it 股") }
     field("daily_bars", "count")?.let { DecisionAuditLine("日线数据范围", "$it 根") }
     field("data_quality", "status")?.let { DecisionAuditLine("数据质量", it) }
+    listOf("technical" to "技术因子", "risk" to "风险因子", "market_regime" to "市场环境", "relative_strength" to "相对强弱").forEach { (key, label) ->
+        val values = context[key] as? Map<*, *> ?: return@forEach
+        val readable = values.entries.filter { it.value != null }.joinToString(" · ") { "${it.key}=${it.value}" }
+        if (readable.isNotBlank()) DecisionAuditLine(label, readable)
+    }
 }
 
 private fun Double.money() = "%.2f".format(Locale.US, this)

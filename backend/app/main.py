@@ -547,6 +547,28 @@ class MarketRefreshStatus(BaseModel):
     result_count: int = 0
 
 
+class MarketIntelligence(BaseModel):
+    retrieved_at: datetime | None = None
+    source: str = "AKShare"
+    breadth: dict[str, object] = Field(default_factory=dict)
+    indices: list[dict[str, object]] = Field(default_factory=list)
+    fund_flow: dict[str, object] = Field(default_factory=dict)
+    northbound: list[dict[str, object]] = Field(default_factory=list)
+    sectors: list[dict[str, object]] = Field(default_factory=list)
+    rankings: dict[str, list[dict[str, object]]] = Field(default_factory=dict)
+    data_health: str = "pending"
+    error_message: str | None = None
+
+
+class MarketSectorDetail(BaseModel):
+    sector: str
+    retrieved_at: datetime | None = None
+    source: str = "AKShare"
+    rows: list[dict[str, object]] = Field(default_factory=list)
+    data_health: str = "pending"
+    error_message: str | None = None
+
+
 class RiskAssessment(BaseModel):
     symbol: str
     name: str
@@ -1095,6 +1117,29 @@ def refresh_quote_cache(
         return
 
 
+def refresh_market_intelligence() -> None:
+    """Refresh optional market-wide data outside request handlers."""
+    try:
+        store.save_market_intelligence("overview", market_data.market_intelligence())
+    except Exception as error:
+        previous = store.cached_market_intelligence("overview") or {}
+        if previous:
+            previous.update({"data_health": "stale_fallback", "error_message": str(error)[:180]})
+            store.save_market_intelligence("overview", previous)
+        logger.warning("market intelligence refresh unavailable error_type=%s", type(error).__name__)
+
+
+def refresh_sector_intelligence(sector: str) -> None:
+    cache_key = f"sector:{sector.strip()}"
+    try:
+        store.save_market_intelligence(cache_key, market_data.sector_intelligence(sector))
+    except Exception as error:
+        previous = store.cached_market_intelligence(cache_key) or {"sector": sector.strip(), "rows": []}
+        previous.update({"data_health": "stale_fallback" if previous.get("rows") else "unavailable", "error_message": str(error)[:180]})
+        store.save_market_intelligence(cache_key, previous)
+        logger.warning("sector intelligence refresh unavailable sector=%s error_type=%s", sector, type(error).__name__)
+
+
 def refresh_intraday_cache(symbols: list[str], trigger: str) -> None:
     """One-minute collection stays outside read APIs and is serialized per process."""
     if not symbols or not intraday_refresh_lock.acquire(blocking=False):
@@ -1525,6 +1570,9 @@ def resume_background_work() -> None:
             store.update_ai_job(str(job["id"]), "pending")
             queue_background(run_ai_job, str(job["id"]))
     symbols = [str(item["symbol"]).strip().upper() for item in store.list()]
+    # Market overview is independent of personal holdings: it always uses the
+    # provider's whole-market snapshot and warms asynchronously on startup.
+    Thread(target=refresh_market_intelligence, daemon=True, name="market-intelligence").start()
     if symbols:
         # Startup pre-warms latest quotes and daily derived data even while the
         # exchange is closed, so a restart never leaves the app blank.
@@ -1555,6 +1603,31 @@ def market_quotes(
 def cached_market_quotes(limit: int = Query(default=1000, ge=1, le=5000)) -> list[MarketQuote]:
     """Expose all locally stored market symbols for the market module."""
     return [MarketQuote.model_validate(item) for item in store.all_cached_quotes(limit)]
+
+
+@app.get("/v1/market/intelligence", response_model=MarketIntelligence)
+def cached_market_intelligence(refresh: bool = Query(default=False)) -> MarketIntelligence:
+    """Read the persisted market dashboard snapshot; never blocks on AKShare."""
+    if refresh:
+        queue_background(refresh_market_intelligence)
+    cached = store.cached_market_intelligence("overview")
+    if cached:
+        return MarketIntelligence.model_validate(cached)
+    return MarketIntelligence(data_health="pending", error_message="大盘数据正在后台采集，请稍后刷新。")
+
+
+@app.get("/v1/market/intelligence/sectors/{sector}", response_model=MarketSectorDetail)
+def cached_sector_intelligence(sector: str, refresh: bool = Query(default=False)) -> MarketSectorDetail:
+    """Read a cached sector constituent snapshot and optionally trigger its refresh."""
+    cleaned = sector.strip()
+    if not cleaned:
+        raise HTTPException(status_code=422, detail="板块名称不能为空")
+    if refresh:
+        queue_background(refresh_sector_intelligence, cleaned)
+    cached = store.cached_market_intelligence(f"sector:{cleaned}")
+    if cached:
+        return MarketSectorDetail.model_validate(cached)
+    return MarketSectorDetail(sector=cleaned, data_health="pending", error_message="板块成分股正在后台采集，请稍后刷新。")
 
 
 @app.post("/v1/market/quotes/batch", response_model=list[MarketQuote])
@@ -2091,6 +2164,13 @@ def refresh_market_history(symbol: str, payload: MarketHistoryRefreshRequest = M
             DAILY_HISTORY_RETRY_SECONDS,
         )
         raise HTTPException(status_code=503, detail=str(error)) from error
+
+
+@app.get("/v1/news/cached", response_model=list[NewsItem])
+def cached_news(limit: int = Query(default=20, ge=1, le=80), offset: int = Query(default=0, ge=0)) -> list[NewsItem]:
+    """Fast, paged local news read for the mobile home screen."""
+    items = store.cached_content(limit=limit, offset=offset)
+    return [NewsItem.model_validate(item) for item in sorted(items, key=lambda item: str(item.get("published_at") or ""), reverse=True)]
     queue_background(refresh_derived_cache, [normalized_symbol], "manual-daily-history-refresh")
     if payload.start_date and payload.end_date:
         return [DailyPrice.model_validate(item) for item in store.daily_prices_between(

@@ -9,7 +9,7 @@ from uuid import uuid4
 from app.data_quality import summarize_data_quality
 from app.decision_models import (
     AccountSnapshot, DailyBarSummary, DecisionContext, EventSnapshot,
-    InstrumentSnapshot, MarketRegimeSnapshot, PersonalRuleSnapshot,
+    InstrumentSnapshot, MarketFlowSnapshot, MarketRegimeSnapshot, PersonalRuleSnapshot,
     PositionSnapshot, QuoteSnapshot, RelativeStrengthSnapshot, RiskSnapshot,
     TechnicalSnapshot, TradePlanSnapshot,
 )
@@ -92,6 +92,7 @@ class DecisionContextBuilder:
         position = self._position(holding, price, total_assets)
         technical = self._technical(symbol, bars)
         market_regime = self._market_regime(portfolio_item)
+        market_flow = self._market_flow()
         relative_strength = self._relative_strength(portfolio_item)
         quality = summarize_data_quality(
             has_quote=price is not None, daily_bar_count=len(bars), total_assets_available=total_assets is not None,
@@ -108,7 +109,7 @@ class DecisionContextBuilder:
             "decision_horizon": str(plan.get("horizon", "swing")) if plan else "swing",
             "account": account, "position": position, "quote": self._quote(quote),
             "daily_bars": self._daily_bars(bars), "technical": technical, "risk": self._risk(risk),
-            "market_regime": market_regime, "relative_strength": relative_strength, "events": events,
+            "market_regime": market_regime, "market_flow": market_flow, "relative_strength": relative_strength, "events": events,
             "trade_plan": self._plan(plan, symbol), "personal_rule": self._rule(rule),
             "instrument": self._instrument(instrument), "data_quality": quality,
             "source_versions": self._source_versions(),
@@ -199,6 +200,24 @@ class DecisionContextBuilder:
             return None
         return MarketRegimeSnapshot(status=str(value.get("status", "unknown")), regime=value.get("regime"), source=value.get("source"), as_of=value.get("as_of"))
 
+    def _market_flow(self) -> MarketFlowSnapshot | None:
+        payload = self.store.cached_market_intelligence("overview")
+        if not payload:
+            return None
+        main = ((payload.get("fund_flow") or {}).get("主力") or {}).get("net_amount")
+        northbound_rows = payload.get("northbound") or []
+        northbound = next((item.get("net_amount") for item in northbound_rows if item.get("net_amount") is not None), None)
+        breadth = payload.get("breadth") or {}
+        return MarketFlowSnapshot(
+            retrieved_at=str(payload.get("retrieved_at") or "") or None,
+            data_health=str(payload.get("data_health") or "unknown"),
+            main_net_amount=float(main) if main is not None else None,
+            northbound_net_amount=float(northbound) if northbound is not None else None,
+            rise_count=int(breadth["rise_count"]) if breadth.get("rise_count") is not None else None,
+            fall_count=int(breadth["fall_count"]) if breadth.get("fall_count") is not None else None,
+            source=str(payload.get("source") or "market_intelligence_cache"),
+        )
+
     @staticmethod
     def _relative_strength(item):
         value = (item or {}).get("decision_snapshot", {}).get("relative_strength")
@@ -236,4 +255,4 @@ class DecisionContextBuilder:
 
     @staticmethod
     def _source_versions() -> dict[str, str]:
-        return {"context_schema": CONTEXT_SCHEMA_VERSION, "quote": "market_quote_cache-v1", "daily_bars": "daily_price_cache-v1", "risk": "risk_cache-v1", "events": "content_cache-v1", "trade_plan": "trade_plans-v1"}
+        return {"context_schema": CONTEXT_SCHEMA_VERSION, "quote": "market_quote_cache-v1", "daily_bars": "daily_price_cache-v1", "risk": "risk_cache-v1", "events": "content_cache-v1", "market_flow": "market_intelligence_cache-v1", "trade_plan": "trade_plans-v1"}

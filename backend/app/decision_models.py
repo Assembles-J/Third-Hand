@@ -86,6 +86,17 @@ class MarketRegimeSnapshot(DecisionModel):
     as_of: str | None = None
 
 
+class MarketFlowSnapshot(DecisionModel):
+    """Persisted whole-market liquidity factors supplied to the AI audit trail."""
+    retrieved_at: str | None = None
+    data_health: str = "unknown"
+    main_net_amount: float | None = None
+    northbound_net_amount: float | None = None
+    rise_count: int | None = None
+    fall_count: int | None = None
+    source: str = "market_intelligence_cache"
+
+
 class RelativeStrengthSnapshot(DecisionModel):
     status: str
     benchmark_symbol: str | None = None
@@ -296,6 +307,7 @@ class DecisionContext(DecisionModel):
     technical: TechnicalSnapshot | None
     risk: RiskSnapshot | None
     market_regime: MarketRegimeSnapshot | None
+    market_flow: MarketFlowSnapshot | None = None
     relative_strength: RelativeStrengthSnapshot | None
     events: tuple[EventSnapshot, ...]
     trade_plan: TradePlanSnapshot | None

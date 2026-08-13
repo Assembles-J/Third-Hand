@@ -141,6 +141,13 @@ class PortfolioStore:
                 )
                 connection.execute("CREATE TABLE IF NOT EXISTS content_cache (content_id TEXT PRIMARY KEY, payload TEXT NOT NULL, updated_at TEXT NOT NULL)")
                 connection.execute("""
+                    CREATE TABLE IF NOT EXISTS market_intelligence_cache (
+                        cache_key TEXT PRIMARY KEY,
+                        payload TEXT NOT NULL,
+                        updated_at TEXT NOT NULL
+                    )
+                """)
+                connection.execute("""
                     CREATE TABLE IF NOT EXISTS glossary_entries (
                         term_key TEXT PRIMARY KEY,
                         term TEXT NOT NULL,
@@ -539,6 +546,7 @@ class PortfolioStore:
             connection.execute("DELETE FROM watchlist")
             connection.execute("DELETE FROM holding_drafts")
             connection.execute("DELETE FROM market_quote_cache")
+            connection.execute("DELETE FROM market_intelligence_cache")
             connection.execute("DELETE FROM symbol_lookup_cache")
             connection.execute("DELETE FROM personal_rules")
             connection.execute("DELETE FROM trade_plans")
@@ -702,11 +710,11 @@ class PortfolioStore:
         with self._connect() as connection:
             connection.executemany("INSERT INTO content_cache (content_id, payload, updated_at) VALUES (?, ?, ?) ON CONFLICT(content_id) DO UPDATE SET payload=excluded.payload, updated_at=excluded.updated_at", rows)
 
-    def cached_content(self, symbols: list[str] | None = None, limit: int = 80) -> list[dict[str, object]]:
+    def cached_content(self, symbols: list[str] | None = None, limit: int = 80, offset: int = 0) -> list[dict[str, object]]:
         """Return source-linked content retained locally for evidence assembly."""
         with self._connect() as connection:
             rows = connection.execute(
-                "SELECT payload FROM content_cache ORDER BY updated_at DESC LIMIT ?", (max(1, limit),)
+                "SELECT payload FROM content_cache ORDER BY updated_at DESC LIMIT ? OFFSET ?", (max(1, limit), max(0, offset))
             ).fetchall()
         requested = {str(symbol).strip().upper() for symbol in (symbols or [])}
         items = [json.loads(str(row["payload"])) for row in rows]
@@ -767,6 +775,21 @@ class PortfolioStore:
         with self._connect() as connection:
             rows = connection.execute("SELECT payload FROM market_quote_cache ORDER BY updated_at DESC LIMIT ?", (max(1, min(limit, 5000)),)).fetchall()
         return [json.loads(str(row["payload"])) for row in rows]
+
+    def cached_market_intelligence(self, cache_key: str) -> dict[str, object] | None:
+        with self._connect() as connection:
+            row = connection.execute(
+                "SELECT payload FROM market_intelligence_cache WHERE cache_key=?", (cache_key,)
+            ).fetchone()
+        return json.loads(str(row["payload"])) if row else None
+
+    def save_market_intelligence(self, cache_key: str, payload: dict[str, object]) -> None:
+        with self._connect() as connection:
+            connection.execute(
+                "INSERT INTO market_intelligence_cache (cache_key, payload, updated_at) VALUES (?, ?, ?) "
+                "ON CONFLICT(cache_key) DO UPDATE SET payload=excluded.payload, updated_at=excluded.updated_at",
+                (cache_key, json.dumps(payload, ensure_ascii=False, default=str), beijing_now().isoformat()),
+            )
 
     def opportunity_symbols(self, minimum_daily_bars: int = 60, limit: int = 200) -> list[str]:
         """Symbols eligible for local opportunity scanning.

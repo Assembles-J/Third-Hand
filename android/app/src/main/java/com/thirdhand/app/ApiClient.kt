@@ -98,6 +98,12 @@ data class MarketQuoteDto(
     val error_message: String? = null,
 )
 data class MarketQuoteBatchRequestDto(val symbols: List<String>, val refresh: Boolean = false)
+data class MarketIndexDto(val symbol: String = "", val name: String = "", val price: Double? = null, val change: Double? = null, val change_percent: Double? = null, val amount: Double? = null)
+data class MarketRankingDto(val symbol: String = "", val name: String = "", val price: Double? = null, val change_percent: Double? = null, val amount: Double? = null, val net_amount: Double? = null, val net_percent: Double? = null)
+data class MarketSectorDto(val name: String = "", val change_percent: Double? = null, val net_amount: Double? = null, val net_percent: Double? = null, val leader: String = "")
+data class NorthboundFlowDto(val trading_date: String = "", val type: String = "", val board: String = "", val direction: String = "", val net_amount: Double? = null, val rise_count: Double? = null, val fall_count: Double? = null)
+data class MarketSectorDetailDto(val sector: String, val retrieved_at: String? = null, val source: String = "AKShare", val rows: List<MarketRankingDto> = emptyList(), val data_health: String = "pending", val error_message: String? = null)
+data class MarketIntelligenceDto(val retrieved_at: String? = null, val source: String = "AKShare", val breadth: Map<String, Double> = emptyMap(), val indices: List<MarketIndexDto> = emptyList(), val fund_flow: Map<String, Map<String, Double?>> = emptyMap(), val northbound: List<NorthboundFlowDto> = emptyList(), val sectors: List<MarketSectorDto> = emptyList(), val rankings: Map<String, List<MarketRankingDto>> = emptyMap(), val data_health: String = "pending", val error_message: String? = null)
 
 data class SecurityCandidateDto(
     val symbol: String,
@@ -468,6 +474,8 @@ interface ThirdHandApi {
     suspend fun runPaperTradingNow(): PaperTradingRunDto
     @GET("v1/paper-trading/decision-audit/{decisionId}")
     suspend fun paperTradingDecisionAudit(@Path("decisionId") decisionId: String): PaperTradingDecisionAuditDto
+    @GET("v1/news/cached")
+    suspend fun cachedNews(@Query("limit") limit: Int = 20, @Query("offset") offset: Int = 0): List<NewsItemDto>
 
     @GET("v1/holdings")
     suspend fun holdings(): List<HoldingDto>
@@ -563,6 +571,10 @@ interface ThirdHandApi {
     ): List<MarketQuoteDto>
     @GET("v1/market/cached-quotes")
     suspend fun cachedMarketQuotes(@Query("limit") limit: Int = 1000): List<MarketQuoteDto>
+    @GET("v1/market/intelligence")
+    suspend fun marketIntelligence(@Query("refresh") refresh: Boolean = false): MarketIntelligenceDto
+    @GET("v1/market/intelligence/sectors/{sector}")
+    suspend fun marketSectorIntelligence(@Path("sector") sector: String, @Query("refresh") refresh: Boolean = false): MarketSectorDetailDto
 
     @POST("v1/market/symbols/resolve")
     suspend fun symbolLookup(@Body request: SymbolResolveRequestDto): List<SymbolLookupResultDto>
