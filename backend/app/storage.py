@@ -760,6 +760,12 @@ class PortfolioStore:
             ).fetchall()
         return [json.loads(str(row["payload"])) for row in rows]
 
+    def all_cached_quotes(self, limit: int = 1000) -> list[dict[str, object]]:
+        """All locally persisted market quotes; never triggers a provider request."""
+        with self._connect() as connection:
+            rows = connection.execute("SELECT payload FROM market_quote_cache ORDER BY updated_at DESC LIMIT ?", (max(1, min(limit, 5000)),)).fetchall()
+        return [json.loads(str(row["payload"])) for row in rows]
+
     def opportunity_symbols(self, minimum_daily_bars: int = 60, limit: int = 200) -> list[str]:
         """Symbols eligible for local opportunity scanning.
 

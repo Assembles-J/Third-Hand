@@ -1,6 +1,7 @@
 package com.thirdhand.app
 
 import android.os.Bundle
+import android.graphics.Paint
 import android.util.Log
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
@@ -107,6 +108,7 @@ import androidx.compose.ui.draw.clipToBounds
 import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.nativeCanvas
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.TextStyle
@@ -145,9 +147,10 @@ class MainActivity : ComponentActivity() {
 }
 
 private var savedGlossaryTerms by mutableStateOf<List<String>>(emptyList())
+// Kept separate from real execution records; only simulated trades become K-line markers.
+private var paperChartMarkers by mutableStateOf<List<PaperTradingLogDto>>(emptyList())
 // Deliberately separate from real execution records: KLineChart uses these only
 // for purple paper-trade markers.
-private var paperChartMarkers by mutableStateOf<List<PaperTradingLogDto>>(emptyList())
 
 @Composable
 @OptIn(ExperimentalMaterial3Api::class)
@@ -217,28 +220,25 @@ private fun ThirdHandApp(resumeSignal: Int) {
             delay(500)
         }
     }
-    val tabOrder = remember { listOf(0, 5, 1, 3, 4, 2) }
+    val tabOrder = remember { listOf(0, 1, 3, 2) }
     BackHandler(enabled = detailHolding != null || detailStock != null || tab != 0) {
         when {
             detailHolding != null -> detailHolding = null
             detailStock != null -> detailStock = null
-            else -> tab = 1
+            else -> tab = 0
         }
     }
     ThirdHandTheme(themeMode) {
         Scaffold(
             bottomBar = {
-                if (detailHolding == null && detailStock == null && tab != 4) {
+                if (detailHolding == null && detailStock == null) {
                     NavigationBar {
                         listOf(
-                            Triple("今日", Icons.Filled.AutoGraph, 0),
-                            Triple("自选", Icons.Filled.Bookmark, 5),
-                            Triple("自选", Icons.Filled.Bookmark, 5),
-                            Triple("持仓", Icons.Filled.Wallet, 1),
+                            Triple("新闻", Icons.AutoMirrored.Filled.Article, 0),
+                            Triple("行情", Icons.Filled.AutoGraph, 1),
                             Triple("模拟", Icons.Filled.AutoGraph, 3),
-                            Triple("研究", Icons.AutoMirrored.Filled.Article, 4),
                             Triple("管理", Icons.Filled.AdminPanelSettings, 2),
-                        ).distinctBy { it.third }.forEach { (label, icon, targetTab) ->
+                        ).forEach { (label, icon, targetTab) ->
                             NavigationBarItem(
                                 selected = tab == targetTab,
                                 onClick = {
@@ -299,30 +299,11 @@ private fun ThirdHandApp(resumeSignal: Int) {
                         label = "bottomNavigationPage",
                     ) { activeTab ->
                         when (activeTab) {
-                            0 -> TodayScreen(onOpenTradePlan = { tab = 4 }, onOpenRules = { tab = 4 }, onOpenPortfolio = { tab = 1 })
-                            1 -> HoldingsScreen(onOpenDetail = { detailHolding = it })
-                            2 -> UnifiedCenterScreen(onOpenSaleHistory = { tab = 6 })
+                            0 -> NewsScreen()
+                            1 -> MarketScreen(onOpenDetail = { detailStock = it })
+                            2 -> CompactAdminDashboardScreen()
                             3 -> PaperTradingScreen()
-                            4 -> ResearchChatScreen(
-                                controller = researchChatController,
-                                conversation = researchConversation,
-                                onConversationChange = { researchConversation = it },
-                                question = researchDraft,
-                                onQuestionChange = { researchDraft = it },
-                                initialTarget = researchEntryTarget,
-                                onOpenTradePlan = { tab = 4 },
-                                onOpenPortfolio = { tab = 1 },
-                                onOpenRules = { tab = 4 },
-                                onClose = { tab = 0 },
-                            )
-                            5 -> WatchlistScreen(onOpenDetail = { detailStock = it }, onResearch = { target ->
-                                researchEntryTarget = target
-                                researchChatController.beginNewResearch(target.symbol)
-                                researchConversation = emptyList()
-                                researchDraft = ""
-                                tab = 4
-                            })
-                            else -> TodayScreen(onOpenTradePlan = { tab = 4 }, onOpenRules = { tab = 4 }, onOpenPortfolio = { tab = 1 })
+                            else -> NewsScreen()
                         }
                     }
                 }
@@ -2718,7 +2699,9 @@ fun TradingPeriodKLinePanel(symbol: String, quote: MarketQuoteDto?) {
     }
     LaunchedEffect(symbol) { loadBars() }
     LaunchedEffect(symbol) {
-        paperTradeMarkers = runCatching { api.paperTradingLogs(symbol) }.getOrDefault(emptyList())
+        paperTradeMarkers = runCatching { api.paperTradingLogs(symbol) }
+            .getOrDefault(emptyList())
+            .filter { it.status == "executed" && it.side in setOf("BUY", "SELL") }
         paperChartMarkers = paperTradeMarkers
     }
     val chartBars = when (period) {
@@ -2785,6 +2768,7 @@ fun KLineChart(
     bars: List<DailyPriceDto>,
     quote: MarketQuoteDto? = null,
     useTimeAxis: Boolean = false,
+    paperMarkers: List<PaperTradingLogDto> = emptyList(),
 ) = Column {
     // Daily/weekly/monthly views stay compact, but a "today" chart must retain
     // the complete trading session.  Truncating every view to 60 candles made
@@ -2859,14 +2843,20 @@ fun KLineChart(
                 val volumeHeight = ((bar.volume ?: 0.0) / maxVolume * (size.height - volumeTop)).toFloat()
                 drawLine(color.copy(alpha = .7f), Offset(x, size.height), Offset(x, size.height - volumeHeight), strokeWidth = candleWidth)
             }
-            paperChartMarkers.forEach { marker ->
+            (if (paperMarkers.isEmpty()) paperChartMarkers else paperMarkers).forEach { marker ->
                 val markerIndex = visible.indexOfLast { it.trading_date.take(10) == marker.executed_at.take(10) }
                 if (markerIndex >= 0) {
                     val markerPrice = marker.price.coerceIn(minimum, maximum)
-                    val markerColor = Color(0xFF7E57C2)
+                    val markerColor = if (marker.side == "BUY") Color(0xFF7E57C2) else Color(0xFFAB47BC)
                     val markerX = step * markerIndex + step / 2
                     drawCircle(markerColor, radius = 7f, center = Offset(markerX, y(markerPrice)))
                     drawCircle(Color.White, radius = 2.5f, center = Offset(markerX, y(markerPrice)))
+                    drawContext.canvas.nativeCanvas.drawText(
+                        if (marker.side == "BUY") "B" else "S",
+                        markerX - 4f,
+                        y(markerPrice) + 4f,
+                        Paint().apply { color = android.graphics.Color.BLACK; textSize = 10f; isFakeBoldText = true },
+                    )
                 }
             }
             val crossX = step * selectedIndex + step / 2

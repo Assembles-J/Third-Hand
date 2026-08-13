@@ -268,6 +268,7 @@ data class PaperTradingDashboardDto(
     val snapshots: List<PaperEquitySnapshotDto> = emptyList(),
     val status: PaperTradingStatusDto,
 )
+data class PaperTradingDecisionAuditDto(val report: DecisionReportDto, val context: Map<String, Any> = emptyMap())
 data class PaperTradingLogDto(val id: String, val symbol: String, val name: String, val side: String, val quantity: Double, val price: Double, val fee: Double = 0.0, val cash_before: Double, val cash_after: Double, val decision_id: String? = null, val reason: String, val status: String = "executed", val executed_at: String)
 data class PaperTradingAccountDto(val available_cash: Double, val initial_cash: Double = 0.0, val market_value: Double = 0.0, val total_equity: Double = 0.0, val total_pnl: Double = 0.0, val total_return_percent: Double = 0.0, val updated_at: String, val enabled: Boolean, val positions: List<PaperTradingPositionDto> = emptyList())
 data class AnalysisTraceStepDto(val stage: String, val status: String, val detail: String)
@@ -462,6 +463,8 @@ interface ThirdHandApi {
     suspend fun paperTradingDashboard(): PaperTradingDashboardDto
     @POST("v1/paper-trading/run")
     suspend fun runPaperTradingNow(): PaperTradingRunDto
+    @GET("v1/paper-trading/decision-audit/{decisionId}")
+    suspend fun paperTradingDecisionAudit(@Path("decisionId") decisionId: String): PaperTradingDecisionAuditDto
 
     @GET("v1/holdings")
     suspend fun holdings(): List<HoldingDto>
@@ -555,6 +558,8 @@ interface ThirdHandApi {
         @Query("symbols") symbols: List<String>,
         @Query("refresh") refresh: Boolean,
     ): List<MarketQuoteDto>
+    @GET("v1/market/cached-quotes")
+    suspend fun cachedMarketQuotes(@Query("limit") limit: Int = 1000): List<MarketQuoteDto>
 
     @POST("v1/market/symbols/resolve")
     suspend fun symbolLookup(@Body request: SymbolResolveRequestDto): List<SymbolLookupResultDto>
@@ -573,6 +578,8 @@ interface ThirdHandApi {
     suspend fun latestDecision(@Query("symbol") symbol: String): DecisionReportDto
     @GET("v1/decisions")
     suspend fun decisionHistory(@Query("symbol") symbol: String, @Query("limit") limit: Int = 20): List<DecisionReportDto>
+    @GET("v1/decisions/{decisionId}")
+    suspend fun decisionDetail(@Path("decisionId") decisionId: String): DecisionReportDto
     @GET("v1/portfolio/impact-graph")
     suspend fun impactGraph(@Query("symbol") symbol: String? = null): ImpactGraphDto
 

@@ -65,3 +65,20 @@ def test_missing_trade_plan_is_exposed_as_a_non_enabled_editable_draft(tmp_path)
     assert context.trade_plan.is_draft is True
     assert context.trade_plan.enabled is False
     assert context.data_quality.status == "degraded"
+
+
+def test_paper_context_override_uses_simulated_ledger_not_real_holding(tmp_path):
+    store = PortfolioStore(tmp_path / "paper-context.db")
+    store.add("real-holding", "600519", "real", 900, 8)
+    store.save_available_cash(999)
+    store.save_quotes([{ "symbol": "600519", "price": 10, "currency": "CNY", "source": "test", "as_of": "2026-07-31", "retrieved_at": "2026-07-31T10:00:00+08:00" }])
+    store.save_daily_prices("600519", _bars())
+
+    context = DecisionContextBuilder(store).build(
+        "600519",
+        holdings_override=[],
+        available_cash_override=12_345,
+    )
+
+    assert context.position is None
+    assert context.account.available_cash == 12_345

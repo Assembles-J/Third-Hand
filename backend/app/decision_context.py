@@ -46,12 +46,21 @@ class DecisionContextBuilder:
             next((rule for rule in enabled if rule.get("scope") == "global"), None),
         )
 
-    def build(self, symbol: str) -> DecisionContext:
+    def build(
+        self,
+        symbol: str,
+        *,
+        holdings_override: list[dict[str, object]] | None = None,
+        available_cash_override: float | None = None,
+    ) -> DecisionContext:
         # The context is a reproducible snapshot assembled from persisted
         # caches.  Keep upstream fetching and LLM calls out of this boundary so
         # a saved decision can be audited against stable input data.
         symbol = self._symbol(symbol)
-        holdings = self.store.list()
+        # Paper trading must reason from its own ledger, never from the user's
+        # real holdings.  The override keeps the same canonical context schema
+        # while making the simulated account an auditable decision input.
+        holdings = holdings_override if holdings_override is not None else self.store.list()
         holding = next((item for item in holdings if str(item["symbol"]).strip().upper() == symbol), None)
         research_target = next(
             (item for item in self.store.research_targets() if str(item["symbol"]).strip().upper() == symbol),
@@ -77,7 +86,7 @@ class DecisionContextBuilder:
                 break
             all_market_values.append(float(account_holding["quantity"]) * float(account_quote["price"]))
         total_market_value = sum(all_market_values) if len(all_market_values) == len(holdings) else None
-        cash = float(self.store.available_cash()["available_cash"])
+        cash = float(available_cash_override) if available_cash_override is not None else float(self.store.available_cash()["available_cash"])
         total_assets = cash + total_market_value if total_market_value is not None else None
         price = float(quote["price"]) if quote and quote.get("price") is not None else None
         position = self._position(holding, price, total_assets)

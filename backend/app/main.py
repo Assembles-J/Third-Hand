@@ -1356,6 +1356,11 @@ def refresh_paper_candidate_data(symbols: list[str], *, force_refresh: bool) -> 
 def prepare_paper_decisions(symbols: list[str]) -> int:
     """Create a fresh, auditable decision only for a bounded market slice."""
     generated = 0
+    paper_account = store.paper_account()
+    paper_holdings = [
+        {"symbol": item["symbol"], "name": item["name"], "quantity": item["quantity"], "average_cost": item["average_cost"], "created_at": item.get("updated_at")}
+        for item in paper_account.get("positions", [])
+    ]
     for symbol in symbols:
         quote = next(iter(store.cached_quotes([symbol])), None)
         if not quote or quote.get("price") is None or len(store.daily_prices(symbol, 60)) < 60:
@@ -1370,7 +1375,11 @@ def prepare_paper_decisions(symbols: list[str]) -> int:
                 pass
         if not store.instrument_metadata(symbol):
             store.save_instrument_metadata({"symbol": symbol, "market": "CN", "currency": "CNY", "lot_size": 100, "price_tick": 0.01, "source": "paper_market_default", "as_of": str(quote.get("as_of") or beijing_now().isoformat())})
-        context = decision_context_builder.build(symbol)
+        context = decision_context_builder.build(
+            symbol,
+            holdings_override=paper_holdings,
+            available_cash_override=float(paper_account.get("available_cash") or 0),
+        )
         store.save_decision_context(context.model_dump(mode="json"))
         store.save_decision_report(decision_orchestrator.generate(context).model_dump(mode="json"))
         generated += 1
@@ -1404,6 +1413,10 @@ def run_paper_trading_cycle(symbols: list[str], force: bool = False, allow_when_
             paper_trading_state.update({"last_status": "researching", "last_message": "行情已同步，正在检索新闻并为可用候选生成 AI 决策。"})
         refresh_paper_market_intelligence(symbols, names)
         generated_reports = prepare_paper_decisions(symbols)
+        simulated_positions = {
+            str(item["symbol"]).strip().upper(): float(item["quantity"])
+            for item in store.paper_account().get("positions", [])
+        }
         for symbol in symbols:
             report = (store.decision_reports(symbol, 1) or [None])[0]
             if not report:
@@ -1420,9 +1433,21 @@ def run_paper_trading_cycle(symbols: list[str], force: bool = False, allow_when_
             if not side or quantity <= 0 or price <= 0:
                 no_action_reasons.append(f"{names.get(symbol, symbol)}：当前没有满足条件的买卖信号")
                 continue
+            if side == "SELL" and simulated_positions.get(symbol, 0.0) <= 0:
+                # A sell signal is not an executable paper action when this
+                # ledger has no position.  Persist the reason for audit, but
+                # never attempt an order or pretend that a position exists.
+                reason = "paper_sell_blocked_no_position"
+                store.record_paper_skip(symbol=symbol, name=names.get(symbol, symbol), decision_id=str(report.get("decision_id") or "") or None, reason=reason, price=price)
+                skipped += 1
+                no_action_reasons.append(f"{names.get(symbol, symbol)}：模拟账套无持仓，卖出信号已拦截")
+                continue
+            if side == "SELL":
+                quantity = min(quantity, simulated_positions.get(symbol, 0.0))
             try:
                 store.execute_paper_trade(trade_id=str(uuid4()), symbol=symbol, name=names.get(symbol, symbol), side=side, quantity=quantity, price=price, decision_id=str(report.get("decision_id") or "") or None, reason=f"统一 AI 决策：{action}；{str(report.get('summary') or '')[:180]}")
                 executed += 1
+                simulated_positions[symbol] = simulated_positions.get(symbol, 0.0) + (quantity if side == "BUY" else -quantity)
                 logger.info("paper trading executed symbol=%s side=%s quantity=%s", symbol, side, quantity)
             except ValueError as error:
                 logger.info("paper trading skipped symbol=%s reason=%s", symbol, error)
@@ -1511,6 +1536,12 @@ def market_quotes(
 ) -> list[MarketQuote]:
     """Backward-compatible GET wrapper; new clients should use the POST batch endpoint."""
     return resolve_market_quotes(symbols, refresh, background_tasks)
+
+
+@app.get("/v1/market/cached-quotes", response_model=list[MarketQuote])
+def cached_market_quotes(limit: int = Query(default=1000, ge=1, le=5000)) -> list[MarketQuote]:
+    """Expose all locally stored market symbols for the market module."""
+    return [MarketQuote.model_validate(item) for item in store.all_cached_quotes(limit)]
 
 
 @app.post("/v1/market/quotes/batch", response_model=list[MarketQuote])
@@ -1683,6 +1714,15 @@ def decision_detail(decision_id: str) -> dict[str, object]:
     if not report:
         raise HTTPException(status_code=404, detail="decision not found")
     return report
+
+
+@app.get("/v1/paper-trading/decision-audit/{decision_id}")
+def paper_trading_decision_audit(decision_id: str) -> dict[str, object]:
+    """Return the immutable report plus the exact input snapshot that produced it."""
+    report = store.decision_report(decision_id)
+    if not report:
+        raise HTTPException(status_code=404, detail="decision not found")
+    return {"report": report, "context": store.decision_context(str(report["context_id"])) or {}}
 
 
 @app.get("/v1/decisions/evidence/{symbol}")

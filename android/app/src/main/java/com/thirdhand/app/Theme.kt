@@ -33,27 +33,27 @@ object ThemeStore {
 }
 
 private val LightColors = lightColorScheme(
-    primary = Color(0xFFE45121), onPrimary = Color.White,
-    primaryContainer = Color(0xFFFFD9C9), onPrimaryContainer = Color(0xFF4A1100),
-    secondary = Color(0xFFB53A22), onSecondary = Color.White,
-    secondaryContainer = Color(0xFFFFDDD1), onSecondaryContainer = Color(0xFF421000),
-    tertiary = Color(0xFF2D7A4A), onTertiary = Color.White,
-    tertiaryContainer = Color(0xFFC7F1D0), onTertiaryContainer = Color(0xFF003917),
-    background = Color(0xFFFFF8F3), onBackground = Color(0xFF261714),
-    surface = Color(0xFFFFF8F3), onSurface = Color(0xFF261714),
-    surfaceVariant = Color(0xFFF7E6DE), onSurfaceVariant = Color(0xFF59413A),
+    primary = Color(0xFF164E63), onPrimary = Color.White,
+    primaryContainer = Color(0xFFD5F3F5), onPrimaryContainer = Color(0xFF00363E),
+    secondary = Color(0xFF475569), onSecondary = Color.White,
+    secondaryContainer = Color(0xFFE2E8F0), onSecondaryContainer = Color(0xFF1E293B),
+    tertiary = Color(0xFF0F766E), onTertiary = Color.White,
+    tertiaryContainer = Color(0xFFCCFBF1), onTertiaryContainer = Color(0xFF134E4A),
+    background = Color(0xFFF7F9FC), onBackground = Color(0xFF17212B),
+    surface = Color(0xFFFFFFFF), onSurface = Color(0xFF17212B),
+    surfaceVariant = Color(0xFFEAF0F5), onSurfaceVariant = Color(0xFF4A5A69),
 )
 
 private val DarkColors = darkColorScheme(
-    primary = Color(0xFFFFB59D), onPrimary = Color(0xFF621A04),
-    primaryContainer = Color(0xFF8A2E14), onPrimaryContainer = Color(0xFFFFD9C9),
-    secondary = Color(0xFFFFB5A0), onSecondary = Color(0xFF641B09),
-    secondaryContainer = Color(0xFF85301C), onSecondaryContainer = Color(0xFFFFD9D0),
-    tertiary = Color(0xFFA8DCB1), onTertiary = Color(0xFF003919),
-    tertiaryContainer = Color(0xFF155D32), onTertiaryContainer = Color(0xFFC7F1D0),
-    background = Color(0xFF211713), onBackground = Color(0xFFF6EDE8),
-    surface = Color(0xFF211713), onSurface = Color(0xFFF6EDE8),
-    surfaceVariant = Color(0xFF51413B), onSurfaceVariant = Color(0xFFDBC9C2),
+    primary = Color(0xFF8DE2E7), onPrimary = Color(0xFF00363E),
+    primaryContainer = Color(0xFF0B5964), onPrimaryContainer = Color(0xFFD5F3F5),
+    secondary = Color(0xFFBFC9D6), onSecondary = Color(0xFF293544),
+    secondaryContainer = Color(0xFF3A4858), onSecondaryContainer = Color(0xFFE2E8F0),
+    tertiary = Color(0xFF81E6D9), onTertiary = Color(0xFF003D39),
+    tertiaryContainer = Color(0xFF165E59), onTertiaryContainer = Color(0xFFCCFBF1),
+    background = Color(0xFF111A22), onBackground = Color(0xFFE7EEF5),
+    surface = Color(0xFF18232D), onSurface = Color(0xFFE7EEF5),
+    surfaceVariant = Color(0xFF263542), onSurfaceVariant = Color(0xFFC4D0DC),
 )
 
 @Composable

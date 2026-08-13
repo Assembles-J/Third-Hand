@@ -1,36 +1,29 @@
 package com.thirdhand.app
 
-import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
-import androidx.compose.foundation.layout.ExperimentalLayoutApi
-import androidx.compose.foundation.layout.FlowRow
+import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
-import androidx.compose.foundation.layout.widthIn
-import androidx.compose.foundation.rememberScrollState
-import androidx.compose.foundation.verticalScroll
+import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.CloudSync
-import androidx.compose.material.icons.filled.Memory
 import androidx.compose.material.icons.filled.Refresh
-import androidx.compose.material.icons.filled.Security
-import androidx.compose.material.icons.filled.Settings
-import androidx.compose.material.icons.filled.WarningAmber
+import androidx.compose.material3.Button
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
-import androidx.compose.material3.FilterChip
+import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
-import androidx.compose.material3.OutlinedTextFieldDefaults
+import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
-import androidx.compose.material3.Switch
-import androidx.compose.material3.Button
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
@@ -41,322 +34,176 @@ import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
+import com.thirdhand.app.ui.components.TradingPageHeader
+import com.thirdhand.app.ui.components.TradingRowDivider
+import com.thirdhand.app.ui.components.TradingSection
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 
-private val CompactCanvas = Color(0xFF101715)
-private val CompactPanel = Color(0xFF1A2420)
-private val CompactMint = Color(0xFF9EFFBF)
-private val CompactTeal = Color(0xFF4ED6C2)
-private val CompactGold = Color(0xFFF4D35E)
-private val CompactCoral = Color(0xFFFF8C69)
-private val CompactText = Color(0xFFE7EEE9)
-private val CompactQuiet = Color(0xFF9DA9A3)
-
-@OptIn(ExperimentalLayoutApi::class)
 @Composable
 fun CompactAdminDashboardScreen() {
     val context = androidx.compose.ui.platform.LocalContext.current
     val api = remember(context) { ApiClient.service(context) }
+    val scope = rememberCoroutineScope()
     var refreshKey by remember { mutableIntStateOf(0) }
     var overview by remember { mutableStateOf<AdminOverviewDto?>(null) }
     var config by remember { mutableStateOf<SystemConfigDto?>(null) }
+    var cashInput by remember { mutableStateOf("") }
+    var intervalInput by remember { mutableStateOf("10") }
+    var endpoint by remember { mutableStateOf(EndpointStore.baseUrl(context)) }
+    var loading by remember { mutableStateOf(true) }
+    var saving by remember { mutableStateOf(false) }
+    var notice by remember { mutableStateOf<String?>(null) }
     var error by remember { mutableStateOf<String?>(null) }
-    var savingConfig by remember { mutableStateOf(false) }
-    var configSaveMessage by remember { mutableStateOf<String?>(null) }
-    var baseUrl by remember { mutableStateOf(EndpointStore.baseUrl(context)) }
-    var connectionStatus by remember { mutableStateOf<String?>(null) }
-    var updateStatus by remember { mutableStateOf<String?>(null) }
     var checkingUpdate by remember { mutableStateOf(false) }
     var availableUpdate by remember { mutableStateOf<AppUpdate?>(null) }
     var updateProgress by remember { mutableStateOf<UpdateDownloadProgress?>(null) }
-    var availableCash by remember { mutableStateOf<AvailableCashDto?>(null) }
-    var cashInput by remember { mutableStateOf("") }
-    var paperIntervalMinutes by remember { mutableStateOf("10") }
-    val scope = rememberCoroutineScope()
+    var updateStatus by remember { mutableStateOf<String?>(null) }
+    fun saveConfig(next: SystemConfigDto, success: String) = scope.launch {
+        saving = true; notice = "正在保存到服务端…"; error = null
+        runCatching { api.saveAdminConfig(next) }
+            .onSuccess { config = it; intervalInput = (it.paper_trading_interval_seconds / 60).toString(); notice = success }
+            .onFailure { error = "保存失败：${it.message ?: "请检查服务连接"}" }
+        saving = false
+    }
     LaunchedEffect(refreshKey) {
-        error = null
-        runCatching { api.adminOverview() }
-            .onSuccess { overview = it }
-            .onFailure { error = "无法读取系统状态，请检查服务连接。" }
-        runCatching { api.adminConfig() }.onSuccess { config = it; paperIntervalMinutes = (it.paper_trading_interval_seconds / 60).toString() }.onFailure { error = "无法读取系统配置：${it.message ?: "请检查服务版本"}" }
-        runCatching { api.availableCash() }.onSuccess { availableCash = it; cashInput = "%.2f".format(it.available_cash) }
+        loading = true; error = null
+        runCatching { api.adminOverview() }.onSuccess { overview = it }.onFailure { error = "无法读取系统状态：${it.message ?: "请检查服务连接"}" }
+        runCatching { api.adminConfig() }.onSuccess { config = it; intervalInput = (it.paper_trading_interval_seconds / 60).toString() }
+        runCatching { api.availableCash() }.onSuccess { cashInput = "%.2f".format(it.available_cash) }
+        loading = false
     }
     LaunchedEffect(availableUpdate) {
         val update = availableUpdate ?: return@LaunchedEffect
         while (true) {
-            val current = AppUpdateManager.refreshDownloadState(context)
-            updateProgress = current
-            if (current?.state?.isActive != true) {
-                updateStatus = when {
-                    AppUpdateManager.hasCompletedDownload(context, update) ->
-                        "更新包已准备好，点击“下载或安装更新”前往系统安装"
-                    current?.state == UpdateDownloadState.FAILED -> current.message
-                    else -> updateStatus
-                }
+            val progress = AppUpdateManager.refreshDownloadState(context)
+            updateProgress = progress
+            if (progress?.state?.isActive != true) {
+                if (AppUpdateManager.hasCompletedDownload(context, update)) updateStatus = "更新包已下载完成，可安装。"
+                else if (progress?.state == UpdateDownloadState.FAILED) updateStatus = progress.message
                 break
             }
             delay(500)
         }
     }
-    Column(
-        Modifier.fillMaxWidth().background(CompactCanvas).verticalScroll(rememberScrollState()).padding(16.dp),
-        verticalArrangement = Arrangement.spacedBy(12.dp),
-    ) {
-        Row(verticalAlignment = Alignment.CenterVertically) {
-            Column(Modifier.weight(1f)) {
-                Text("系统管理", color = CompactText, style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.Bold)
-                Text("数据状态与安全配置", color = CompactQuiet, style = MaterialTheme.typography.labelSmall, fontFamily = FontFamily.Monospace)
-            }
-            IconButton(onClick = { refreshKey += 1 }) { Icon(Icons.Filled.Refresh, "刷新系统状态", tint = CompactMint) }
-        }
-        error?.let { CompactConsoleCard { Text(it, color = CompactCoral, style = MaterialTheme.typography.bodySmall) } }
-        CompactMetricGrid(overview)
-        MarketRefreshCard(overview)
-        PendingReviewCard(overview)
-        ApplicationDataGrid(overview)
-        CompactConsoleCard {
-            Text("可用资金（统一账本）", color = CompactText, fontWeight = FontWeight.Bold)
-            Text("持仓页与模拟操盘均只读取该数据库余额。修改后立即保存。", color = CompactQuiet, style = MaterialTheme.typography.labelSmall)
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                OutlinedTextField(value = cashInput, onValueChange = { cashInput = it }, modifier = Modifier.weight(1f), singleLine = true, label = { Text("可用资金") }, colors = compactFieldColors())
-                TextButton(onClick = { cashInput.toDoubleOrNull()?.takeIf { it >= 0 }?.let { value -> scope.launch { runCatching { api.saveAvailableCash(AvailableCashInputDto(value)) }.onSuccess { availableCash = it; cashInput = "%.2f".format(it.available_cash) }.onFailure { error = "保存可用资金失败：${it.message ?: "请稍后重试"}" } } } }) { Text("保存", color = CompactMint) }
-            }
-            availableCash?.updated_at?.let { Text("已保存：$it", color = CompactTeal, style = MaterialTheme.typography.labelSmall) }
-        }
-        CompactConsoleCard {
-            Text("服务与 APK 下载地址", color = CompactText, fontWeight = FontWeight.Bold)
-            Text("应用更新和 APK 下载均通过此服务地址的 /v1/app-update 获取。", color = CompactQuiet, style = MaterialTheme.typography.labelSmall)
-            OutlinedTextField(
-                value = baseUrl,
-                onValueChange = { baseUrl = it },
-                label = { Text("服务地址，例如 http://192.168.1.10:8000/") },
-                modifier = Modifier.fillMaxWidth().padding(top = 8.dp),
-                singleLine = true,
-                colors = compactFieldColors(),
-            )
-            TextButton(onClick = {
-                EndpointStore.saveBaseUrl(context, baseUrl)
-                scope.launch {
-                    connectionStatus = runCatching { ApiClient.service(context).health().status }
-                        .fold({ if (it == "ok") "连接成功" else "服务返回：$it" }, { "连接失败：${it.message ?: "请检查地址和网络"}" })
+    LazyColumn(Modifier.fillMaxSize(), contentPadding = PaddingValues(bottom = 28.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+        item { TradingPageHeader("管理", "服务连接、数据状态与模拟盘设置") { IconButton(onClick = { refreshKey++ }, enabled = !loading) { if (loading) CircularProgressIndicator(Modifier.size(20.dp), strokeWidth = 2.dp) else Icon(Icons.Filled.Refresh, "刷新管理状态") } } }
+        error?.let { item { Text(it, Modifier.padding(horizontal = 20.dp, vertical = 8.dp), color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.bodySmall) } }
+        notice?.let { item { Text(it, Modifier.padding(horizontal = 20.dp, vertical = 8.dp), color = MaterialTheme.colorScheme.tertiary, style = MaterialTheme.typography.bodySmall) } }
+        if (saving) item { LinearProgressIndicator(Modifier.fillMaxWidth().padding(horizontal = 20.dp)) }
+        item { TradingSection("运行概况", "数据直接来自本机服务") }
+        item {
+            Card(Modifier.padding(horizontal = 20.dp).fillMaxWidth(), colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant)) {
+                Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                    AdminLine("服务", if (overview?.status == "ok") "在线" else "未连接")
+                    TradingRowDivider()
+                    AdminLine("行情缓存", "${overview?.cached_quotes_count ?: 0} 只股票 · ${overview?.market_history_count ?: 0} 条历史快照")
+                    AdminLine("新闻与公告", "${overview?.cached_content_count ?: 0} 条已保存内容")
+                    AdminLine("数据更新时间", overview?.latest_market_at?.replace('T', ' ')?.substringBefore("+") ?: "暂无")
                 }
-            }) { Text("保存并测试连接", color = CompactMint) }
-            connectionStatus?.let { Text(it, color = if (it == "连接成功") CompactMint else CompactCoral, style = MaterialTheme.typography.labelSmall) }
+            }
         }
-        CompactConsoleCard {
-            Text("应用更新", color = CompactText, fontWeight = FontWeight.Bold)
-            Text("当前版本 v${BuildConfig.VERSION_NAME}。更新包由系统服务下发并校验签名。", color = CompactQuiet, style = MaterialTheme.typography.labelSmall)
-            TextButton(enabled = !checkingUpdate, onClick = {
-                scope.launch {
-                    checkingUpdate = true
-                    updateStatus = runCatching { AppUpdateManager.check(context) }.fold(
-                        onSuccess = { update ->
-                            availableUpdate = update
-                            updateProgress = update?.let { AppUpdateManager.refreshDownloadState(context) }
-                            if (update == null) "已是最新版本" else "发现 ${update.versionName}，准备下载"
-                        },
-                        onFailure = { "检查更新失败：${it.message ?: "请检查服务地址和网络"}" },
-                    )
-                    availableUpdate?.let { update ->
-                        updateStatus = when (AppUpdateManager.downloadAndInstall(context, update)) {
-                            UpdateLaunchResult.DOWNLOAD_STARTED -> "正在下载 ${update.versionName}；进度会在这里实时更新"
-                            UpdateLaunchResult.INSTALLER_OPENED -> "已进入系统安装页；安装完成后点击“打开”即可直接进入新版"
-                            UpdateLaunchResult.NEED_INSTALL_PERMISSION -> "请允许安装未知应用后重试"
-                            UpdateLaunchResult.NEED_STORAGE_PERMISSION -> "请允许保存安装包后重试"
-                            UpdateLaunchResult.SIGNATURE_MISMATCH -> AppUpdateManager.completedUpdateMessage(context)
-                            UpdateLaunchResult.DOWNLOAD_UNAVAILABLE -> "APK 下载地址不可用，请检查发布配置"
-                        }
+        item { TradingSection("模拟账套", "可用资金由数据库统一保存；买入扣款，卖出回流") }
+        item {
+            Column(Modifier.padding(horizontal = 20.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                OutlinedTextField(value = cashInput, onValueChange = { cashInput = it }, modifier = Modifier.fillMaxWidth(), label = { Text("可用资金（元）") }, keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal), singleLine = true)
+                Button(modifier = Modifier.fillMaxWidth(), enabled = !saving, onClick = {
+                    val cash = cashInput.toDoubleOrNull()
+                    if (cash == null || cash < 0) { error = "请输入不小于 0 的可用资金"; return@Button }
+                    scope.launch {
+                        saving = true; notice = "正在保存可用资金…"; error = null
+                        runCatching { api.saveAvailableCash(AvailableCashInputDto(cash)) }
+                            .onSuccess { cashInput = "%.2f".format(it.available_cash); notice = "可用资金已保存，模拟盘会立即读取新余额" }
+                            .onFailure { error = "保存失败：${it.message ?: "请检查服务连接"}" }
+                        saving = false
                     }
-                    checkingUpdate = false
-                }
-            }) { Text(if (checkingUpdate) "正在检查…" else if (availableUpdate != null) "下载或安装更新" else "检查更新", color = CompactMint) }
-            updateProgress?.let { progress -> CompactUpdateDownloadProgress(progress) }
-            updateStatus?.let { Text(it, color = if (it.contains("失败") || it.contains("不可用")) CompactCoral else CompactTeal, style = MaterialTheme.typography.labelSmall) }
+                }) { Text("保存可用资金") }
+            }
         }
-        CompactConsoleCard {
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                Column(Modifier.weight(1f)) {
-                    Text("模拟操盘自动执行", color = CompactText, fontWeight = FontWeight.Bold)
-                    Text("仅在开盘期间按所设间隔读取统一 AI 决策；直接使用数据库可用资金，模拟持仓不连接券商。", color = CompactQuiet, style = MaterialTheme.typography.labelSmall)
-                }
-                Switch(
-                    checked = config?.paper_trading_enabled == true,
-                    enabled = !savingConfig,
-                    onCheckedChange = { enabled -> scope.launch {
-                        savingConfig = true
-                        configSaveMessage = if (enabled) "正在开启自动执行并保存到服务器…" else "正在关闭自动执行并保存到服务器…"
-                        val current = config ?: SystemConfigDto()
-                        runCatching { api.saveAdminConfig(current.copy(paper_trading_enabled = enabled)) }
-                            .onSuccess { config = it; configSaveMessage = if (enabled) "自动执行已开启；会在下一次行情刷新时按设定间隔检查。" else "自动执行已关闭。" }
-                            .onFailure { error = "保存模拟操盘配置失败：${it.message ?: "请稍后重试"}"; configSaveMessage = "保存失败，开关未生效。" }
-                        savingConfig = false
-                    } },
-                )
-            }
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                OutlinedTextField(value = paperIntervalMinutes, onValueChange = { paperIntervalMinutes = it.filter(Char::isDigit) }, modifier = Modifier.weight(1f), singleLine = true, label = { Text("执行间隔（分钟，最低 5）") }, colors = compactFieldColors())
-                TextButton(onClick = {
-                    val minutes = paperIntervalMinutes.toIntOrNull()
-                    if (minutes == null || minutes < 5) { error = "执行间隔至少为 5 分钟" } else scope.launch {
-                        savingConfig = true
-                        configSaveMessage = "正在保存 ${minutes} 分钟执行间隔…"
-                        val current = config ?: SystemConfigDto()
-                        runCatching { api.saveAdminConfig(current.copy(paper_trading_interval_seconds = minutes * 60)) }
-                            .onSuccess { config = it; paperIntervalMinutes = (it.paper_trading_interval_seconds / 60).toString(); configSaveMessage = "执行间隔已保存，下次自动检查将采用新间隔。" }
-                            .onFailure { error = "保存执行间隔失败：${it.message ?: "请稍后重试"}"; configSaveMessage = "保存失败，请检查服务连接后重试。" }
-                        savingConfig = false
-                    }
-                }, enabled = !savingConfig) { Text("保存", color = CompactMint) }
-            }
-            if (savingConfig) LinearProgressIndicator(Modifier.fillMaxWidth(), color = CompactMint)
-            configSaveMessage?.let { Text(it, color = if (it.contains("失败")) CompactCoral else CompactTeal, style = MaterialTheme.typography.labelSmall) }
-        }
-        FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-            CompactConsoleCard(Modifier.weight(1f).widthIn(min = 150.dp)) {
-                Text("资源容量", color = CompactText, fontWeight = FontWeight.Bold)
-                Text("SQLite ${compactBytes((overview?.database_bytes ?: 0).toLong())}", color = CompactTeal, style = MaterialTheme.typography.labelMedium)
-                Text("内容 ${overview?.cached_content_count ?: 0} 条", color = CompactQuiet, style = MaterialTheme.typography.labelSmall)
-            }
-            CompactConsoleCard(Modifier.weight(1f).widthIn(min = 150.dp)) {
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                    Icon(Icons.Filled.Settings, null, tint = CompactMint)
-                    Text(" 系统配置", color = CompactText, fontWeight = FontWeight.Bold)
-                }
+        item {
+            Column(Modifier.padding(horizontal = 20.dp, vertical = 12.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     Column(Modifier.weight(1f)) {
-                        Text("提示应用更新", color = CompactText, style = MaterialTheme.typography.bodySmall)
-                        Text("关闭后服务端不再下发新版本", color = CompactQuiet, style = MaterialTheme.typography.labelSmall)
+                        Text("自动执行", fontWeight = FontWeight.SemiBold)
+                        Text("开盘时间内按固定间隔分析市场并记入模拟账套。", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    }
+                    Switch(checked = config?.paper_trading_enabled == true, enabled = !saving, onCheckedChange = { enabled -> saveConfig((config ?: SystemConfigDto()).copy(paper_trading_enabled = enabled), if (enabled) "自动执行已开启" else "自动执行已关闭") })
+                }
+                OutlinedTextField(value = intervalInput, onValueChange = { intervalInput = it.filter(Char::isDigit) }, modifier = Modifier.fillMaxWidth(), label = { Text("执行间隔（分钟，至少 5 分钟）") }, keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number), singleLine = true)
+                TextButton(enabled = !saving, onClick = {
+                    val minutes = intervalInput.toIntOrNull()
+                    if (minutes == null || minutes < 5) error = "执行间隔至少为 5 分钟" else saveConfig((config ?: SystemConfigDto()).copy(paper_trading_interval_seconds = minutes * 60), "执行间隔已保存：每 $minutes 分钟检查一次")
+                }) { Text("保存执行间隔") }
+            }
+        }
+        item { TradingSection("服务地址", "修改后保存并检查连接") }
+        item {
+            Column(Modifier.padding(horizontal = 20.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                OutlinedTextField(value = endpoint, onValueChange = { endpoint = it }, modifier = Modifier.fillMaxWidth(), label = { Text("服务地址") }, supportingText = { Text("例如 http://192.168.1.10:8000/") }, singleLine = true)
+                Button(modifier = Modifier.fillMaxWidth(), enabled = !saving, onClick = {
+                    EndpointStore.saveBaseUrl(context, endpoint)
+                    scope.launch {
+                        saving = true; notice = "正在检查连接…"
+                        runCatching { ApiClient.service(context).health() }.onSuccess { notice = if (it.status == "ok") "服务连接成功" else "服务已响应：${it.status}" }.onFailure { error = "连接失败：${it.message ?: "请检查地址和网络"}" }
+                        saving = false
+                    }
+                }) { Text("保存并检查连接") }
+            }
+        }
+        item { TradingSection("应用更新", "当前版本 v${BuildConfig.VERSION_NAME}；更新包会校验签名后交给系统安装") }
+        item {
+            Column(Modifier.padding(horizontal = 20.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Column(Modifier.weight(1f)) {
+                        Text("检查应用更新", fontWeight = FontWeight.SemiBold)
+                        Text("关闭后不会自动检查新版本，但仍可在需要时手动检查。", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
                     }
                     Switch(
-                        checked = config?.update_check_enabled ?: false,
-                        enabled = !savingConfig,
-                        onCheckedChange = { enabled -> scope.launch {
-                            savingConfig = true
-                            runCatching { api.saveAdminConfig((config ?: SystemConfigDto()).copy(update_check_enabled = enabled)) }
-                                .onSuccess { config = it }
-                                .onFailure { error = "保存系统配置失败：${it.message ?: "请稍后重试"}" }
-                            savingConfig = false
-                        } },
+                        checked = config?.update_check_enabled ?: true,
+                        enabled = !saving,
+                        onCheckedChange = { enabled -> saveConfig((config ?: SystemConfigDto()).copy(update_check_enabled = enabled), if (enabled) "已开启应用更新检查" else "已关闭应用更新检查") },
                     )
                 }
-                Text("Debug 包始终不会提示安装正式版。", color = CompactTeal, style = MaterialTheme.typography.labelSmall)
+                Button(modifier = Modifier.fillMaxWidth(), enabled = !checkingUpdate, onClick = {
+                    scope.launch {
+                        checkingUpdate = true; updateStatus = "正在检查更新…"
+                        val update = runCatching { AppUpdateManager.check(context) }.getOrElse { error = "检查更新失败：${it.message ?: "请检查服务地址和网络"}"; null }
+                        availableUpdate = update
+                        updateProgress = update?.let { AppUpdateManager.refreshDownloadState(context) }
+                        updateStatus = when {
+                            update == null && error == null -> "当前已是最新版本，或正在使用 Debug 包。"
+                            update != null -> "发现 v${update.versionName}，可下载并安装。"
+                            else -> updateStatus
+                        }
+                        checkingUpdate = false
+                    }
+                }) { Text(if (checkingUpdate) "正在检查更新" else if (availableUpdate != null) "检查到新版本" else "检查更新") }
+                availableUpdate?.let { update ->
+                    Button(modifier = Modifier.fillMaxWidth(), onClick = {
+                        updateStatus = when (AppUpdateManager.downloadAndInstall(context, update)) {
+                            UpdateLaunchResult.DOWNLOAD_STARTED -> "正在下载 v${update.versionName}…"
+                            UpdateLaunchResult.INSTALLER_OPENED -> "已打开系统安装页。"
+                            UpdateLaunchResult.NEED_INSTALL_PERMISSION -> "请允许本应用安装未知来源应用后重试。"
+                            UpdateLaunchResult.NEED_STORAGE_PERMISSION -> "请允许保存安装包后重试。"
+                            UpdateLaunchResult.SIGNATURE_MISMATCH -> AppUpdateManager.completedUpdateMessage(context) ?: "安装包签名校验失败。"
+                            UpdateLaunchResult.DOWNLOAD_UNAVAILABLE -> "APK 下载地址不可用，请检查发布配置。"
+                        }
+                    }) { Text(if (AppUpdateManager.hasCompletedDownload(context, update)) "安装更新" else "下载或安装更新") }
+                }
+                updateProgress?.let { progress ->
+                    progress.fraction?.let { LinearProgressIndicator(progress = { it }, modifier = Modifier.fillMaxWidth()) }
+                    Text("${progress.message}${progress.fraction?.let { " ${(it * 100).toInt()}%" }.orEmpty()}", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                }
+                updateStatus?.let { Text(it, style = MaterialTheme.typography.bodySmall, color = if (it.contains("失败") || it.contains("不可用")) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.onSurfaceVariant) }
             }
         }
     }
 }
 
-@Composable
-private fun CompactUpdateDownloadProgress(progress: UpdateDownloadProgress) {
-    val percentage = progress.fraction?.let { " ${(it * 100).toInt()}%" }.orEmpty()
-    val size = if (progress.totalBytes > 0) {
-        " · ${compactBytes(progress.downloadedBytes)} / ${compactBytes(progress.totalBytes)}"
-    } else ""
-    Text("${progress.message}$percentage$size", color = CompactText, style = MaterialTheme.typography.labelSmall)
-    if (progress.fraction != null) {
-        LinearProgressIndicator(
-            progress = { progress.fraction },
-            modifier = Modifier.fillMaxWidth(),
-            color = CompactMint,
-            trackColor = CompactPanel,
-        )
-    } else if (progress.state.isActive) {
-        LinearProgressIndicator(
-            modifier = Modifier.fillMaxWidth(),
-            color = CompactMint,
-            trackColor = CompactPanel,
-        )
-    }
+@Composable private fun AdminLine(label: String, value: String) = Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.Top) {
+    Text(label, Modifier.weight(0.32f), style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
+    Text(value, Modifier.weight(0.68f), style = MaterialTheme.typography.bodyMedium, fontWeight = FontWeight.Medium)
 }
-
-@Composable
-private fun MarketRefreshCard(overview: AdminOverviewDto?) = CompactConsoleCard {
-    Text("行情定时任务", color = CompactText, fontWeight = FontWeight.Bold)
-    val running = overview?.market_worker_running == true
-    Text(
-        if (running) "运行中 · 每 ${overview?.market_refresh_interval_seconds ?: "—"} 秒拉取并入库"
-        else "未运行 · 请检查 MARKET_REFRESH_ENABLED",
-        color = if (running) CompactMint else CompactCoral,
-        style = MaterialTheme.typography.bodySmall,
-    )
-    Text("最新入库：${overview?.latest_market_at ?: "暂无"}", color = CompactQuiet, style = MaterialTheme.typography.labelSmall)
-    Text("最新快照 ${overview?.cached_quotes_count ?: 0} 条 · 历史快照 ${overview?.market_history_count ?: 0} 条", color = CompactTeal, style = MaterialTheme.typography.labelSmall)
-    overview?.market_last_error?.let { Text("最近失败：$it", color = CompactCoral, style = MaterialTheme.typography.labelSmall) }
-}
-
-@OptIn(ExperimentalLayoutApi::class)
-@Composable
-private fun CompactMetricGrid(overview: AdminOverviewDto?) = FlowRow(
-    horizontalArrangement = Arrangement.spacedBy(8.dp), verticalArrangement = Arrangement.spacedBy(8.dp),
-) {
-    CompactMetric("API", if (overview?.status == "ok") "在线" else "—", "服务状态", CompactMint, Modifier.weight(1f))
-    CompactMetric("待核验", "${overview?.pending_draft_count ?: 0}", "持仓草稿", CompactGold, Modifier.weight(1f))
-    CompactMetric("持仓", "${overview?.holdings_count ?: 0}", "已入库", CompactMint, Modifier.weight(1f))
-    CompactMetric("行情", "${overview?.cached_quotes_count ?: 0}", "缓存快照", CompactTeal, Modifier.weight(1f))
-}
-
-@Composable
-private fun PendingReviewCard(overview: AdminOverviewDto?) = CompactConsoleCard {
-    val pending = overview?.pending_draft_count ?: 0
-    Row(verticalAlignment = Alignment.CenterVertically) {
-        Icon(Icons.Filled.WarningAmber, null, tint = if (pending > 0) CompactGold else CompactMint)
-        Column(Modifier.weight(1f).padding(start = 10.dp)) {
-            Text(if (pending > 0) "$pending 条持仓草稿待核验" else "没有待核验项目", color = CompactText, fontWeight = FontWeight.SemiBold)
-            Text("补全证券代码后即可确认入库。", color = CompactQuiet, style = MaterialTheme.typography.labelSmall)
-        }
-        TextButton(onClick = {}) { Text("查看", color = CompactMint) }
-    }
-}
-
-@OptIn(ExperimentalLayoutApi::class)
-@Composable
-private fun ApplicationDataGrid(overview: AdminOverviewDto?) = CompactConsoleCard {
-    Text("应用数据状态", color = CompactText, fontWeight = FontWeight.Bold)
-    Text("数量与最新缓存状态", color = CompactQuiet, style = MaterialTheme.typography.labelSmall)
-    FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.padding(top = 10.dp)) {
-        CompactMetric("持仓", "${overview?.holdings_count ?: 0}", "已入库", CompactMint, Modifier.weight(1f), Icons.Filled.Security)
-        CompactMetric("行情", "${overview?.cached_quotes_count ?: 0}", "本地快照", CompactTeal, Modifier.weight(1f), Icons.Filled.Memory)
-        CompactMetric("草稿", "${overview?.draft_count ?: 0}", "${overview?.pending_draft_count ?: 0} 待处理", CompactGold, Modifier.weight(1f), Icons.Filled.CloudSync)
-        CompactMetric("内容", "${overview?.cached_content_count ?: 0}", "已缓存", CompactMint, Modifier.weight(1f))
-    }
-}
-
-@Composable
-private fun CompactMetric(label: String, value: String, hint: String, accent: Color, modifier: Modifier, icon: androidx.compose.ui.graphics.vector.ImageVector? = null) = CompactConsoleCard(modifier.widthIn(min = 140.dp)) {
-    Row(verticalAlignment = Alignment.CenterVertically) {
-        icon?.let { Icon(it, null, tint = accent) }
-        Text(label, color = CompactQuiet, style = MaterialTheme.typography.labelSmall)
-    }
-    Text(value, color = CompactText, fontWeight = FontWeight.Bold, style = MaterialTheme.typography.titleLarge)
-    Text(hint, color = accent, style = MaterialTheme.typography.labelSmall)
-}
-
-@Composable
-private fun CompactConsoleCard(modifier: Modifier = Modifier, content: @Composable () -> Unit) = Card(
-    modifier = modifier,
-    colors = CardDefaults.cardColors(containerColor = CompactPanel),
-    shape = MaterialTheme.shapes.extraSmall,
-) { Column(Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) { content() } }
-
-private fun compactBytes(bytes: Long): String = when {
-    bytes >= 1_048_576 -> "%.1f MB".format(bytes / 1_048_576.0)
-    bytes >= 1_024 -> "%.1f KB".format(bytes / 1_024.0)
-    else -> "$bytes B"
-}
-
-@Composable
-private fun compactFieldColors() = OutlinedTextFieldDefaults.colors(
-    focusedTextColor = CompactText,
-    unfocusedTextColor = CompactText,
-    focusedLabelColor = CompactMint,
-    unfocusedLabelColor = CompactQuiet,
-    focusedBorderColor = CompactMint,
-    unfocusedBorderColor = CompactQuiet,
-    cursorColor = CompactMint,
-    focusedContainerColor = CompactPanel,
-    unfocusedContainerColor = CompactPanel,
-)
