@@ -278,7 +278,7 @@ data class PaperTradingDashboardDto(
 data class PaperTradingDecisionAuditDto(val report: DecisionReportDto, val context: Map<String, Any> = emptyMap())
 data class DecisionFeatureValueDto(val feature_key: String, val feature_version: String, val value: Any? = null, val available_at: String, val quality_status: String)
 data class DecisionLineageDto(val decision_id: String, val context_id: String, val features: List<DecisionFeatureValueDto> = emptyList(), val snapshots: List<Map<String, Any>> = emptyList())
-data class PaperTradingLogDto(val id: String, val symbol: String, val name: String, val side: String, val quantity: Double, val price: Double, val fee: Double = 0.0, val cash_before: Double, val cash_after: Double, val decision_id: String? = null, val reason: String, val status: String = "executed", val executed_at: String)
+data class PaperTradingLogDto(val id: String, val symbol: String, val name: String, val side: String, val quantity: Double, val price: Double, val fee: Double = 0.0, val cash_before: Double, val cash_after: Double, val decision_id: String? = null, val reason: String, val status: String = "executed", val execution_quote_at: String? = null, val execution_quote_source: String? = null, val fill_price_mode: String? = null, val executed_at: String)
 data class PaperTradingAccountDto(val available_cash: Double, val initial_cash: Double = 0.0, val net_contributions: Double = 0.0, val market_value: Double = 0.0, val total_equity: Double = 0.0, val total_pnl: Double = 0.0, val total_return_percent: Double = 0.0, val updated_at: String, val enabled: Boolean, val positions: List<PaperTradingPositionDto> = emptyList())
 data class AnalysisTraceStepDto(val stage: String, val status: String, val detail: String)
 data class TechnicalSnapshotDto(
@@ -381,6 +381,7 @@ data class DecisionReportDto(
     val ai_status: String? = null, val ai_error_code: String? = null, val model: String? = null,
     val market_price: Double? = null, val market_change_percent: Double? = null, val market_as_of: String? = null,
     val sizing: PositionSizingResultDto? = null, val policy_version: String, val prompt_version: String? = null,
+    val audit_versions: Map<String, String> = emptyMap(), val execution_price_mode: String? = null, val execution_eligible_after: String? = null,
     val input_hash: String, val automatic_execution: Boolean = false,
 )
 data class PortfolioAnalysisItemDto(val symbol: String, val name: String, val action: String, val reason: String, val evidence: List<String>, val confidence_percent: Int, val rule_snapshot: Map<String, Any>? = null, val technical_snapshot: TechnicalSnapshotDto? = null, val decision_snapshot: DecisionSnapshotDto? = null, val analysis_trace: List<AnalysisTraceStepDto> = emptyList(), val disclaimer: String)

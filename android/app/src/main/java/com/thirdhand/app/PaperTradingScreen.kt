@@ -78,6 +78,12 @@ fun PaperTradingScreen(onOpenDetail: (ResearchTargetDto) -> Unit) {
         }
     }
     LaunchedEffect(Unit) { refresh() }
+    LaunchedEffect(dashboard?.status?.running, dashboard?.status?.last_status) {
+        if (dashboard?.status?.running == true) {
+            delay(2_000)
+            refresh()
+        }
+    }
     LaunchedEffect(selectedDecisionId) {
         val decisionId = selectedDecisionId ?: return@LaunchedEffect
         decisionLoading = true; decisionError = null; decisionReport = null; decisionLineage = null
@@ -108,10 +114,10 @@ fun PaperTradingScreen(onOpenDetail: (ResearchTargetDto) -> Unit) {
                     onClick = {
                         scope.launch {
                             runningNow = true
-                            message = "正在请求 AI 完成一轮市场判断…"
+                            message = "任务已提交，正在后台准备行情、日线、风险与决策；可离开页面，完成后会显示结果。"
                             message = runCatching { api.runPaperTradingNow() }.fold(
-                                onSuccess = { "${it.message}：执行 ${it.executed} 笔，暂不操作 ${it.skipped} 笔" },
-                                onFailure = { "立即模拟失败：${it.message ?: "请检查服务连接"}" },
+                                onSuccess = { it.message },
+                                onFailure = { "提交模拟任务失败：${it.message ?: "请检查服务连接"}" },
                             )
                             runningNow = false
                             refresh()
@@ -228,6 +234,9 @@ fun PaperTradingScreen(onOpenDetail: (ResearchTargetDto) -> Unit) {
             Text(if (log.status == "skipped") "未成交" else "¥${log.price.money()}", color = if (log.status == "skipped") MaterialTheme.colorScheme.onSurfaceVariant else MaterialTheme.colorScheme.primary, fontWeight = FontWeight.SemiBold)
         }
         Text(if (log.status == "skipped") paperSkipReason(log.reason) else "${log.quantity.clean()} 股 · 费用 ¥${log.fee.money()} · 现金 ¥${log.cash_before.money()} → ¥${log.cash_after.money()}", Modifier.padding(top = 4.dp), style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+        if (log.status == "executed") {
+            Text("成交语义 ${log.fill_price_mode ?: "未记录"}${log.execution_quote_at?.let { " · 报价 $it" }.orEmpty()}${log.execution_quote_source?.let { " · 来源 $it" }.orEmpty()}", Modifier.padding(top = 3.dp), style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+        }
         Spacer(Modifier.height(8.dp)); TradingRowDivider()
     }
 }
@@ -259,6 +268,8 @@ fun PaperTradingScreen(onOpenDetail: (ResearchTargetDto) -> Unit) {
                     }
                 }
                 it.sizing?.let { sizing -> DecisionAuditLine("仓位计算", "建议 ${sizing.suggested_quantity?.clean() ?: "--"} 股；目标 ${sizing.target_quantity?.clean() ?: "--"} 股；现金上限 ${sizing.quantity_by_cash?.clean() ?: "--"} 股") }
+                DecisionAuditLine("成交语义", "${it.execution_price_mode ?: "未记录"}${it.execution_eligible_after?.let { " · 决策报价截至 $it" }.orEmpty()}")
+                if (it.audit_versions.isNotEmpty()) DecisionAuditLine("版本快照", it.audit_versions.entries.joinToString(" · ") { "${it.key}=${it.value.take(12)}" })
                 if (it.action_candidates.isNotEmpty()) DecisionAuditLine("规则候选", it.action_candidates.joinToString { candidate -> "${candidate.action}（评分 ${"%.2f".format(candidate.policy_score)}）" })
                 it.operation_items?.forEach { operation -> DecisionAuditLine(operation.title, operation.trigger) }
                 Text("AI 推理依据", fontWeight = FontWeight.SemiBold)

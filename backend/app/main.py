@@ -194,7 +194,9 @@ class PaperTradingPosition(BaseModel):
 
 class PaperTradingLog(BaseModel):
     id: str; symbol: str; name: str; side: Literal["BUY", "SELL", "SKIP"]; quantity: float; price: float
-    fee: float = 0; cash_before: float; cash_after: float; decision_id: str | None = None; reason: str; status: Literal["executed", "skipped"] = "executed"; executed_at: datetime
+    fee: float = 0; cash_before: float; cash_after: float; decision_id: str | None = None; reason: str; status: Literal["executed", "skipped"] = "executed"
+    execution_quote_at: datetime | None = None; execution_quote_source: str | None = None
+    fill_price_mode: Literal["NEXT_ELIGIBLE_OBSERVED_QUOTE"] | None = None; executed_at: datetime
 
 
 class PaperTradingAccount(BaseModel):
@@ -954,7 +956,26 @@ def paper_trading_dashboard() -> PaperTradingDashboard:
 
 @app.post("/v1/paper-trading/run")
 def run_paper_trading_now() -> dict[str, object]:
-    """Run a requested paper pass and bootstrap the market pool when needed."""
+    """Queue a requested paper pass; provider refreshes must never hold HTTP open."""
+    with paper_trading_state_lock:
+        if paper_trading_state.get("running"):
+            return {"status": "queued", "message": "模拟任务已在运行，请在页面查看进度。", "symbols": list(paper_trading_state.get("last_symbols") or [])}
+        paper_trading_state.update({"running": True, "last_started_at": beijing_now(), "last_status": "queued", "last_message": "模拟任务已提交，正在后台准备行情、日线、风险和决策数据。", "last_executed": 0, "last_skipped": 0})
+    queue_background(_run_paper_trading_now)
+    return {"status": "queued", "message": "模拟任务已提交，页面将自动更新进度与结果。", "symbols": []}
+
+
+def _run_paper_trading_now() -> None:
+    """Long-running manual path kept out of the request/response lifecycle."""
+    try:
+        _run_paper_trading_now_impl()
+    except Exception as error:
+        logger.exception("manual paper-trading task failed")
+        with paper_trading_state_lock:
+            paper_trading_state.update({"running": False, "last_finished_at": beijing_now(), "last_status": "failed", "last_message": f"模拟任务异常：{type(error).__name__}: {error}"})
+
+
+def _run_paper_trading_now_impl() -> None:
     symbols = paper_trading_symbols()
     active = trading_calendar.open_symbols(symbols, moment=beijing_now())
     if not symbols:
@@ -964,19 +985,17 @@ def run_paper_trading_now() -> dict[str, object]:
         except MarketDataUnavailable as error:
             with paper_trading_state_lock:
                 paper_trading_state.update({"last_finished_at": beijing_now(), "last_status": "market_data_unavailable", "last_message": "无法建立全市场行情池；行情源暂不可用，稍后会自动重试。", "last_executed": 0, "last_skipped": 0, "last_symbols": []})
-            return {"status": "queued", "message": f"正在等待行情源恢复：{error.code}", "symbols": []}
+            return
         active = trading_calendar.open_symbols(symbols, moment=beijing_now())
     if not symbols:
         with paper_trading_state_lock:
             paper_trading_state.update({"last_finished_at": beijing_now(), "last_status": "market_scan_pending", "last_message": "全市场行情池正在建立；候选的日线、风险和新闻数据准备完成后会自动决策。", "last_executed": 0, "last_skipped": 0, "last_symbols": []})
-        return {"status": "queued", "message": "正在建立全市场候选与历史数据", "symbols": []}
+        return
     selected = active or symbols
-    result = run_paper_trading_cycle(selected, force=True, allow_when_disabled=True)
+    run_paper_trading_cycle(selected, force=True, allow_when_disabled=True)
     if not active:
         with paper_trading_state_lock:
             paper_trading_state.update({"last_status": "completed_closed_market_snapshot", "last_message": "休市期间已按最近保存的决策和价格快照完成手动模拟；这不是实时行情或真实交易。"})
-    message = "已完成一次模拟判断" if active else "休市期间已按最近保存的决策和价格快照完成一次手动模拟"
-    return {"status": "completed", "message": message, "symbols": selected, **result}
 
 
 @app.get("/v1/feed", response_model=list[NewsItem])
