@@ -260,6 +260,8 @@ class PortfolioStore:
                 connection.execute("CREATE TABLE IF NOT EXISTS ai_jobs (id TEXT PRIMARY KEY, target_id TEXT NOT NULL, input_hash TEXT NOT NULL UNIQUE, status TEXT NOT NULL, attempts INTEGER NOT NULL, max_attempts INTEGER NOT NULL, payload TEXT NOT NULL, error_message TEXT, created_at TEXT NOT NULL, updated_at TEXT NOT NULL)")
                 connection.execute("CREATE TABLE IF NOT EXISTS account_cash (account_id TEXT PRIMARY KEY, available_cash REAL NOT NULL, updated_at TEXT NOT NULL)")
                 connection.execute("CREATE TABLE IF NOT EXISTS paper_trading_accounts (account_id TEXT PRIMARY KEY, available_cash REAL NOT NULL, initial_cash REAL NOT NULL DEFAULT 0, enabled INTEGER NOT NULL DEFAULT 0, updated_at TEXT NOT NULL)")
+                connection.execute("CREATE TABLE IF NOT EXISTS paper_trading_cash_flows (id TEXT PRIMARY KEY, amount REAL NOT NULL, flow_type TEXT NOT NULL, note TEXT NOT NULL DEFAULT '', occurred_at TEXT NOT NULL)")
+                connection.execute("CREATE INDEX IF NOT EXISTS idx_paper_cash_flows_time ON paper_trading_cash_flows(occurred_at DESC)")
                 connection.execute("CREATE TABLE IF NOT EXISTS paper_trading_positions (symbol TEXT PRIMARY KEY, name TEXT NOT NULL, quantity REAL NOT NULL, average_cost REAL NOT NULL, updated_at TEXT NOT NULL)")
                 connection.execute("CREATE TABLE IF NOT EXISTS paper_trading_logs (id TEXT PRIMARY KEY, symbol TEXT NOT NULL, name TEXT NOT NULL, side TEXT NOT NULL, quantity REAL NOT NULL, price REAL NOT NULL, fee REAL NOT NULL DEFAULT 0, cash_before REAL NOT NULL, cash_after REAL NOT NULL, decision_id TEXT, reason TEXT NOT NULL, status TEXT NOT NULL DEFAULT 'executed', executed_at TEXT NOT NULL)")
                 connection.execute("CREATE INDEX IF NOT EXISTS idx_paper_trading_logs_symbol_time ON paper_trading_logs(symbol, executed_at DESC)")
@@ -1261,14 +1263,35 @@ class PortfolioStore:
     def save_available_cash(self, available_cash: float) -> dict[str, object]:
         now = beijing_now().isoformat()
         with self._connect() as connection:
+            existing = connection.execute("SELECT available_cash FROM account_cash WHERE account_id='default'").fetchone()
+            previous = float(existing["available_cash"]) if existing else 0.0
             connection.execute("INSERT INTO account_cash VALUES ('default', ?, ?) ON CONFLICT(account_id) DO UPDATE SET available_cash=excluded.available_cash, updated_at=excluded.updated_at", (available_cash, now))
+            delta = float(available_cash) - previous
+            if abs(delta) > 1e-9:
+                connection.execute(
+                    "INSERT INTO paper_trading_cash_flows (id,amount,flow_type,note,occurred_at) VALUES (?,?,?,?,?)",
+                    (str(uuid4()), delta, "deposit" if delta > 0 else "withdrawal", "管理员调整可用资金", now),
+                )
         return {"available_cash": available_cash, "updated_at": now}
+
+    def set_paper_net_contributions(self, amount: float) -> dict[str, object]:
+        """Rebase legacy paper ledger capital without changing current cash or positions."""
+        now = beijing_now().isoformat()
+        with self._connect() as connection:
+            connection.execute("DELETE FROM paper_trading_cash_flows")
+            if abs(amount) > 1e-9:
+                connection.execute(
+                    "INSERT INTO paper_trading_cash_flows (id,amount,flow_type,note,occurred_at) VALUES (?,?,?,?,?)",
+                    (str(uuid4()), amount, "opening_balance", "历史账套累计净入金校准", now),
+                )
+        return self.paper_account()
 
     def paper_account(self) -> dict[str, object]:
         settings = self.system_settings()
         with self._connect() as connection:
             cash_row = connection.execute("SELECT available_cash, updated_at FROM account_cash WHERE account_id='default'").fetchone()
             row = connection.execute("SELECT initial_cash FROM paper_trading_accounts WHERE account_id='default'").fetchone()
+            flow_row = connection.execute("SELECT COALESCE(SUM(amount), 0) AS total FROM paper_trading_cash_flows").fetchone()
             positions = [dict(item) for item in connection.execute("SELECT * FROM paper_trading_positions ORDER BY updated_at DESC").fetchall()]
             quotes = {str(item["symbol"]): json.loads(str(item["payload"])) for item in connection.execute("SELECT symbol,payload FROM market_quote_cache").fetchall()}
         enriched_positions = []
@@ -1280,9 +1303,14 @@ class PortfolioStore:
         positions = enriched_positions
         market_value = sum(float(position["market_value"]) for position in positions)
         cash = float(cash_row["available_cash"]) if cash_row else 0.0
-        initial_cash = float(row["initial_cash"]) if row else 0.0
+        legacy_initial_cash = float(row["initial_cash"]) if row else 0.0
+        net_contributions = float(flow_row["total"]) if flow_row else 0.0
+        # Existing installations created before cash flows use their stored
+        # opening balance until the user performs an explicit reconciliation.
+        if abs(net_contributions) <= 1e-9:
+            net_contributions = legacy_initial_cash
         equity = cash + market_value
-        return {"available_cash": cash, "initial_cash": initial_cash, "market_value": market_value, "total_equity": equity, "total_pnl": equity - initial_cash, "total_return_percent": (equity / initial_cash - 1) * 100 if initial_cash else 0.0, "updated_at": cash_row["updated_at"] if cash_row else beijing_now().isoformat(), "enabled": settings["paper_trading_enabled"], "positions": positions}
+        return {"available_cash": cash, "initial_cash": net_contributions, "net_contributions": net_contributions, "market_value": market_value, "total_equity": equity, "total_pnl": equity - net_contributions, "total_return_percent": (equity / net_contributions - 1) * 100 if net_contributions else 0.0, "updated_at": cash_row["updated_at"] if cash_row else beijing_now().isoformat(), "enabled": settings["paper_trading_enabled"], "positions": positions}
 
     def record_paper_equity_snapshot(self) -> dict[str, object]:
         account = self.paper_account()
@@ -1345,7 +1373,13 @@ class PortfolioStore:
                 cash_after = cash_before - cost
                 connection.execute("INSERT INTO paper_trading_positions VALUES (?,?,?,?,?) ON CONFLICT(symbol) DO UPDATE SET name=excluded.name,quantity=excluded.quantity,average_cost=excluded.average_cost,updated_at=excluded.updated_at", (symbol, name, new_quantity, average_cost, now))
             elif side == "SELL":
-                if quantity > existing_quantity + 1e-9: raise ValueError("insufficient_paper_position")
+                today = beijing_now().date().isoformat()
+                bought_today = connection.execute(
+                    "SELECT COALESCE(SUM(quantity), 0) AS quantity FROM paper_trading_logs WHERE symbol=? AND side='BUY' AND status='executed' AND substr(executed_at, 1, 10)=?",
+                    (symbol, today),
+                ).fetchone()
+                sellable_quantity = max(0.0, existing_quantity - float(bought_today["quantity"]))
+                if quantity > sellable_quantity + 1e-9: raise ValueError("paper_t1_unsellable_quantity")
                 gross = quantity * price
                 fee = max(5.0, gross * 0.0003) + gross * 0.001
                 cash_after = cash_before + gross - fee

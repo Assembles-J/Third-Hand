@@ -302,7 +302,7 @@ private fun ThirdHandApp(resumeSignal: Int) {
                             0 -> NewsScreen()
                             1 -> MarketScreen(onOpenDetail = { detailStock = it })
                             2 -> CompactAdminDashboardScreen()
-                            3 -> PaperTradingScreen()
+                            3 -> PaperTradingScreen(onOpenDetail = { detailStock = it })
                             else -> NewsScreen()
                         }
                     }

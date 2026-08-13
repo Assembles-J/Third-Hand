@@ -8,7 +8,9 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.items
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.AutoGraph
@@ -66,7 +68,14 @@ fun StockDetailDecisionRoute(
     val scope = rememberCoroutineScope()
     var quote by remember(target.symbol) { mutableStateOf<MarketQuoteDto?>(null) }
     var holding by remember(target.symbol) { mutableStateOf<HoldingDto?>(null) }
+    var paperPosition by remember(target.symbol) { mutableStateOf<PaperTradingPositionDto?>(null) }
     var report by remember(target.symbol) { mutableStateOf<DecisionReportDto?>(null) }
+    var paperLogs by remember(target.symbol) { mutableStateOf<List<PaperTradingLogDto>>(emptyList()) }
+    var selectedPaperDecisionId by remember(target.symbol) { mutableStateOf<String?>(null) }
+    var paperDecision by remember(target.symbol) { mutableStateOf<DecisionReportDto?>(null) }
+    var paperDecisionContext by remember(target.symbol) { mutableStateOf<Map<String, Any>>(emptyMap()) }
+    var paperDecisionError by remember(target.symbol) { mutableStateOf<String?>(null) }
+    var paperDecisionLoading by remember(target.symbol) { mutableStateOf(false) }
     var loading by remember(target.symbol) { mutableStateOf(true) }
     var error by remember(target.symbol) { mutableStateOf<String?>(null) }
 
@@ -77,14 +86,26 @@ fun StockDetailDecisionRoute(
             val quoteResult = async { runCatching { ApiClient.marketQuotes(api, MarketQuoteBatchRequestDto(listOf(target.symbol), refresh = true)).firstOrNull() } }
             val holdingResult = async { runCatching { api.holdings().firstOrNull { it.symbol == target.symbol } } }
             val reportResult = async { runCatching { api.latestDecision(target.symbol) } }
+            val paperLogsResult = async { runCatching { api.paperTradingLogs(target.symbol, 50) } }
+            val paperAccountResult = async { runCatching { api.paperTradingAccount() } }
             quoteResult.await().onSuccess { quote = it }.onFailure { error = "行情读取失败：${it.message ?: "请稍后重试"}" }
             holdingResult.await().onSuccess { holding = it }
             reportResult.await().onSuccess { report = it }
+            paperLogsResult.await().onSuccess { paperLogs = it }
+            paperAccountResult.await().onSuccess { account -> paperPosition = account.positions.firstOrNull { it.symbol == target.symbol } }
         }
         loading = false
     }
 
     LaunchedEffect(target.symbol) { load() }
+    LaunchedEffect(selectedPaperDecisionId) {
+        val decisionId = selectedPaperDecisionId ?: return@LaunchedEffect
+        paperDecisionLoading = true; paperDecisionError = null; paperDecision = null; paperDecisionContext = emptyMap()
+        runCatching { api.paperTradingDecisionAudit(decisionId) }
+            .onSuccess { paperDecision = it.report; paperDecisionContext = it.context }
+            .onFailure { paperDecisionError = "无法读取这笔模拟操作的分析记录：${it.message ?: "记录可能已过期"}" }
+        paperDecisionLoading = false
+    }
     LazyColumn(
         modifier = Modifier.fillMaxWidth(),
         contentPadding = androidx.compose.foundation.layout.PaddingValues(bottom = 24.dp),
@@ -106,6 +127,7 @@ fun StockDetailDecisionRoute(
                     Text("${if (rise) "↑" else "↓"} ${(it.change ?: 0.0).signedMoney()}  ${(it.change_percent ?: 0.0).signedPercent()}", color = if (rise) MaterialTheme.marketColors.rise else MaterialTheme.marketColors.fall, fontWeight = FontWeight.SemiBold)
                 }
                 holding?.let { Text("持仓 ${it.quantity.formatQuantity()} · 成本 ${it.average_cost.money()}", style = MaterialTheme.typography.bodyMedium) }
+                paperPosition?.let { Text("模拟持仓 ${it.quantity.formatQuantity()} 股 · 成本 ${it.average_cost.money()} · 浮盈 ${it.unrealized_return_percent.signedPercent()}", style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.primary) }
                 Text("行情来源 ${quote?.source ?: "—"} · ${quote?.freshness_note ?: "等待行情"}", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
             }
         }
@@ -113,6 +135,15 @@ fun StockDetailDecisionRoute(
         if (loading && quote == null) item { LoadingCard("正在读取行情…") }
         item { DenseDivider() }
         item { TradingPeriodKLinePanel(symbol = target.symbol, quote = quote) }
+        item { DenseDivider() }
+        item {
+            Column(Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 10.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                Text("模拟操作记录", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
+                Text("B / S 为模拟成交；点击任一记录查看结构化操作分析。", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                if (paperLogs.isEmpty()) Text("暂无该股票的模拟操作记录。", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            }
+        }
+        items(paperLogs.take(20), key = { it.id }) { log -> StockDetailPaperLogRow(log, onOpenAnalysis = { selectedPaperDecisionId = log.decision_id }) }
         item { DenseDivider() }
         item {
             Column(Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 10.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
@@ -133,6 +164,30 @@ fun StockDetailDecisionRoute(
         }
         item { Text("模拟操作请在“模拟”页执行。", modifier = Modifier.padding(horizontal = 12.dp, vertical = 10.dp), style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant) }
     }
+    if (selectedPaperDecisionId != null) PaperDecisionAuditDialog(paperDecision, paperDecisionContext, paperDecisionLoading, paperDecisionError, onDismiss = { selectedPaperDecisionId = null })
+}
+
+@Composable
+private fun StockDetailPaperLogRow(log: PaperTradingLogDto, onOpenAnalysis: () -> Unit) {
+    val action = when (log.side) { "BUY" -> "B 买入"; "SELL" -> "S 卖出"; else -> "未执行" }
+    Column(Modifier.fillMaxWidth().clickable(enabled = log.decision_id != null, onClick = onOpenAnalysis).padding(horizontal = 12.dp, vertical = 10.dp)) {
+        Row(Modifier.fillMaxWidth()) {
+            Column(Modifier.weight(1f)) {
+                Text("$action · ${log.name.ifBlank { log.symbol }}", fontWeight = FontWeight.SemiBold)
+                Text("${log.symbol} · ${log.executed_at.replace('T', ' ').substringBefore("+").takeLast(16)}", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            }
+            Text(if (log.status == "executed") "¥${"%.2f".format(log.price)}" else "已拦截", color = if (log.status == "executed") MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.error, style = MaterialTheme.typography.labelMedium)
+        }
+        Text(if (log.status == "executed") "${log.quantity.toInt()} 股 · 费用 ¥${"%.2f".format(log.fee)} · 点击查看操作分析" else stockDetailSkipReason(log.reason), Modifier.padding(top = 3.dp), style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+        HorizontalDivider(Modifier.padding(top = 10.dp), color = MaterialTheme.colorScheme.outlineVariant)
+    }
+}
+
+private fun stockDetailSkipReason(reason: String): String = when {
+    reason.contains("paper_t1_unsellable") -> "A 股 T+1 限制：今日买入仓位不可卖出"
+    reason.contains("no_position") -> "模拟账套无持仓，卖出信号已拦截"
+    reason.contains("insufficient_paper_cash") -> "模拟可用资金不足"
+    else -> "本轮未成交：$reason"
 }
 
 @Composable

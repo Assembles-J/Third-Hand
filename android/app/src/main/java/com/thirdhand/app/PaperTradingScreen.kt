@@ -51,7 +51,7 @@ import java.time.format.DateTimeFormatter
 import java.util.Locale
 
 @Composable
-fun PaperTradingScreen() {
+fun PaperTradingScreen(onOpenDetail: (ResearchTargetDto) -> Unit) {
     val context = androidx.compose.ui.platform.LocalContext.current
     val api = remember(context) { ApiClient.service(context) }
     val scope = rememberCoroutineScope()
@@ -147,6 +147,7 @@ fun PaperTradingScreen() {
                         PaperMetric("持仓市值", "¥${account?.market_value?.money() ?: "--"}", Modifier.weight(1f))
                         PaperMetric("累计盈亏", "¥${account?.total_pnl?.money() ?: "--"}", Modifier.weight(1f))
                     }
+                    Text("累计净入金 ¥${account?.net_contributions?.money() ?: "--"} · 收益已剔除后续入金与出金", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onPrimaryContainer)
                 }
             }
         }
@@ -175,8 +176,7 @@ fun PaperTradingScreen() {
             Text("当前没有模拟持仓。可点击“立即模拟一次”，或开启自动执行后等待下一轮决策。", Modifier.padding(horizontal = 20.dp, vertical = 14.dp), style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
         }
         items(account?.positions.orEmpty(), key = { it.symbol }) { position ->
-            val latestTrade = dashboard?.logs.orEmpty().firstOrNull { it.symbol == position.symbol && it.status == "executed" && it.decision_id != null }
-            Column(Modifier.fillMaxWidth().clickable { selectedDecisionId = latestTrade?.decision_id }.padding(horizontal = 20.dp, vertical = 12.dp)) {
+            Column(Modifier.fillMaxWidth().clickable { onOpenDetail(ResearchTargetDto(position.symbol, position.name, "paper_position", position.updated_at)) }.padding(horizontal = 20.dp, vertical = 12.dp)) {
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     Column(Modifier.weight(1f)) {
                         Text(position.name.ifBlank { position.symbol }, fontWeight = FontWeight.SemiBold, style = MaterialTheme.typography.titleSmall)
@@ -203,7 +203,7 @@ fun PaperTradingScreen() {
         if (dashboard?.logs.orEmpty().size > 6) item { TextButton(modifier = Modifier.padding(horizontal = 12.dp), onClick = { showAllLogs = true }) { Text("查看全部操作与拦截记录") } }
     }
     if (showAllLogs) PaperLogHistoryDialog(dashboard?.logs.orEmpty(), onDismiss = { showAllLogs = false }, onOpenDecision = { selectedDecisionId = it })
-    if (selectedDecisionId != null) PaperDecisionDialog(decisionReport, decisionContext, decisionLoading, decisionError, onDismiss = { selectedDecisionId = null })
+    if (selectedDecisionId != null) PaperDecisionAuditDialog(decisionReport, decisionContext, decisionLoading, decisionError, onDismiss = { selectedDecisionId = null })
 }
 
 @Composable private fun PaperMetric(label: String, value: String, modifier: Modifier) = Column(modifier) {
@@ -238,9 +238,9 @@ fun PaperTradingScreen() {
     confirmButton = { TextButton(onClick = onDismiss) { Text("关闭") } },
 )
 
-@Composable private fun PaperDecisionDialog(report: DecisionReportDto?, context: Map<String, Any>, loading: Boolean, error: String?, onDismiss: () -> Unit) = AlertDialog(
+@Composable fun PaperDecisionAuditDialog(report: DecisionReportDto?, context: Map<String, Any>, loading: Boolean, error: String?, onDismiss: () -> Unit) = AlertDialog(
     onDismissRequest = onDismiss,
-    title = { Text("决策与执行依据") },
+    title = { Text("操作分析记录") },
     text = {
         LazyColumn(verticalArrangement = Arrangement.spacedBy(8.dp)) {
             if (loading) item { LinearProgressIndicator(Modifier.fillMaxWidth()); Text("正在加载完整决策留档…") }
@@ -248,21 +248,37 @@ fun PaperTradingScreen() {
             report?.let { item {
                 Text("${it.symbol} · ${it.action} · ${paperBeijingTimestamp(it.generated_at)}", fontWeight = FontWeight.Bold)
                 Text(it.summary, style = MaterialTheme.typography.bodySmall)
-                it.sizing?.let { sizing -> Text("仓位计算：建议 ${sizing.suggested_quantity?.clean() ?: "--"} 股；目标 ${sizing.target_quantity?.clean() ?: "--"} 股；现金上限 ${sizing.quantity_by_cash?.clean() ?: "--"} 股", style = MaterialTheme.typography.bodySmall) }
-                if (it.action_candidates.isNotEmpty()) Text("规则候选：${it.action_candidates.joinToString { candidate -> "${candidate.action}(${candidate.policy_score})" }}", style = MaterialTheme.typography.bodySmall)
-                it.operation_items?.forEach { operation -> Text("执行项：${operation.title} · ${operation.trigger}", style = MaterialTheme.typography.bodySmall) }
+                it.sizing?.let { sizing -> DecisionAuditLine("仓位计算", "建议 ${sizing.suggested_quantity?.clean() ?: "--"} 股；目标 ${sizing.target_quantity?.clean() ?: "--"} 股；现金上限 ${sizing.quantity_by_cash?.clean() ?: "--"} 股") }
+                if (it.action_candidates.isNotEmpty()) DecisionAuditLine("规则候选", it.action_candidates.joinToString { candidate -> "${candidate.action}（评分 ${"%.2f".format(candidate.policy_score)}）" })
+                it.operation_items?.forEach { operation -> DecisionAuditLine(operation.title, operation.trigger) }
                 Text("AI 推理依据", fontWeight = FontWeight.SemiBold)
-                it.ai_assessment?.reasoning_steps?.forEach { step -> Text("${step.stage}：${step.summary}\n证据：${step.evidence_ids.joinToString().ifBlank { "无" }}", style = MaterialTheme.typography.bodySmall) }
+                it.ai_assessment?.reasoning_steps?.forEach { step -> DecisionAuditLine(step.stage, step.summary + step.evidence_ids.takeIf { ids -> ids.isNotEmpty() }?.let { "\n引用证据：${it.joinToString()}" }.orEmpty()) }
                 Text("证据数据点", fontWeight = FontWeight.SemiBold)
-                it.evidence.forEach { evidence -> Text("${evidence.title}：${evidence.description}", style = MaterialTheme.typography.bodySmall) }
-                if (it.ai_assessment?.missing_evidence?.isNotEmpty() == true) Text("缺失数据：${it.ai_assessment.missing_evidence.joinToString()}", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.error)
-                if (context.isNotEmpty()) Text("输入快照：价格 ${context["quote"] ?: "无"}\n模拟仓位 ${context["position"] ?: "无"}\n资金 ${context["account"] ?: "无"}\n日线范围 ${context["daily_bars"] ?: "无"}\n数据质量 ${context["data_quality"] ?: "无"}", style = MaterialTheme.typography.bodySmall)
+                it.evidence.forEach { evidence -> DecisionAuditLine(evidence.title, evidence.description) }
+                if (it.ai_assessment?.missing_evidence?.isNotEmpty() == true) DecisionAuditLine("缺失数据", it.ai_assessment.missing_evidence.joinToString(), error = true)
+                DecisionAuditContext(context)
                 Text("输入快照 ${it.input_hash.take(12)} · 模型 ${it.model ?: "规则引擎"}", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
             } }
         }
     },
     confirmButton = { TextButton(onClick = onDismiss) { Text("关闭") } },
 )
+
+@Composable private fun DecisionAuditLine(label: String, value: String, error: Boolean = false) = Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
+    Text(label, style = MaterialTheme.typography.labelMedium, fontWeight = FontWeight.SemiBold)
+    Text(value, style = MaterialTheme.typography.bodySmall, color = if (error) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.onSurfaceVariant)
+}
+
+@Composable private fun DecisionAuditContext(context: Map<String, Any>) {
+    if (context.isEmpty()) return
+    fun field(section: String, key: String): String? = (context[section] as? Map<*, *>)?.get(key)?.toString()
+    Text("决策输入快照", fontWeight = FontWeight.SemiBold)
+    field("quote", "price")?.let { DecisionAuditLine("市场价格", it) }
+    field("account", "available_cash")?.let { DecisionAuditLine("模拟可用资金", it) }
+    field("position", "quantity")?.let { DecisionAuditLine("模拟持仓数量", "$it 股") }
+    field("daily_bars", "count")?.let { DecisionAuditLine("日线数据范围", "$it 根") }
+    field("data_quality", "status")?.let { DecisionAuditLine("数据质量", it) }
+}
 
 private fun Double.money() = "%.2f".format(Locale.US, this)
 private fun Double.clean() = if (this % 1.0 == 0.0) toInt().toString() else "%.2f".format(Locale.US, this)
@@ -271,6 +287,7 @@ private fun paperBeijingTimestamp(value: String): String = runCatching { OffsetD
 private fun paperSkipReason(reason: String): String = when {
     reason.contains("insufficient_paper_cash") -> "可用模拟资金不足，未买入"
     reason.contains("insufficient_paper_position") -> "模拟持仓不足，未卖出"
+    reason.contains("paper_t1_unsellable_quantity") -> "A 股 T+1：今日买入的仓位下一交易日才能卖出"
     reason.contains("already_executed") -> "该份决策已执行，避免重复交易"
     reason.contains("100_share_lot") -> "数量不符合 A 股一手 100 股规则"
     reason.contains("no_executable") -> "当前没有满足条件的买卖信号"

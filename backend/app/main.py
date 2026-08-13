@@ -180,6 +180,10 @@ class PaperTradingConfig(BaseModel):
     available_cash: float = Field(ge=0, le=1_000_000_000)
 
 
+class PaperTradingCapitalReconciliation(BaseModel):
+    net_contributions: float = Field(ge=0, le=1_000_000_000)
+
+
 class PaperTradingPosition(BaseModel):
     symbol: str; name: str; quantity: float; average_cost: float; last_price: float = 0; market_value: float = 0; unrealized_pnl: float = 0; unrealized_return_percent: float = 0; updated_at: datetime
 
@@ -190,7 +194,7 @@ class PaperTradingLog(BaseModel):
 
 
 class PaperTradingAccount(BaseModel):
-    available_cash: float; initial_cash: float = 0; market_value: float = 0; total_equity: float = 0; total_pnl: float = 0; total_return_percent: float = 0; updated_at: datetime; enabled: bool; positions: list[PaperTradingPosition] = Field(default_factory=list)
+    available_cash: float; initial_cash: float = 0; net_contributions: float = 0; market_value: float = 0; total_equity: float = 0; total_pnl: float = 0; total_return_percent: float = 0; updated_at: datetime; enabled: bool; positions: list[PaperTradingPosition] = Field(default_factory=list)
 
 
 class PaperEquitySnapshot(BaseModel):
@@ -878,6 +882,11 @@ def save_paper_trading_account(payload: PaperTradingConfig) -> PaperTradingAccou
     return PaperTradingAccount.model_validate(store.save_paper_account(payload.available_cash))
 
 
+@app.put("/v1/paper-trading/net-contributions", response_model=PaperTradingAccount)
+def reconcile_paper_trading_contributions(payload: PaperTradingCapitalReconciliation) -> PaperTradingAccount:
+    return PaperTradingAccount.model_validate(store.set_paper_net_contributions(payload.net_contributions))
+
+
 @app.get("/v1/paper-trading/logs", response_model=list[PaperTradingLog])
 def paper_trading_logs(symbol: str | None = None, limit: int = Query(default=100, ge=1, le=500)) -> list[PaperTradingLog]:
     return [PaperTradingLog.model_validate(item) for item in store.paper_logs(symbol, limit)]
@@ -1309,13 +1318,17 @@ def scheduled_market_refresh_loop() -> None:
 
 
 def paper_trading_symbols() -> list[str]:
-    """Bounded active set selected from a persisted whole-market snapshot."""
+    """Bounded active set ranked from a persisted whole-market snapshot."""
     with universe_scan_state_lock:
         market_candidates = list((universe_scan_state.get("candidates") or {}).keys())
     positions = [str(item["symbol"]).strip().upper() for item in store.paper_account().get("positions", [])]
-    user_symbols = [str(item["symbol"]).strip().upper() for item in [*store.list(), *store.watchlist()]]
     ready_market = store.opportunity_symbols(minimum_daily_bars=60, limit=PAPER_TRADING_CANDIDATE_LIMIT * 3)
-    return list(dict.fromkeys([*positions, *user_symbols, *market_candidates, *ready_market]))[:PAPER_TRADING_CANDIDATE_LIMIT]
+    # The scanner is market-first. Existing simulated positions are appended
+    # only to preserve risk monitoring; real holdings and watchlists do not
+    # influence the opportunity ranking or consume the first slots.
+    market_first = list(dict.fromkeys([*market_candidates, *ready_market]))
+    reserved_for_risk = min(len(positions), PAPER_TRADING_CANDIDATE_LIMIT)
+    return list(dict.fromkeys([*market_first[:PAPER_TRADING_CANDIDATE_LIMIT - reserved_for_risk], *positions]))
 
 
 def paper_trading_names(symbols: list[str]) -> dict[str, str]:

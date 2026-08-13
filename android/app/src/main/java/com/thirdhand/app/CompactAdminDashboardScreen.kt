@@ -52,6 +52,7 @@ fun CompactAdminDashboardScreen() {
     var overview by remember { mutableStateOf<AdminOverviewDto?>(null) }
     var config by remember { mutableStateOf<SystemConfigDto?>(null) }
     var cashInput by remember { mutableStateOf("") }
+    var netContributionsInput by remember { mutableStateOf("") }
     var intervalInput by remember { mutableStateOf("10") }
     var endpoint by remember { mutableStateOf(EndpointStore.baseUrl(context)) }
     var loading by remember { mutableStateOf(true) }
@@ -74,6 +75,7 @@ fun CompactAdminDashboardScreen() {
         runCatching { api.adminOverview() }.onSuccess { overview = it }.onFailure { error = "无法读取系统状态：${it.message ?: "请检查服务连接"}" }
         runCatching { api.adminConfig() }.onSuccess { config = it; intervalInput = (it.paper_trading_interval_seconds / 60).toString() }
         runCatching { api.availableCash() }.onSuccess { cashInput = "%.2f".format(it.available_cash) }
+        runCatching { api.paperTradingAccount() }.onSuccess { netContributionsInput = "%.2f".format(it.net_contributions) }
         loading = false
     }
     LaunchedEffect(availableUpdate) {
@@ -121,6 +123,26 @@ fun CompactAdminDashboardScreen() {
                         saving = false
                     }
                 }) { Text("保存可用资金") }
+                OutlinedTextField(
+                    value = netContributionsInput,
+                    onValueChange = { netContributionsInput = it },
+                    modifier = Modifier.fillMaxWidth(),
+                    label = { Text("累计净入金（收益计算基准）") },
+                    supportingText = { Text("历史曾直接录入资金时，在此填写真实累计投入金额；不会改变当前可用资金或持仓。") },
+                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
+                    singleLine = true,
+                )
+                TextButton(enabled = !saving, onClick = {
+                    val amount = netContributionsInput.toDoubleOrNull()
+                    if (amount == null || amount < 0) { error = "请输入不小于 0 的累计净入金"; return@TextButton }
+                    scope.launch {
+                        saving = true; notice = "正在校准收益基准…"; error = null
+                        runCatching { api.reconcilePaperTradingContributions(PaperTradingCapitalReconciliationDto(amount)) }
+                            .onSuccess { netContributionsInput = "%.2f".format(it.net_contributions); notice = "收益基准已校准；累计收益已剔除净入金。" }
+                            .onFailure { error = "校准失败：${it.message ?: "请检查服务连接"}" }
+                        saving = false
+                    }
+                }) { Text("校准累计净入金") }
             }
         }
         item {

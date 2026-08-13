@@ -1,17 +1,21 @@
 from pathlib import Path
 import sqlite3
+from datetime import datetime, timezone, timedelta
 from threading import Event, Thread
 import time
 from uuid import uuid4
 
 import pytest
 
+import app.storage as storage_module
 from app.storage import PortfolioStore
 
 
-def test_paper_ledger_moves_cash_and_blocks_duplicate_decision(tmp_path: Path) -> None:
+def test_paper_ledger_moves_cash_and_blocks_duplicate_decision(tmp_path: Path, monkeypatch) -> None:
     store = PortfolioStore(tmp_path / "paper.db")
     store.save_paper_account(1_000)
+    day_one = datetime(2026, 8, 12, 10, tzinfo=timezone(timedelta(hours=8)))
+    monkeypatch.setattr(storage_module, "beijing_now", lambda: day_one)
     buy = store.execute_paper_trade(
         trade_id=str(uuid4()), symbol="600519", name="茅台", side="BUY", quantity=100,
         price=8, decision_id="decision-1", reason="test",
@@ -26,6 +30,12 @@ def test_paper_ledger_moves_cash_and_blocks_duplicate_decision(tmp_path: Path) -
             trade_id=str(uuid4()), symbol="600519", name="茅台", side="BUY", quantity=100,
             price=8, decision_id="decision-1", reason="duplicate",
         )
+    with pytest.raises(ValueError, match="t1_unsellable"):
+        store.execute_paper_trade(
+            trade_id=str(uuid4()), symbol="600519", name="茅台", side="SELL", quantity=100,
+            price=10, decision_id="decision-t1", reason="same-day sale",
+        )
+    monkeypatch.setattr(storage_module, "beijing_now", lambda: day_one.replace(day=13))
     sale = store.execute_paper_trade(
         trade_id=str(uuid4()), symbol="600519", name="茅台", side="SELL", quantity=100,
         price=10, decision_id="decision-2", reason="test",
@@ -36,6 +46,18 @@ def test_paper_ledger_moves_cash_and_blocks_duplicate_decision(tmp_path: Path) -
     snapshot = store.record_paper_equity_snapshot()
     assert snapshot["total_equity"] == 1_189
     assert store.paper_equity_snapshots()[-1]["total_pnl"] == 189
+
+
+def test_manual_cash_adjustment_is_external_flow_not_trading_profit(tmp_path: Path) -> None:
+    store = PortfolioStore(tmp_path / "cash-flow.db")
+    store.save_available_cash(10_000)
+    store.save_available_cash(60_000)
+
+    account = store.paper_account()
+
+    assert account["net_contributions"] == 60_000
+    assert account["total_pnl"] == 0
+    assert account["total_return_percent"] == 0
 
 
 def test_paper_ledger_rejects_cash_and_position_overruns(tmp_path: Path) -> None:
