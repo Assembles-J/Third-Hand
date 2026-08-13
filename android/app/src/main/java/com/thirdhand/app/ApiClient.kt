@@ -276,6 +276,8 @@ data class PaperTradingDashboardDto(
     val status: PaperTradingStatusDto,
 )
 data class PaperTradingDecisionAuditDto(val report: DecisionReportDto, val context: Map<String, Any> = emptyMap())
+data class DecisionFeatureValueDto(val feature_key: String, val feature_version: String, val value: Any? = null, val available_at: String, val quality_status: String)
+data class DecisionLineageDto(val decision_id: String, val context_id: String, val features: List<DecisionFeatureValueDto> = emptyList(), val snapshots: List<Map<String, Any>> = emptyList())
 data class PaperTradingLogDto(val id: String, val symbol: String, val name: String, val side: String, val quantity: Double, val price: Double, val fee: Double = 0.0, val cash_before: Double, val cash_after: Double, val decision_id: String? = null, val reason: String, val status: String = "executed", val executed_at: String)
 data class PaperTradingAccountDto(val available_cash: Double, val initial_cash: Double = 0.0, val net_contributions: Double = 0.0, val market_value: Double = 0.0, val total_equity: Double = 0.0, val total_pnl: Double = 0.0, val total_return_percent: Double = 0.0, val updated_at: String, val enabled: Boolean, val positions: List<PaperTradingPositionDto> = emptyList())
 data class AnalysisTraceStepDto(val stage: String, val status: String, val detail: String)
@@ -316,6 +318,16 @@ data class DecisionDataQualityDto(
     val missing_fields: List<String> = emptyList(),
     val stale_fields: List<String> = emptyList(),
     val warnings: List<String> = emptyList(),
+    val source_freshness: List<SourceFreshnessDto> = emptyList(),
+    val action_gates: List<ActionGateDto> = emptyList(),
+)
+data class SourceFreshnessDto(
+    val source_key: String, val as_of: String? = null, val retrieved_at: String? = null,
+    val max_age_seconds: Int? = null, val status: String, val reason: String? = null,
+)
+data class ActionGateDto(
+    val action: String, val permission: String, val reasons: List<String> = emptyList(),
+    val required_fields: List<String> = emptyList(), val unavailable_fields: List<String> = emptyList(),
 )
 data class DecisionContextDto(
     val context_id: String,
@@ -364,7 +376,7 @@ data class OperationItemDto(
 )
 data class DecisionReportDto(
     val decision_id: String, val context_id: String, val symbol: String, val generated_at: String, val status: String,
-    val action: String, val summary: String, val evidence: List<DecisionEvidenceDto> = emptyList(),
+    val action: String, val summary: String, val data_quality: DecisionDataQualityDto? = null, val evidence: List<DecisionEvidenceDto> = emptyList(),
     val action_candidates: List<DecisionActionCandidateDto> = emptyList(), val operation_items: List<OperationItemDto>? = emptyList(), val ai_assessment: DecisionAiAssessmentDto? = null,
     val ai_status: String? = null, val ai_error_code: String? = null, val model: String? = null,
     val market_price: Double? = null, val market_change_percent: Double? = null, val market_as_of: String? = null,
@@ -474,8 +486,10 @@ interface ThirdHandApi {
     suspend fun runPaperTradingNow(): PaperTradingRunDto
     @GET("v1/paper-trading/decision-audit/{decisionId}")
     suspend fun paperTradingDecisionAudit(@Path("decisionId") decisionId: String): PaperTradingDecisionAuditDto
+    @GET("v1/decisions/{decisionId}/lineage")
+    suspend fun decisionLineage(@Path("decisionId") decisionId: String): DecisionLineageDto
     @GET("v1/news/cached")
-    suspend fun cachedNews(@Query("limit") limit: Int = 20, @Query("offset") offset: Int = 0): List<NewsItemDto>
+    suspend fun cachedNews(@Query("limit") limit: Int = 20, @Query("offset") offset: Int = 0, @Query("scope") scope: String = "all"): List<NewsItemDto>
 
     @GET("v1/holdings")
     suspend fun holdings(): List<HoldingDto>

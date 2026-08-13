@@ -2,6 +2,7 @@ package com.thirdhand.app
 
 import android.app.DownloadManager
 import android.content.BroadcastReceiver
+import android.content.ClipData
 import android.content.Context
 import android.content.Intent
 import android.content.pm.PackageInfo
@@ -234,7 +235,10 @@ object AppUpdateManager {
         } else {
             request.setDestinationInExternalFilesDir(context, Environment.DIRECTORY_DOWNLOADS, "updates/$filename")
         }
-        val downloadId = manager.enqueue(request)
+        val downloadId = runCatching { manager.enqueue(request) }.getOrElse {
+            Toast.makeText(context, "无法创建下载任务：${it.message ?: "请检查存储空间和下载地址"}", Toast.LENGTH_LONG).show()
+            return UpdateLaunchResult.DOWNLOAD_UNAVAILABLE
+        }
         preferences(context).edit()
             .putLong(DownloadId, downloadId)
             .putLong(CompletedDownloadId, -1L)
@@ -335,7 +339,8 @@ object AppUpdateManager {
         }
         val file = storedUpdateFile(context)
         if (file == null || !file.isFile) return@withContext false
-        val uri = FileProvider.getUriForFile(context, "${context.packageName}.fileprovider", file)
+        val uri = runCatching { FileProvider.getUriForFile(context, "${context.packageName}.fileprovider", file) }.getOrNull()
+            ?: return@withContext false
         if (!verifyDownloadedApk(context, uri, totalSize)) {
             clearFailedDownload(context, id)
             return@withContext false
@@ -345,9 +350,11 @@ object AppUpdateManager {
     }
 
     fun openInstaller(context: Context, uri: Uri): Boolean {
-        val installIntent = Intent(Intent.ACTION_INSTALL_PACKAGE)
-            .setData(uri)
-            .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_GRANT_READ_URI_PERMISSION)
+        val installIntent = Intent(Intent.ACTION_INSTALL_PACKAGE).apply {
+            data = uri
+            clipData = ClipData.newRawUri("update_apk", uri)
+            addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_GRANT_READ_URI_PERMISSION)
+        }
         return try {
             context.startActivity(installIntent)
             true
@@ -366,7 +373,9 @@ object AppUpdateManager {
             Settings.ACTION_MANAGE_UNKNOWN_APP_SOURCES,
             Uri.parse("package:${context.packageName}"),
         ).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
-        context.startActivity(intent)
+        runCatching { context.startActivity(intent) }.onFailure {
+            Toast.makeText(context, "无法打开安装权限设置，请在系统设置中允许本应用安装未知来源应用。", Toast.LENGTH_LONG).show()
+        }
     }
 
     private fun completedDownload(context: Context): CompletedDownload? {
@@ -376,7 +385,8 @@ object AppUpdateManager {
         val file = storedUpdateFile(context) ?: return null
         val expectedSize = preferences.getLong(ExpectedSize, -1L)
         if (!file.isFile || expectedSize <= 0 || file.length() != expectedSize) return null
-        val uri = FileProvider.getUriForFile(context, "${context.packageName}.fileprovider", file)
+        val uri = runCatching { FileProvider.getUriForFile(context, "${context.packageName}.fileprovider", file) }.getOrNull()
+            ?: return null
         return CompletedDownload(
             id = id,
             uri = uri,

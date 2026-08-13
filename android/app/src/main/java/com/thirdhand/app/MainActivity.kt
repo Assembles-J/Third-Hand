@@ -171,7 +171,6 @@ private fun ThirdHandApp(resumeSignal: Int) {
     var updateMessage by remember { mutableStateOf<String?>(null) }
     var startupDownloadProgress by remember { mutableStateOf<UpdateDownloadProgress?>(null) }
     var monitoringStartupDownload by remember { mutableStateOf(false) }
-    var installStartupUpdateWhenReady by remember { mutableStateOf(false) }
     LaunchedEffect(resumeSignal) {
         try {
             val update = AppUpdateManager.check(context)
@@ -207,13 +206,10 @@ private fun ThirdHandApp(resumeSignal: Int) {
             if (current == null || !current.state.isActive) {
                 monitoringStartupDownload = false
                 val ready = AppUpdateManager.hasCompletedDownload(context)
-                updateMessage = if (ready && installStartupUpdateWhenReady) {
-                    installStartupUpdateWhenReady = false
-                    installResultMessage(AppUpdateManager.installDownloadedUpdate(context), context)
-                } else if (current?.state == UpdateDownloadState.FAILED) {
+                updateMessage = if (current?.state == UpdateDownloadState.FAILED) {
                     current.message
                 } else {
-                    AppUpdateManager.completedUpdateMessage(context) ?: current?.state?.label
+                    if (ready) "更新包已下载并校验完成，请在管理页面点击“安装更新”。" else AppUpdateManager.completedUpdateMessage(context) ?: current?.state?.label
                 }
                 break
             }
@@ -319,7 +315,6 @@ private fun ThirdHandApp(resumeSignal: Int) {
                         when (AppUpdateManager.downloadAndInstall(context, update)) {
                             UpdateLaunchResult.DOWNLOAD_STARTED -> {
                                 startupDownloadProgress = AppUpdateManager.downloadProgress(context)
-                                installStartupUpdateWhenReady = true
                                 monitoringStartupDownload = true
                                 startupUpdate = null
                                 updateMessage = "正在下载，完成后可在管理页面安装"

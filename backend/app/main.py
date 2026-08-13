@@ -10,6 +10,7 @@ import hashlib
 import io
 import json
 import logging
+import re
 from datetime import date, timezone, timedelta
 import os
 import time
@@ -43,7 +44,10 @@ from app.trading_calendar import TradingCalendarService
 from app.recommendations import candidate as build_candidate, first_fill, evaluations
 from app.opportunity_scoring import score_opportunity
 from app.decision_context import DecisionContextBuilder
-from app.decision_models import DecisionContext
+from app.execution_precheck import validate_daily_execution
+from app.research_report import ResearchReportBuilder
+from app.research_thesis import ResearchThesisService
+from app.decision_models import DecisionContext, ResearchReport, ThesisVersion
 from app.evidence_engine import EvidenceEngine
 from app import decision_config as config
 from app.action_policy import ActionPolicyEngine
@@ -692,6 +696,8 @@ position_sizing_engine = PositionSizingEngine()
 decision_ai_service = DecisionAiService(store)
 decision_guard = DecisionGuard()
 decision_orchestrator = DecisionOrchestrator(evidence_engine, action_policy_engine, position_sizing_engine, decision_ai_service, decision_guard)
+research_report_builder = ResearchReportBuilder(evidence_engine)
+research_thesis_service = ResearchThesisService()
 from app.research_chat.routes import build_router
 app.include_router(build_router(store, decision_context_builder, decision_orchestrator, lambda symbol: price_history_service.refresh(store, symbol)))
 
@@ -1367,13 +1373,14 @@ def paper_trading_symbols() -> list[str]:
     with universe_scan_state_lock:
         market_candidates = list((universe_scan_state.get("candidates") or {}).keys())
     positions = [str(item["symbol"]).strip().upper() for item in store.paper_account().get("positions", [])]
+    watch_symbols = [str(item["symbol"]).strip().upper() for item in store.watchlist()]
     ready_market = store.opportunity_symbols(minimum_daily_bars=60, limit=PAPER_TRADING_CANDIDATE_LIMIT * 3)
-    # The scanner is market-first. Existing simulated positions are appended
-    # only to preserve risk monitoring; real holdings and watchlists do not
-    # influence the opportunity ranking or consume the first slots.
+    # A watchlist only changes refresh/display priority. It is intentionally
+    # absent from DecisionContext and never changes a symbol's policy inputs.
     market_first = list(dict.fromkeys([*market_candidates, *ready_market]))
     reserved_for_risk = min(len(positions), PAPER_TRADING_CANDIDATE_LIMIT)
-    return list(dict.fromkeys([*market_first[:PAPER_TRADING_CANDIDATE_LIMIT - reserved_for_risk], *positions]))
+    available = max(0, PAPER_TRADING_CANDIDATE_LIMIT - reserved_for_risk)
+    return list(dict.fromkeys([*watch_symbols, *market_first]))[:available] + [item for item in positions if item not in watch_symbols][:reserved_for_risk]
 
 
 def paper_trading_names(symbols: list[str]) -> dict[str, str]:
@@ -1444,6 +1451,42 @@ def prepare_paper_decisions(symbols: list[str]) -> int:
     return generated
 
 
+def execute_due_paper_decisions(symbols: list[str], names: dict[str, str]) -> tuple[int, int]:
+    """Fill only a previous daily decision at a later market-session price."""
+    positions = {str(item["symbol"]).strip().upper(): float(item["quantity"]) for item in store.paper_account().get("positions", [])}
+    executed = skipped = 0
+    for symbol in symbols:
+        report = (store.decision_reports(symbol, 1) or [None])[0]
+        quote = next(iter(store.cached_quotes([symbol])), None)
+        if not report:
+            continue
+        check = validate_daily_execution(report, quote)
+        if not check.allowed:
+            continue
+        action = str(report.get("action") or "").upper()
+        sizing = report.get("sizing") or {}
+        quantity = float(sizing.get("suggested_quantity") or sizing.get("target_quantity") or 0)
+        price = float((quote or {}).get("price") or 0)
+        side = "BUY" if action in {"OPEN", "ADD"} else "SELL" if action in {"REDUCE", "EXIT"} else None
+        if not side or quantity <= 0 or price <= 0:
+            continue
+        if side == "SELL" and positions.get(symbol, 0.0) <= 0:
+            store.record_paper_skip(symbol=symbol, name=names.get(symbol, symbol), decision_id=str(report.get("decision_id") or "") or None, reason="paper_sell_blocked_no_position", price=price)
+            skipped += 1
+            continue
+        if side == "SELL":
+            quantity = min(quantity, positions.get(symbol, 0.0))
+        try:
+            store.execute_paper_trade(trade_id=str(uuid4()), symbol=symbol, name=names.get(symbol, symbol), side=side, quantity=quantity, price=price, decision_id=str(report.get("decision_id") or "") or None, reason=f"next_market_session:{action}; {str(report.get('summary') or '')[:180]}", execution_quote_at=str((quote or {}).get("as_of") or (quote or {}).get("retrieved_at") or "") or None, execution_quote_source=str((quote or {}).get("source") or "") or None, fill_price_mode="NEXT_ELIGIBLE_OBSERVED_QUOTE")
+            executed += 1
+            positions[symbol] = positions.get(symbol, 0.0) + (quantity if side == "BUY" else -quantity)
+        except ValueError as error:
+            if str(error) != "paper_decision_already_executed":
+                store.record_paper_skip(symbol=symbol, name=names.get(symbol, symbol), decision_id=str(report.get("decision_id") or "") or None, reason=str(error), price=price)
+                skipped += 1
+    return executed, skipped
+
+
 def run_paper_trading_cycle(symbols: list[str], force: bool = False, allow_when_disabled: bool = False) -> dict[str, int]:
     """Apply the sole persisted DecisionReport output to an isolated paper ledger."""
     global last_paper_trading_run_at
@@ -1470,50 +1513,12 @@ def run_paper_trading_cycle(symbols: list[str], force: bool = False, allow_when_
         with paper_trading_state_lock:
             paper_trading_state.update({"last_status": "researching", "last_message": "行情已同步，正在检索新闻并为可用候选生成 AI 决策。"})
         refresh_paper_market_intelligence(symbols, names)
+        due_executed, due_skipped = execute_due_paper_decisions(symbols, names)
+        executed += due_executed
+        skipped += due_skipped
         generated_reports = prepare_paper_decisions(symbols)
-        simulated_positions = {
-            str(item["symbol"]).strip().upper(): float(item["quantity"])
-            for item in store.paper_account().get("positions", [])
-        }
-        for symbol in symbols:
-            report = (store.decision_reports(symbol, 1) or [None])[0]
-            if not report:
-                no_action_reasons.append(f"{names.get(symbol, symbol)}：行情或日线仍在补齐")
-                continue
-            if str(report.get("status", "")).upper() not in {"READY", "DEGRADED"}:
-                no_action_reasons.append(f"{names.get(symbol, symbol)}：决策输入尚不完整")
-                continue
-            action = str(report.get("action") or report.get("ai_assessment", {}).get("preferred_action") or "").upper()
-            sizing = report.get("sizing") or {}
-            quantity = float(sizing.get("suggested_quantity") or sizing.get("target_quantity") or 0)
-            price = float(report.get("market_price") or 0)
-            side = "BUY" if action in {"BUY", "ADD", "OPEN"} else "SELL" if action in {"REDUCE", "SELL", "STOP", "EXIT"} else None
-            if not side or quantity <= 0 or price <= 0:
-                no_action_reasons.append(f"{names.get(symbol, symbol)}：当前没有满足条件的买卖信号")
-                continue
-            if side == "SELL" and simulated_positions.get(symbol, 0.0) <= 0:
-                # A sell signal is not an executable paper action when this
-                # ledger has no position.  Persist the reason for audit, but
-                # never attempt an order or pretend that a position exists.
-                reason = "paper_sell_blocked_no_position"
-                store.record_paper_skip(symbol=symbol, name=names.get(symbol, symbol), decision_id=str(report.get("decision_id") or "") or None, reason=reason, price=price)
-                skipped += 1
-                no_action_reasons.append(f"{names.get(symbol, symbol)}：模拟账套无持仓，卖出信号已拦截")
-                continue
-            if side == "SELL":
-                quantity = min(quantity, simulated_positions.get(symbol, 0.0))
-            try:
-                store.execute_paper_trade(trade_id=str(uuid4()), symbol=symbol, name=names.get(symbol, symbol), side=side, quantity=quantity, price=price, decision_id=str(report.get("decision_id") or "") or None, reason=f"统一 AI 决策：{action}；{str(report.get('summary') or '')[:180]}")
-                executed += 1
-                simulated_positions[symbol] = simulated_positions.get(symbol, 0.0) + (quantity if side == "BUY" else -quantity)
-                logger.info("paper trading executed symbol=%s side=%s quantity=%s", symbol, side, quantity)
-            except ValueError as error:
-                logger.info("paper trading skipped symbol=%s reason=%s", symbol, error)
-                # Repeating an already-consumed decision is expected after a restart;
-                # it is not a new skipped trading decision and should not spam the journal.
-                if str(error) != "paper_decision_already_executed":
-                    store.record_paper_skip(symbol=symbol, name=names.get(symbol, symbol), decision_id=str(report.get("decision_id") or "") or None, reason=str(error), price=price)
-                    skipped += 1
+        if not due_executed:
+            no_action_reasons.append("本交易时段没有到期且可执行的历史决策")
         store.record_paper_equity_snapshot()
         result = {"executed": executed, "skipped": skipped}
         with paper_trading_state_lock:
@@ -1800,6 +1805,81 @@ def decision_detail(decision_id: str) -> dict[str, object]:
     if not report:
         raise HTTPException(status_code=404, detail="decision not found")
     return report
+
+
+@app.get("/v1/decisions/{decision_id}/lineage")
+def decision_lineage(decision_id: str) -> dict[str, object]:
+    lineage = store.decision_lineage(decision_id)
+    if lineage is None:
+        raise HTTPException(status_code=404, detail="decision not found")
+    return lineage
+
+
+@app.get("/v1/data-quality/events")
+def data_quality_events(symbol: str | None = None, limit: int = Query(default=100, ge=1, le=500)) -> list[dict[str, object]]:
+    return store.data_quality_events(symbol, limit)
+
+
+@app.post("/v1/research-reports/{symbol}")
+def generate_research_report(symbol: str) -> dict[str, object]:
+    context = decision_context_builder.build(symbol)
+    store.save_decision_context(context.model_dump(mode="json"))
+    report = research_report_builder.build(context)
+    store.save_research_report(report.model_dump(mode="json"))
+    return report.model_dump(mode="json")
+
+
+@app.get("/v1/research-reports/{symbol}")
+def research_report_history(symbol: str, limit: int = Query(default=20, ge=1, le=100)) -> list[dict[str, object]]:
+    return store.research_reports(symbol, limit)
+
+
+@app.get("/v1/research-reports/detail/{report_id}")
+def research_report_detail(report_id: str) -> dict[str, object]:
+    report = store.research_report(report_id)
+    if not report:
+        raise HTTPException(status_code=404, detail="research report not found")
+    return report
+
+
+@app.post("/v1/research-theses/from-report/{report_id}")
+def create_research_thesis(report_id: str) -> dict[str, object]:
+    report = store.research_report(report_id)
+    if not report:
+        raise HTTPException(status_code=404, detail="research report not found")
+    thesis = research_thesis_service.create(ResearchReport.model_validate(report))
+    store.save_research_thesis(thesis.model_dump(mode="json"))
+    return thesis.model_dump(mode="json")
+
+
+@app.post("/v1/research-theses/{thesis_id}/review/{report_id}")
+def review_research_thesis(thesis_id: str, report_id: str) -> dict[str, object]:
+    previous = store.research_thesis(thesis_id)
+    report = store.research_report(report_id)
+    if not previous:
+        raise HTTPException(status_code=404, detail="research thesis not found")
+    if not report:
+        raise HTTPException(status_code=404, detail="research report not found")
+    prior = ThesisVersion.model_validate(previous)
+    typed_report = ResearchReport.model_validate(report)
+    if prior.symbol != typed_report.symbol:
+        raise HTTPException(status_code=400, detail="research thesis symbol mismatch")
+    current = research_thesis_service.create(typed_report, thesis_id=thesis_id, prior=prior)
+    store.save_research_thesis(current.model_dump(mode="json"))
+    return {"thesis": current.model_dump(mode="json"), "review": research_thesis_service.review_summary(prior, current)}
+
+
+@app.get("/v1/research-theses/detail/{thesis_id}")
+def research_thesis_detail(thesis_id: str, version: int | None = Query(default=None, ge=1)) -> dict[str, object]:
+    thesis = store.research_thesis(thesis_id, version)
+    if not thesis:
+        raise HTTPException(status_code=404, detail="research thesis not found")
+    return thesis
+
+
+@app.get("/v1/research-theses/{symbol}")
+def research_thesis_history(symbol: str, limit: int = Query(default=20, ge=1, le=100)) -> list[dict[str, object]]:
+    return store.research_theses(symbol, limit)
 
 
 @app.get("/v1/paper-trading/decision-audit/{decision_id}")
@@ -2167,10 +2247,23 @@ def refresh_market_history(symbol: str, payload: MarketHistoryRefreshRequest = M
 
 
 @app.get("/v1/news/cached", response_model=list[NewsItem])
-def cached_news(limit: int = Query(default=20, ge=1, le=80), offset: int = Query(default=0, ge=0)) -> list[NewsItem]:
-    """Fast, paged local news read for the mobile home screen."""
-    items = store.cached_content(limit=limit, offset=offset)
-    return [NewsItem.model_validate(item) for item in sorted(items, key=lambda item: str(item.get("published_at") or ""), reverse=True)]
+def cached_news(
+    limit: int = Query(default=20, ge=1, le=80), offset: int = Query(default=0, ge=0),
+    scope: Literal["all", "paper_positions", "learning_cases"] = Query(default="all"),
+) -> list[NewsItem]:
+    """Fast, time-complete and scope-aware local news read for the mobile home screen."""
+    if scope == "paper_positions":
+        symbols = [str(item["symbol"]) for item in store.paper_account().get("positions", [])]
+    elif scope == "learning_cases":
+        symbols = [str(item["symbol"]) for item in store.learning_cases() if item.get("symbol")]
+    else:
+        symbols = []
+    # Do not present a date-only item as if it were a real-time news event.
+    # Read a bounded cache batch, sort by actual publication time, then page.
+    items = store.cached_content(symbols or None, limit=5000)
+    complete = [item for item in items if re.search(r"\d{2}:\d{2}:\d{2}", str(item.get("published_at") or ""))]
+    ordered = sorted(complete, key=lambda item: str(item.get("published_at") or ""), reverse=True)
+    return [NewsItem.model_validate(item) for item in ordered[offset:offset + limit]]
     queue_background(refresh_derived_cache, [normalized_symbol], "manual-daily-history-refresh")
     if payload.start_date and payload.end_date:
         return [DailyPrice.model_validate(item) for item in store.daily_prices_between(

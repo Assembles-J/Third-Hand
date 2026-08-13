@@ -107,6 +107,45 @@ def _create_research_daily_history_refreshes(connection: sqlite3.Connection) -> 
     )
 
 
+def _create_p1_data_lineage(connection: sqlite3.Connection) -> None:
+    connection.executescript("""
+    CREATE TABLE IF NOT EXISTS data_source_registry (
+      source_key TEXT PRIMARY KEY, provider TEXT NOT NULL, data_class TEXT NOT NULL,
+      retention_days INTEGER NOT NULL, revision_policy TEXT NOT NULL, enabled INTEGER NOT NULL DEFAULT 1, updated_at TEXT NOT NULL
+    );
+    CREATE TABLE IF NOT EXISTS raw_data_snapshots (
+      snapshot_id TEXT PRIMARY KEY, source_key TEXT NOT NULL, symbol TEXT, data_class TEXT NOT NULL,
+      effective_at TEXT, available_at TEXT NOT NULL, retrieved_at TEXT NOT NULL, payload_hash TEXT NOT NULL,
+      payload TEXT NOT NULL, supersedes_snapshot_id TEXT, created_at TEXT NOT NULL
+    );
+    CREATE INDEX IF NOT EXISTS idx_raw_data_snapshots_lookup ON raw_data_snapshots(symbol, data_class, available_at DESC);
+    CREATE TABLE IF NOT EXISTS data_quality_events (
+      event_id TEXT PRIMARY KEY, symbol TEXT, source_key TEXT NOT NULL, event_type TEXT NOT NULL,
+      severity TEXT NOT NULL, observed_at TEXT NOT NULL, payload TEXT NOT NULL
+    );
+    CREATE TABLE IF NOT EXISTS feature_catalog (
+      feature_key TEXT NOT NULL, version TEXT NOT NULL, definition_json TEXT NOT NULL,
+      enabled INTEGER NOT NULL DEFAULT 0, created_at TEXT NOT NULL, PRIMARY KEY(feature_key, version)
+    );
+    CREATE TABLE IF NOT EXISTS feature_values (
+      context_id TEXT NOT NULL, feature_key TEXT NOT NULL, feature_version TEXT NOT NULL,
+      value_json TEXT NOT NULL, source_snapshot_ids TEXT NOT NULL, effective_at TEXT,
+      available_at TEXT NOT NULL, quality_status TEXT NOT NULL, created_at TEXT NOT NULL,
+      PRIMARY KEY(context_id, feature_key, feature_version)
+    );
+    """)
+
+
+def _create_research_reports(connection: sqlite3.Connection) -> None:
+    connection.execute("CREATE TABLE IF NOT EXISTS research_reports (report_id TEXT PRIMARY KEY, context_id TEXT NOT NULL, symbol TEXT NOT NULL, input_hash TEXT NOT NULL, payload TEXT NOT NULL, created_at TEXT NOT NULL)")
+    connection.execute("CREATE INDEX IF NOT EXISTS idx_research_reports_symbol_time ON research_reports(symbol, created_at DESC)")
+
+
+def _create_research_theses(connection: sqlite3.Connection) -> None:
+    connection.execute("CREATE TABLE IF NOT EXISTS research_thesis_versions (thesis_id TEXT NOT NULL, version INTEGER NOT NULL, symbol TEXT NOT NULL, report_id TEXT NOT NULL, prior_version_id TEXT, payload TEXT NOT NULL, created_at TEXT NOT NULL, PRIMARY KEY(thesis_id, version))")
+    connection.execute("CREATE INDEX IF NOT EXISTS idx_research_theses_symbol_time ON research_thesis_versions(symbol, created_at DESC)")
+
+
 MIGRATIONS = (
     Migration("0001_legacy_schema_baseline", _record_legacy_schema_baseline),
     Migration("0002_decision_contexts", _create_decision_contexts),
@@ -117,6 +156,9 @@ MIGRATIONS = (
     Migration("0007_research_chat_sessions", _create_research_chat_tables),
     Migration("0008_research_chat_session_sources", _create_research_chat_session_sources),
     Migration("0009_research_daily_history_refreshes", _create_research_daily_history_refreshes),
+    Migration("0010_p1_data_lineage", _create_p1_data_lineage),
+    Migration("0011_research_reports", _create_research_reports),
+    Migration("0012_research_theses", _create_research_theses),
 )
 
 

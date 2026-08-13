@@ -98,7 +98,13 @@ class DecisionContextBuilder:
             has_quote=price is not None, daily_bar_count=len(bars), total_assets_available=total_assets is not None,
             plan_enabled=bool(plan and plan.get("enabled")), has_risk=risk is not None,
             has_market_regime=market_regime is not None, has_relative_strength=relative_strength is not None,
-            has_events=bool(events),
+            has_events=bool(events), has_instrument=instrument is not None, has_position=position is not None,
+            has_personal_rule=rule is not None, quote_as_of=str((quote or {}).get("as_of") or "") or None,
+            quote_retrieved_at=str((quote or {}).get("retrieved_at") or "") or None,
+            daily_bar_as_of=str(bars[-1].get("trading_date") or "") if bars else None,
+            risk_as_of=str((risk or {}).get("as_of") or "") or None,
+            market_as_of=market_regime.as_of if market_regime else None,
+            market_retrieved_at=market_flow.retrieved_at if market_flow else None,
         )
         account = AccountSnapshot(
             available_cash=cash, total_market_value=total_market_value, total_assets=total_assets,
@@ -126,16 +132,15 @@ class DecisionContextBuilder:
         return next((item for item in payload.get("items", []) if str(item.get("symbol", "")).upper() == symbol), None)
 
     def _events(self, symbol: str) -> tuple[EventSnapshot, ...]:
-        # AI-derived event impact is evidence metadata only.  The decision
-        # policy still owns action selection and accepts uncertain output.
+        # Cached AI analysis is research-only.  Its directional label must not
+        # enter deterministic evidence because ActionPolicy consumes negative
+        # event evidence for ADD/REDUCE decisions.  A future policy event must
+        # be a separately verified, deterministic feature.
         results = []
         for item in self.store.cached_content([symbol], limit=10):
             ai = item.get("ai_analysis") or {}
-            impact = str(ai.get("impact", "uncertain"))
-            if impact not in {"positive", "negative", "neutral", "uncertain"}:
-                impact = "uncertain"
             results.append(EventSnapshot(
-                event_id=str(item.get("id", "")), title=str(item.get("title", "")), impact=impact,
+                event_id=str(item.get("id", "")), title=str(item.get("title", "")), impact="uncertain",
                 source=str(item.get("source_name", "content_cache")), source_reference=item.get("source_url"),
                 published_at=str(item["published_at"]) if item.get("published_at") else None,
                 summary=str(ai.get("summary") or item.get("explanation") or "") or None,

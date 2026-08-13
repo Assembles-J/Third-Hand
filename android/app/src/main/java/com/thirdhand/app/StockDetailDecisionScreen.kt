@@ -549,7 +549,10 @@ private fun StockDetailDecisionScreen(
 @Composable private fun EvidenceGroup(title: String, items: List<DecisionEvidenceDto>) {
     Text(title, style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.SemiBold)
     if (items.isEmpty()) Text("暂无", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
-    else items.take(5).forEach { item -> Text("${item.title}：${item.description}（${item.source}）", style = MaterialTheme.typography.bodySmall) }
+    else {
+        items.take(5).forEach { item -> Text("${item.title}：${item.description}（${item.source}）", style = MaterialTheme.typography.bodySmall) }
+        if (items.size > 5) Text("当前仅展示 5 / ${items.size} 条；完整证据请在模拟操作分析记录中查看。", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+    }
 }
 
 @Composable private fun RulesCard(rules: List<PersonalRuleDto>, error: String?) = Column(Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 10.dp), verticalArrangement = Arrangement.spacedBy(5.dp)) {

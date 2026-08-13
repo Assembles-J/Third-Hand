@@ -35,7 +35,8 @@ class EvidenceEngine:
     def _data_quality(context: DecisionContext) -> EvidenceItem:
         quality = context.data_quality
         direction = "positive" if quality.status == "ready" else "uncertain" if quality.status == "degraded" else "negative"
-        return _item("data_quality.summary", "data_quality", direction, quality.score_percent / 100, "数据质量", f"数据质量为 {quality.status}，完整度 {quality.score_percent}%", value=quality.status, threshold=100, source="decision_context", as_of=context.generated_at, fresh=True)
+        fresh = not quality.stale_fields
+        return _item("data_quality.summary", "data_quality", direction, quality.score_percent / 100, "数据质量", f"数据质量为 {quality.status}，完整度 {quality.score_percent}%", value=quality.status, threshold=100, source="decision_context", as_of=context.generated_at, fresh=fresh)
 
     @staticmethod
     def _position(context: DecisionContext) -> list[EvidenceItem]:
@@ -111,7 +112,7 @@ class EvidenceEngine:
         if not market or market.status != "ready" or market.regime not in {"supportive", "mixed", "defensive"}:
             return flow_evidence
         direction = "positive" if market.regime == "supportive" else "negative" if market.regime == "defensive" else "neutral"
-        return [_item(f"market.{market.regime}", "market", direction, .6 if market.regime != "mixed" else .3, "市场环境", f"市场环境为 {market.regime}", value=market.regime, source=market.source or "market_regime", as_of=market.as_of, fresh=True)]
+        return [*flow_evidence, _item(f"market.{market.regime}", "market", direction, .6 if market.regime != "mixed" else .3, "市场环境", f"市场环境为 {market.regime}", value=market.regime, source=market.source or "market_regime", as_of=market.as_of, fresh=True)]
 
     @staticmethod
     def _relative(context: DecisionContext) -> list[EvidenceItem]:

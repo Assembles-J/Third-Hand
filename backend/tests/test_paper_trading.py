@@ -65,7 +65,7 @@ def test_paper_ledger_rejects_cash_and_position_overruns(tmp_path: Path) -> None
     store.save_paper_account(100)
     with pytest.raises(ValueError, match="insufficient_paper_cash"):
         store.execute_paper_trade(trade_id=str(uuid4()), symbol="000001", name="平安", side="BUY", quantity=100, price=2, decision_id=None, reason="test")
-    with pytest.raises(ValueError, match="insufficient_paper_position"):
+    with pytest.raises(ValueError, match="paper_t1_unsellable_quantity"):
         store.execute_paper_trade(trade_id=str(uuid4()), symbol="000001", name="平安", side="SELL", quantity=1, price=2, decision_id=None, reason="test")
     with pytest.raises(ValueError, match="100_share_lot"):
         store.execute_paper_trade(trade_id=str(uuid4()), symbol="000001", name="平安", side="BUY", quantity=101, price=1, decision_id=None, reason="test")
@@ -76,6 +76,21 @@ def test_paper_interval_is_persisted_and_has_a_safe_minimum(tmp_path: Path) -> N
     assert store.system_settings()["paper_trading_interval_seconds"] == 600
     store.save_system_settings({"paper_trading_enabled": True, "paper_trading_interval_seconds": 1200, "update_check_enabled": True})
     assert store.system_settings()["paper_trading_interval_seconds"] == 1200
+
+
+def test_paper_fill_keeps_quote_time_source_and_price_semantics(tmp_path: Path) -> None:
+    store = PortfolioStore(tmp_path / "paper-audit.db")
+    store.save_paper_account(10_000)
+    store.execute_paper_trade(
+        trade_id=str(uuid4()), symbol="600519", name="茅台", side="BUY", quantity=100, price=10,
+        decision_id="decision-audit", reason="test", execution_quote_at="2026-08-14T09:31:00+08:00",
+        execution_quote_source="test_provider", fill_price_mode="NEXT_ELIGIBLE_OBSERVED_QUOTE",
+    )
+
+    log = store.paper_logs(limit=1)[0]
+    assert log["execution_quote_at"] == "2026-08-14T09:31:00+08:00"
+    assert log["execution_quote_source"] == "test_provider"
+    assert log["fill_price_mode"] == "NEXT_ELIGIBLE_OBSERVED_QUOTE"
 
 
 def test_system_settings_waits_for_a_brief_concurrent_writer(tmp_path: Path) -> None:

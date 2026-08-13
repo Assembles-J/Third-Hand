@@ -386,6 +386,11 @@ class MarketDataService:
                 sectors.append({"name": str(row.get("名称") or ""), "change_percent": self._number(row.get("今日涨跌幅")), "net_amount": self._number(row.get("今日主力净流入-净额")), "net_percent": self._number(row.get("今日主力净流入-净占比")), "leader": str(row.get("今日主力净流入最大股") or "")})
         except Exception as error:
             logger.warning("sector fund ranking unavailable error_type=%s", type(error).__name__)
+        if not sectors:
+            try:
+                sectors = self._sector_flow_rows()
+            except Exception as error:
+                logger.warning("sector fund ranking direct fallback unavailable error_type=%s", type(error).__name__)
         rankings = self._rank_universe(priced)
         rankings.update(self._main_flow_rankings(ak))
         northbound = self._northbound_flow(ak)
@@ -394,24 +399,42 @@ class MarketDataService:
     def _main_flow_rankings(self, ak) -> dict[str, list[dict[str, object]]]:
         """Best-effort individual main-fund rankings with a compatible fallback."""
         try:
-            frame = ak.stock_individual_fund_flow_rank(indicator="今日")
-            rows = []
-            for _, row in frame.iterrows():
-                net = self._number(self._row_value(row, "今日主力净流入-净额", "主力净流入-净额"))
-                rows.append({
-                    "symbol": str(self._row_value(row, "代码") or "").zfill(6),
-                    "name": str(self._row_value(row, "名称") or ""),
-                    "price": self._number(self._row_value(row, "最新价")),
-                    "change_percent": self._number(self._row_value(row, "今日涨跌幅", "涨跌幅")),
-                    "amount": None,
-                    "net_amount": net,
-                    "net_percent": self._number(self._row_value(row, "今日主力净流入-净占比", "主力净流入-净占比")),
-                })
+            rows = self._eastmoney_flow_rows(
+                fs="m:0+t:6+f:!2,m:0+t:13+f:!2,m:0+t:80+f:!2,m:1+t:2+f:!2,m:1+t:23+f:!2",
+                fields="f2,f3,f12,f14,f62,f184",
+            )
             rows = [item for item in rows if item["symbol"].isdigit() and item["net_amount"] is not None]
             return {"main_inflow": sorted(rows, key=lambda item: float(item["net_amount"]), reverse=True)[:20], "main_outflow": sorted(rows, key=lambda item: float(item["net_amount"]))[:20]}
         except Exception as error:
             logger.warning("individual fund-flow ranking unavailable error_type=%s", type(error).__name__)
             return {"main_inflow": [], "main_outflow": []}
+
+    def _eastmoney_flow_rows(self, *, fs: str, fields: str) -> list[dict[str, object]]:
+        """Use the stable Eastmoney JSON payload directly.
+
+        Some AKShare wrappers assign columns by position and currently break when
+        the provider adds/removes fields.  We read named JSON keys instead.
+        """
+        import requests
+        response = requests.get(
+            "https://push2.eastmoney.com/api/qt/clist/get",
+            params={"pn": 1, "pz": 200, "po": 1, "np": 1, "fltt": 2, "invt": 2,
+                    "fid": "f62", "ut": "b2884a393a59ad64002292a3e90d46a5", "fs": fs, "fields": fields},
+            headers={"User-Agent": "Mozilla/5.0"}, timeout=15,
+        )
+        response.raise_for_status()
+        values = (response.json().get("data") or {}).get("diff") or []
+        return [{"symbol": str(value.get("f12") or "").zfill(6), "name": str(value.get("f14") or ""), "price": self._number(value.get("f2")), "change_percent": self._number(value.get("f3")), "amount": None, "net_amount": self._number(value.get("f62")), "net_percent": self._number(value.get("f184"))} for value in values]
+
+    def _sector_flow_rows(self) -> list[dict[str, object]]:
+        return [{"name": item["name"], "change_percent": item["change_percent"], "net_amount": item["net_amount"], "net_percent": item["net_percent"], "leader": str(item.get("leader") or "")} for item in self._eastmoney_sector_rows()]
+
+    def _eastmoney_sector_rows(self) -> list[dict[str, object]]:
+        import requests
+        response = requests.get("https://push2.eastmoney.com/api/qt/clist/get", params={"pn": 1, "pz": 200, "po": 1, "np": 1, "fltt": 2, "invt": 2, "fid0": "f62", "fs": "m:90+t:2", "stat": 1, "ut": "b2884a393a59ad64002292a3e90d46a5", "fields": "f12,f14,f3,f62,f184,f204"}, headers={"User-Agent": "Mozilla/5.0"}, timeout=15)
+        response.raise_for_status()
+        values = (response.json().get("data") or {}).get("diff") or []
+        return [{"name": str(value.get("f14") or ""), "change_percent": self._number(value.get("f3")), "net_amount": self._number(value.get("f62")), "net_percent": self._number(value.get("f184")), "leader": str(value.get("f204") or "")} for value in values]
 
     def _northbound_flow(self, ak) -> list[dict[str, object]]:
         try:

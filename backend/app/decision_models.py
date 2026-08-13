@@ -160,6 +160,28 @@ class DataQualitySummary(DecisionModel):
     warnings: tuple[str, ...] = ()
 
 
+class SourceFreshness(DecisionModel):
+    source_key: str
+    as_of: str | None = None
+    retrieved_at: str | None = None
+    max_age_seconds: int | None = None
+    status: Literal["fresh", "stale", "unknown", "unavailable"]
+    reason: str | None = None
+
+
+class ActionGate(DecisionModel):
+    action: Literal["OPEN", "ADD", "HOLD", "WATCH", "REDUCE", "EXIT"]
+    permission: Literal["allowed", "research_only", "blocked"]
+    reasons: tuple[str, ...] = ()
+    required_fields: tuple[str, ...] = ()
+    unavailable_fields: tuple[str, ...] = ()
+
+
+class DecisionQualitySummary(DataQualitySummary):
+    source_freshness: tuple[SourceFreshness, ...] = ()
+    action_gates: tuple[ActionGate, ...] = ()
+
+
 class EvidenceItem(DecisionModel):
     evidence_id: str
     category: Literal["position", "price", "trend", "momentum", "volatility", "volume", "event", "fundamental", "market", "relative", "liquidity", "plan", "risk", "data_quality"]
@@ -174,6 +196,55 @@ class EvidenceItem(DecisionModel):
     fresh: bool
     rule_id: str | None = None
     source_reference: str | None = None
+
+
+class ResearchClaim(DecisionModel):
+    claim_id: str
+    statement: str = Field(min_length=1, max_length=500)
+    evidence_type: Literal["FACT", "INFERENCE", "HYPOTHESIS", "UNKNOWN"]
+    supporting_evidence_ids: tuple[str, ...] = ()
+    counter_evidence_ids: tuple[str, ...] = ()
+    missing_evidence: tuple[str, ...] = ()
+    invalidation_conditions: tuple[str, ...] = ()
+    confidence_band: Literal["low", "medium", "high"]
+
+
+class ResearchReport(DecisionModel):
+    report_id: str
+    context_id: str
+    symbol: str
+    generated_at: datetime
+    evidence: tuple[EvidenceItem, ...]
+    claims: tuple[ResearchClaim, ...]
+    data_quality: DecisionQualitySummary
+    report_status: Literal["ready", "degraded", "blocked"]
+    input_hash: str
+    research_only: Literal[True] = True
+
+
+class ResearchCatalyst(DecisionModel):
+    """A traceable event record; it must not invent a future date or outcome."""
+    catalyst_id: str
+    title: str = Field(min_length=1, max_length=500)
+    source_evidence_ids: tuple[str, ...] = ()
+    scheduled_at: datetime | None = None
+    status: Literal["observed", "upcoming", "unknown"]
+    expected_metric: str | None = None
+    actual_metric: str | None = None
+
+
+class ThesisVersion(DecisionModel):
+    thesis_id: str
+    version: int = Field(ge=1)
+    symbol: str
+    report_id: str
+    prior_version_id: str | None = None
+    created_at: datetime
+    hypotheses: tuple[ResearchClaim, ...]
+    catalysts: tuple[ResearchCatalyst, ...]
+    invalidation_conditions: tuple[str, ...]
+    review_status: Literal["review_required", "insufficient_evidence"]
+    research_only: Literal[True] = True
 
 
 class ActionCandidate(DecisionModel):
@@ -276,6 +347,7 @@ class DecisionReport(DecisionModel):
     status: Literal["READY", "BLOCKED", "DEGRADED"]
     action: Literal["OPEN", "ADD", "HOLD", "WATCH", "REDUCE", "EXIT", "BLOCKED"]
     summary: str
+    data_quality: DecisionQualitySummary
     evidence: tuple[EvidenceItem, ...]
     action_candidates: tuple[ActionCandidate, ...]
     operation_items: tuple[OperationItem, ...] = ()
@@ -289,6 +361,9 @@ class DecisionReport(DecisionModel):
     policy_version: str
     prompt_version: str | None = None
     schema_version: str = "context-v1"
+    audit_versions: dict[str, str] = {}
+    execution_price_mode: Literal["NEXT_ELIGIBLE_OBSERVED_QUOTE"] = "NEXT_ELIGIBLE_OBSERVED_QUOTE"
+    execution_eligible_after: str | None = None
     model: str | None = None
     input_hash: str
     automatic_execution: Literal[False] = False
@@ -313,6 +388,6 @@ class DecisionContext(DecisionModel):
     trade_plan: TradePlanSnapshot | None
     personal_rule: PersonalRuleSnapshot | None
     instrument: InstrumentSnapshot | None
-    data_quality: DataQualitySummary
+    data_quality: DecisionQualitySummary
     source_versions: dict[str, str]
     input_hash: str

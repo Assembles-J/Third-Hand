@@ -5,6 +5,7 @@ import os
 import sqlite3
 import json
 import math
+import hashlib
 from pathlib import Path
 from threading import Lock
 from uuid import uuid4
@@ -276,6 +277,9 @@ class PortfolioStore:
                 connection.execute("CREATE INDEX IF NOT EXISTS idx_paper_equity_snapshots_time ON paper_trading_equity_snapshots(recorded_at DESC)")
                 self._ensure_column(connection, "paper_trading_logs", "status", "TEXT NOT NULL DEFAULT 'executed'")
                 self._ensure_column(connection, "paper_trading_logs", "fee", "REAL NOT NULL DEFAULT 0")
+                self._ensure_column(connection, "paper_trading_logs", "execution_quote_at", "TEXT")
+                self._ensure_column(connection, "paper_trading_logs", "execution_quote_source", "TEXT")
+                self._ensure_column(connection, "paper_trading_logs", "fill_price_mode", "TEXT")
                 self._ensure_column(connection, "paper_trading_accounts", "initial_cash", "REAL NOT NULL DEFAULT 0")
                 connection.execute("""
                     CREATE TABLE IF NOT EXISTS calibration_observations (
@@ -745,6 +749,103 @@ class PortfolioStore:
                 (str(item["context_id"]), str(item["symbol"]), str(item["input_hash"]),
                  json.dumps(item, ensure_ascii=False, default=str), str(item["generated_at"])),
             )
+        self.capture_decision_lineage(item)
+
+    def capture_decision_lineage(self, context: dict[str, object]) -> None:
+        """Append immutable source snapshots and P1 shadow features for one context."""
+        now = beijing_now().isoformat()
+        symbol, context_id = str(context["symbol"]), str(context["context_id"])
+        snapshots: dict[str, str] = {}
+        sections = (("quote", "quote", context.get("quote")), ("daily_bars", "daily_bars", context.get("daily_bars")),
+                    ("risk", "risk", context.get("risk")), ("market_intelligence", "market", context.get("market_regime")))
+        with self._connect() as connection:
+            quality = context.get("data_quality") or {}
+            for field in [*(quality.get("missing_fields") or ()), *(quality.get("stale_fields") or ())]:
+                connection.execute("INSERT INTO data_quality_events VALUES (?,?,?,?,?,?,?)", (str(uuid4()), symbol, "decision_context", "input_unavailable", "warning", now, json.dumps({"field": field, "context_id": context_id})))
+            for source_key, data_class, payload in sections:
+                if payload is None:
+                    continue
+                connection.execute("INSERT OR IGNORE INTO data_source_registry VALUES (?,?,?,?,?,?,?)", (source_key, source_key, data_class, 365, "append_only", 1, now))
+                encoded = json.dumps(payload, ensure_ascii=False, sort_keys=True, default=str)
+                digest = hashlib.sha256(encoded.encode("utf-8")).hexdigest()
+                snapshot_id = str(uuid4())
+                available_at = str((payload or {}).get("retrieved_at") or (payload or {}).get("as_of") or context["generated_at"])
+                connection.execute("INSERT INTO raw_data_snapshots VALUES (?,?,?,?,?,?,?,?,?,?,?)", (snapshot_id, source_key, symbol, data_class, str((payload or {}).get("as_of") or "") or None, available_at, now, digest, encoded, None, now))
+                snapshots[source_key] = snapshot_id
+            technical = context.get("technical") or {}
+            risk = context.get("risk") or {}
+            market = context.get("market_regime") or {}
+            features = {
+                "trend.price_above_sma20": technical.get("trend") == "up",
+                "trend.sma20_above_sma60": (technical.get("sma20") or 0) >= (technical.get("sma60") or float("inf")),
+                "momentum.rsi14": technical.get("rsi14"), "momentum.macd_histogram": technical.get("macd_histogram"),
+                "volatility.atr_percent": technical.get("atr_percent"),
+                "risk.historical_downside_probability": risk.get("historical_downside_probability"),
+                "risk.annualized_volatility_percent": risk.get("annualized_volatility_percent"), "market.regime": market.get("regime"),
+            }
+            for key, value in features.items():
+                connection.execute("INSERT OR IGNORE INTO feature_catalog VALUES (?,?,?,?,?)", (key, "v1", json.dumps({"key": key, "mode": "shadow"}), 0, now))
+                connection.execute("INSERT OR REPLACE INTO feature_values VALUES (?,?,?,?,?,?,?,?,?)", (context_id, key, "v1", json.dumps(value), json.dumps(list(snapshots.values())), str(context["generated_at"]), str(context["generated_at"]), "available" if value is not None else "unavailable", now))
+
+    def decision_lineage(self, decision_id: str) -> dict[str, object] | None:
+        report = self.decision_report(decision_id)
+        if not report:
+            return None
+        context_id = str(report["context_id"])
+        with self._connect() as connection:
+            rows = connection.execute("SELECT feature_key,feature_version,value_json,source_snapshot_ids,effective_at,available_at,quality_status FROM feature_values WHERE context_id=? ORDER BY feature_key", (context_id,)).fetchall()
+            source_ids = {item for row in rows for item in json.loads(str(row["source_snapshot_ids"]))}
+            snapshots = [dict(row) for row in connection.execute("SELECT snapshot_id,source_key,data_class,effective_at,available_at,payload_hash FROM raw_data_snapshots WHERE snapshot_id IN (%s)" % ",".join("?" for _ in source_ids), tuple(source_ids)).fetchall()] if source_ids else []
+        return {"decision_id": decision_id, "context_id": context_id, "features": [{**dict(row), "value": json.loads(str(row["value_json"])), "source_snapshot_ids": json.loads(str(row["source_snapshot_ids"]))} for row in rows], "snapshots": snapshots}
+
+    def save_research_report(self, item: dict[str, object]) -> None:
+        with self._connect() as connection:
+            connection.execute("INSERT INTO research_reports VALUES (?,?,?,?,?,?)", (str(item["report_id"]), str(item["context_id"]), str(item["symbol"]), str(item["input_hash"]), json.dumps(item, ensure_ascii=False, default=str), str(item["generated_at"])))
+
+    def research_report(self, report_id: str) -> dict[str, object] | None:
+        with self._connect() as connection:
+            row = connection.execute("SELECT payload FROM research_reports WHERE report_id=?", (report_id,)).fetchone()
+        return json.loads(str(row["payload"])) if row else None
+
+    def research_reports(self, symbol: str, limit: int = 20) -> list[dict[str, object]]:
+        with self._connect() as connection:
+            rows = connection.execute("SELECT payload FROM research_reports WHERE symbol=? ORDER BY created_at DESC LIMIT ?", (symbol.strip().upper(), max(1, min(limit, 100)))).fetchall()
+        return [json.loads(str(row["payload"])) for row in rows]
+
+    def save_research_thesis(self, item: dict[str, object]) -> None:
+        with self._connect() as connection:
+            connection.execute(
+                "INSERT INTO research_thesis_versions VALUES (?,?,?,?,?,?,?)",
+                (str(item["thesis_id"]), int(item["version"]), str(item["symbol"]), str(item["report_id"]),
+                 item.get("prior_version_id"), json.dumps(item, ensure_ascii=False, default=str), str(item["created_at"])),
+            )
+
+    def research_thesis(self, thesis_id: str, version: int | None = None) -> dict[str, object] | None:
+        query = "SELECT payload FROM research_thesis_versions WHERE thesis_id=?"
+        params: list[object] = [thesis_id]
+        if version is not None:
+            query += " AND version=?"; params.append(version)
+        query += " ORDER BY version DESC LIMIT 1"
+        with self._connect() as connection:
+            row = connection.execute(query, params).fetchone()
+        return json.loads(str(row["payload"])) if row else None
+
+    def research_theses(self, symbol: str, limit: int = 20) -> list[dict[str, object]]:
+        with self._connect() as connection:
+            rows = connection.execute(
+                "SELECT payload FROM research_thesis_versions WHERE symbol=? ORDER BY created_at DESC LIMIT ?",
+                (symbol.strip().upper(), max(1, min(limit, 100))),
+            ).fetchall()
+        return [json.loads(str(row["payload"])) for row in rows]
+
+    def data_quality_events(self, symbol: str | None = None, limit: int = 100) -> list[dict[str, object]]:
+        query, params = "SELECT * FROM data_quality_events", []
+        if symbol:
+            query += " WHERE symbol=?"; params.append(symbol.strip().upper())
+        query += " ORDER BY observed_at DESC LIMIT ?"; params.append(max(1, min(limit, 500)))
+        with self._connect() as connection:
+            rows = connection.execute(query, params).fetchall()
+        return [{**dict(row), "payload": json.loads(str(row["payload"]))} for row in rows]
 
     def decision_context(self, context_id: str) -> dict[str, object] | None:
         with self._connect() as connection:
@@ -1367,7 +1468,7 @@ class PortfolioStore:
             connection.execute("INSERT INTO paper_trading_logs (id,symbol,name,side,quantity,price,fee,cash_before,cash_after,decision_id,reason,status,executed_at) VALUES (:id,:symbol,:name,:side,:quantity,:price,:fee,:cash_before,:cash_after,:decision_id,:reason,:status,:executed_at)", item)
         return item
 
-    def execute_paper_trade(self, *, trade_id: str, symbol: str, name: str, side: str, quantity: float, price: float, decision_id: str | None, reason: str) -> dict[str, object]:
+    def execute_paper_trade(self, *, trade_id: str, symbol: str, name: str, side: str, quantity: float, price: float, decision_id: str | None, reason: str, execution_quote_at: str | None = None, execution_quote_source: str | None = None, fill_price_mode: str = "NEXT_ELIGIBLE_OBSERVED_QUOTE") -> dict[str, object]:
         if quantity <= 0 or price <= 0: raise ValueError("quantity_and_price_must_be_positive")
         if side == "BUY" and quantity % 100 != 0: raise ValueError("paper_buy_requires_100_share_lot")
         now = beijing_now().isoformat()
@@ -1411,8 +1512,8 @@ class PortfolioStore:
                 else: connection.execute("UPDATE paper_trading_positions SET quantity=?, updated_at=? WHERE symbol=?", (remaining, now, symbol))
             else: raise ValueError("invalid_paper_trade_side")
             connection.execute("INSERT INTO account_cash (account_id,available_cash,updated_at) VALUES ('default', ?, ?) ON CONFLICT(account_id) DO UPDATE SET available_cash=excluded.available_cash, updated_at=excluded.updated_at", (cash_after, now))
-            item = {"id": trade_id, "symbol": symbol, "name": name, "side": side, "quantity": quantity, "price": price, "fee": fee, "cash_before": cash_before, "cash_after": cash_after, "decision_id": decision_id, "reason": reason, "executed_at": now}
-            connection.execute("INSERT INTO paper_trading_logs (id,symbol,name,side,quantity,price,fee,cash_before,cash_after,decision_id,reason,status,executed_at) VALUES (:id,:symbol,:name,:side,:quantity,:price,:fee,:cash_before,:cash_after,:decision_id,:reason,'executed',:executed_at)", item)
+            item = {"id": trade_id, "symbol": symbol, "name": name, "side": side, "quantity": quantity, "price": price, "fee": fee, "cash_before": cash_before, "cash_after": cash_after, "decision_id": decision_id, "reason": reason, "execution_quote_at": execution_quote_at, "execution_quote_source": execution_quote_source, "fill_price_mode": fill_price_mode, "executed_at": now}
+            connection.execute("INSERT INTO paper_trading_logs (id,symbol,name,side,quantity,price,fee,cash_before,cash_after,decision_id,reason,status,execution_quote_at,execution_quote_source,fill_price_mode,executed_at) VALUES (:id,:symbol,:name,:side,:quantity,:price,:fee,:cash_before,:cash_after,:decision_id,:reason,'executed',:execution_quote_at,:execution_quote_source,:fill_price_mode,:executed_at)", item)
         return item
 
     def recommendations(self, symbol: str | None = None) -> list[dict[str, object]]:

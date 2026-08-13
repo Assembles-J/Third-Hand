@@ -60,6 +60,8 @@ class ActionPolicyEngine:
     @staticmethod
     def _add_allowed(context: DecisionContext, ids: set[str]) -> bool:
         position = context.position
+        if ActionPolicyEngine._gate(context, "ADD") != "allowed":
+            return False
         if not position or not context.quote or not context.risk:
             return False
         if context.account.available_cash <= 0 or any(item.startswith("event.negative.") for item in ids):
@@ -70,7 +72,13 @@ class ActionPolicyEngine:
 
     @staticmethod
     def _open_allowed(context: DecisionContext, ids: set[str]) -> bool:
+        if ActionPolicyEngine._gate(context, "OPEN") != "allowed":
+            return False
         return bool(not context.position and context.quote and context.risk and context.account.available_cash > 0 and ActionPolicyEngine._positive_ids(ids) and "market.defensive" not in ids)
+
+    @staticmethod
+    def _gate(context: DecisionContext, action: str) -> str:
+        return next((gate.permission for gate in context.data_quality.action_gates if gate.action == action), "blocked")
 
     @staticmethod
     def _positive_ids(ids: set[str]) -> tuple[str, ...]:

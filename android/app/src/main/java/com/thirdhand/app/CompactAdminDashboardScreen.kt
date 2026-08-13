@@ -76,6 +76,20 @@ fun CompactAdminDashboardScreen() {
         runCatching { api.adminConfig() }.onSuccess { config = it; intervalInput = (it.paper_trading_interval_seconds / 60).toString() }
         runCatching { api.availableCash() }.onSuccess { cashInput = "%.2f".format(it.available_cash) }
         runCatching { api.paperTradingAccount() }.onSuccess { netContributionsInput = "%.2f".format(it.net_contributions) }
+        // Management must discover a download started from the app launch as
+        // well; otherwise the user sees a second download button while the
+        // system DownloadManager is already working in the background.
+        runCatching { AppUpdateManager.check(context) }.onSuccess { update ->
+            availableUpdate = update
+            updateProgress = update?.let { AppUpdateManager.refreshDownloadState(context) }
+            updateStatus = update?.let {
+                when {
+                    AppUpdateManager.hasCompletedDownload(context, it) -> "更新包已下载并校验完成，请点击“安装更新”。"
+                    AppUpdateManager.hasActiveDownload(context, it) -> "正在后台下载 v${it.versionName}，可继续使用应用。"
+                    else -> null
+                }
+            }
+        }
         loading = false
     }
     LaunchedEffect(availableUpdate) {
@@ -204,6 +218,8 @@ fun CompactAdminDashboardScreen() {
                         updateProgress = update?.let { AppUpdateManager.refreshDownloadState(context) }
                         updateStatus = when {
                             update == null && error == null -> "当前已是最新版本，或正在使用 Debug 包。"
+                            update != null && AppUpdateManager.hasCompletedDownload(context, update) -> "更新包已下载并校验完成，请点击“安装更新”。"
+                            update != null && AppUpdateManager.hasActiveDownload(context, update) -> "正在后台下载 v${update.versionName}，可继续使用应用。"
                             update != null -> "发现 v${update.versionName}，可下载并安装。"
                             else -> updateStatus
                         }
@@ -211,7 +227,26 @@ fun CompactAdminDashboardScreen() {
                     }
                 }) { Text(if (checkingUpdate) "正在检查更新" else if (availableUpdate != null) "检查到新版本" else "检查更新") }
                 availableUpdate?.let { update ->
-                    Button(modifier = Modifier.fillMaxWidth(), onClick = {
+                    val activeDownload = AppUpdateManager.hasActiveDownload(context, update)
+                    val completedDownload = AppUpdateManager.hasCompletedDownload(context, update)
+                    if (activeDownload) {
+                        Card(
+                            modifier = Modifier.fillMaxWidth(),
+                            colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.secondaryContainer),
+                        ) {
+                            Row(
+                                modifier = Modifier.padding(horizontal = 14.dp, vertical = 12.dp),
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.spacedBy(12.dp),
+                            ) {
+                                CircularProgressIndicator(Modifier.size(20.dp), strokeWidth = 2.dp)
+                                Column {
+                                    Text("正在后台下载 v${update.versionName}", fontWeight = FontWeight.SemiBold)
+                                    Text("下载完成并校验后，这里会变为“安装更新”。", style = MaterialTheme.typography.bodySmall)
+                                }
+                            }
+                        }
+                    } else Button(modifier = Modifier.fillMaxWidth(), onClick = {
                         updateStatus = when (AppUpdateManager.downloadAndInstall(context, update)) {
                             UpdateLaunchResult.DOWNLOAD_STARTED -> "正在下载 v${update.versionName}，进度会持续显示在这里。"
                             UpdateLaunchResult.INSTALLER_OPENED -> "已打开系统安装页。"
@@ -220,7 +255,12 @@ fun CompactAdminDashboardScreen() {
                             UpdateLaunchResult.SIGNATURE_MISMATCH -> AppUpdateManager.completedUpdateMessage(context) ?: "安装包签名校验失败。"
                             UpdateLaunchResult.DOWNLOAD_UNAVAILABLE -> "APK 下载地址不可用，请检查发布配置。"
                         }
-                    }) { Text(if (AppUpdateManager.hasCompletedDownload(context, update)) "安装更新" else "下载或安装更新") }
+                    }) {
+                        Text(when {
+                            completedDownload -> "安装更新"
+                            else -> "下载更新"
+                        })
+                    }
                 }
                 updateProgress?.let { progress ->
                     progress.fraction?.let { LinearProgressIndicator(progress = { it }, modifier = Modifier.fillMaxWidth()) }

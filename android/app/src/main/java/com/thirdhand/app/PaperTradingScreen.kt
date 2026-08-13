@@ -64,6 +64,7 @@ fun PaperTradingScreen(onOpenDetail: (ResearchTargetDto) -> Unit) {
     var selectedDecisionId by remember { mutableStateOf<String?>(null) }
     var decisionReport by remember { mutableStateOf<DecisionReportDto?>(null) }
     var decisionContext by remember { mutableStateOf<Map<String, Any>>(emptyMap()) }
+    var decisionLineage by remember { mutableStateOf<DecisionLineageDto?>(null) }
     var decisionLoading by remember { mutableStateOf(false) }
     var decisionError by remember { mutableStateOf<String?>(null) }
     fun refresh() {
@@ -79,9 +80,9 @@ fun PaperTradingScreen(onOpenDetail: (ResearchTargetDto) -> Unit) {
     LaunchedEffect(Unit) { refresh() }
     LaunchedEffect(selectedDecisionId) {
         val decisionId = selectedDecisionId ?: return@LaunchedEffect
-        decisionLoading = true; decisionError = null; decisionReport = null
+        decisionLoading = true; decisionError = null; decisionReport = null; decisionLineage = null
         runCatching { api.paperTradingDecisionAudit(decisionId) }
-            .onSuccess { decisionReport = it.report; decisionContext = it.context }
+            .onSuccess { audit -> decisionReport = audit.report; decisionContext = audit.context; decisionLineage = runCatching { api.decisionLineage(decisionId) }.getOrNull() }
             .onFailure { decisionError = "无法读取该次决策留档：${it.message ?: "记录可能已过期"}" }
         decisionLoading = false
     }
@@ -203,7 +204,7 @@ fun PaperTradingScreen(onOpenDetail: (ResearchTargetDto) -> Unit) {
         if (dashboard?.logs.orEmpty().size > 6) item { TextButton(modifier = Modifier.padding(horizontal = 12.dp), onClick = { showAllLogs = true }) { Text("查看全部操作与拦截记录") } }
     }
     if (showAllLogs) PaperLogHistoryDialog(dashboard?.logs.orEmpty(), onDismiss = { showAllLogs = false }, onOpenDecision = { selectedDecisionId = it })
-    if (selectedDecisionId != null) PaperDecisionAuditDialog(decisionReport, decisionContext, decisionLoading, decisionError, onDismiss = { selectedDecisionId = null })
+    if (selectedDecisionId != null) PaperDecisionAuditDialog(decisionReport, decisionContext, decisionLoading, decisionError, decisionLineage, onDismiss = { selectedDecisionId = null })
 }
 
 @Composable private fun PaperMetric(label: String, value: String, modifier: Modifier) = Column(modifier) {
@@ -238,7 +239,7 @@ fun PaperTradingScreen(onOpenDetail: (ResearchTargetDto) -> Unit) {
     confirmButton = { TextButton(onClick = onDismiss) { Text("关闭") } },
 )
 
-@Composable fun PaperDecisionAuditDialog(report: DecisionReportDto?, context: Map<String, Any>, loading: Boolean, error: String?, onDismiss: () -> Unit) = AlertDialog(
+@Composable fun PaperDecisionAuditDialog(report: DecisionReportDto?, context: Map<String, Any>, loading: Boolean, error: String?, lineage: DecisionLineageDto? = null, onDismiss: () -> Unit) = AlertDialog(
     onDismissRequest = onDismiss,
     title = { Text("操作分析记录") },
     text = {
@@ -248,6 +249,15 @@ fun PaperTradingScreen(onOpenDetail: (ResearchTargetDto) -> Unit) {
             report?.let { item {
                 Text("${it.symbol} · ${it.action} · ${paperBeijingTimestamp(it.generated_at)}", fontWeight = FontWeight.Bold)
                 Text(it.summary, style = MaterialTheme.typography.bodySmall)
+                it.data_quality?.let { quality ->
+                    DecisionAuditLine("输入完整度", "${quality.score_percent}% · ${quality.status}", error = quality.status != "ready")
+                    quality.action_gates.firstOrNull { gate -> gate.action == it.action }?.let { gate ->
+                        DecisionAuditLine("本动作权限", gate.permission + gate.unavailable_fields.takeIf { fields -> fields.isNotEmpty() }?.let { " · 缺少 ${it.joinToString()}" }.orEmpty(), error = gate.permission != "allowed")
+                    }
+                    quality.source_freshness.forEach { source ->
+                        DecisionAuditLine("数据时效 · ${source.source_key}", "${source.status}${source.as_of?.let { " · 截至 $it" }.orEmpty()}${source.reason?.let { " · $it" }.orEmpty()}", error = source.status != "fresh")
+                    }
+                }
                 it.sizing?.let { sizing -> DecisionAuditLine("仓位计算", "建议 ${sizing.suggested_quantity?.clean() ?: "--"} 股；目标 ${sizing.target_quantity?.clean() ?: "--"} 股；现金上限 ${sizing.quantity_by_cash?.clean() ?: "--"} 股") }
                 if (it.action_candidates.isNotEmpty()) DecisionAuditLine("规则候选", it.action_candidates.joinToString { candidate -> "${candidate.action}（评分 ${"%.2f".format(candidate.policy_score)}）" })
                 it.operation_items?.forEach { operation -> DecisionAuditLine(operation.title, operation.trigger) }
@@ -256,6 +266,10 @@ fun PaperTradingScreen(onOpenDetail: (ResearchTargetDto) -> Unit) {
                 Text("证据数据点", fontWeight = FontWeight.SemiBold)
                 it.evidence.forEach { evidence -> DecisionAuditLine(evidence.title, evidence.description) }
                 if (it.ai_assessment?.missing_evidence?.isNotEmpty() == true) DecisionAuditLine("缺失数据", it.ai_assessment.missing_evidence.joinToString(), error = true)
+                lineage?.let { data ->
+                    DecisionAuditLine("数据链路", "影子特征 ${data.features.size} 项 · 原始快照 ${data.snapshots.size} 条（仅审计，不改变本次规则）")
+                    data.features.forEach { feature -> DecisionAuditLine(feature.feature_key, "${feature.value ?: "不可用"} · ${feature.quality_status} · 可用时间 ${feature.available_at}") }
+                }
                 DecisionAuditContext(context)
                 Text("输入快照 ${it.input_hash.take(12)} · 模型 ${it.model ?: "规则引擎"}", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
             } }
