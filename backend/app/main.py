@@ -11,10 +11,17 @@ import sys
 from app.daily_history_policy import install as _install_daily_history_policy
 
 # Tighten the formal daily-price contract before app.application constructs its
-# PortfolioStore and PriceHistoryService singletons.  This keeps migration,
+# PortfolioStore and PriceHistoryService singletons. This keeps contract cleanup,
 # local-first routing, qfq normalization and provider rate limiting active for
 # every runtime path without widening trading-policy authority.
 _install_daily_history_policy()
+
+# Older dependency surfaces and existing provider test doubles may not expose
+# the newer Tencent/Tushare helpers. Capability-based fallback keeps those paths
+# backward compatible while current production continues to use the new policy.
+from app.daily_history_compat import install as _install_daily_history_compat
+
+_install_daily_history_compat()
 
 from app import application as _application
 from app.paper_runtime_integration import install as _install_paper_runtime_governance
