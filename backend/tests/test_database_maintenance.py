@@ -3,7 +3,7 @@ import sqlite3
 import pytest
 
 from app.database_maintenance import backup_database, restore_database
-from app.migrations import run_migrations
+from app.migrations import MIGRATIONS, run_migrations
 from app.storage import PortfolioStore
 
 
@@ -14,9 +14,9 @@ def test_migration_runner_is_idempotent(tmp_path):
     assert run_migrations(database) == []
     assert run_migrations(database) == []
     with sqlite3.connect(database) as connection:
-        assert connection.execute("SELECT migration_id FROM schema_migrations ORDER BY migration_id").fetchall() == [
-            ("0001_legacy_schema_baseline",), ("0002_decision_contexts",), ("0003_decision_shadow_reports",), ("0004_trade_plan_invalidation_price",), ("0005_decision_ai_runs",), ("0006_decision_reports_and_jobs",), ("0007_research_chat_sessions",), ("0008_research_chat_session_sources",),
-        ]
+        # Derive the expected ledger from the migration registry so adding a
+        # migration never requires hand-editing this assertion.
+        assert connection.execute("SELECT migration_id FROM schema_migrations ORDER BY migration_id").fetchall() == [(migration.migration_id,) for migration in MIGRATIONS]
 
 
 def test_backup_and_restore_preserve_data_without_overwriting_targets(tmp_path):

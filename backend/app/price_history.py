@@ -14,6 +14,11 @@ from app.trading_calendar import TradingCalendarService
 
 logger = logging.getLogger(__name__)
 
+# Circuit breaker: after this many consecutive failures a provider is skipped
+# for the cooldown window, then retried automatically.
+PROVIDER_CIRCUIT_FAILURE_THRESHOLD = int(os.getenv("HISTORY_CIRCUIT_FAILURE_THRESHOLD", "3"))
+PROVIDER_CIRCUIT_COOLDOWN_SECONDS = int(os.getenv("HISTORY_CIRCUIT_COOLDOWN_SECONDS", "600"))
+
 
 class PriceHistoryUnavailable(RuntimeError):
     pass
@@ -49,11 +54,30 @@ class PriceHistoryService:
                 elapsed_ms=elapsed_ms, run_id=run_id, trigger=trigger, bar_count=bar_count,
                 error_type=error_type, error_message=error_message, detail=detail,
             )
+            if store is not None and status in {"ok", "empty", "error"}:
+                store.record_provider_health(
+                    provider=provider,
+                    success=status == "ok",
+                    error_type=error_type,
+                    error_message=error_message,
+                    circuit_threshold=PROVIDER_CIRCUIT_FAILURE_THRESHOLD,
+                    cooldown_seconds=PROVIDER_CIRCUIT_COOLDOWN_SECONDS,
+                )
         except Exception:
             logger.warning(
                 "daily history attempt audit write skipped provider=%s symbol=%s status=%s",
                 provider, symbol, status,
             )
+
+    @staticmethod
+    def _circuit_open(store, provider: str) -> bool:
+        """Return whether a provider circuit is open; None store never blocks."""
+        if store is None:
+            return False
+        try:
+            return store.provider_circuit_open(provider)
+        except Exception:
+            return False
 
     @staticmethod
     def _kind(symbol: str) -> str:
@@ -142,78 +166,90 @@ class PriceHistoryService:
             raise PriceHistoryUnavailable("未安装历史行情依赖。") from error
         akshare_error: Exception | None = None
         provider_started = time.monotonic()
-        try:
-            kind = self._kind(symbol)
-            if kind == "hk":
-                frame = ak.stock_hk_daily(symbol=symbol)
-                columns_available = set(getattr(frame, "columns", ()))
-                # AKShare's HK endpoint returns a RangeIndex and an explicit `date`
-                # column. Never persist that RangeIndex as a trading date.
-                date_column = next((name for name in ("date", "Date", "日期") if name in columns_available), None)
-                date_values = frame[date_column] if date_column else frame.index
-                columns = {"open": "open", "close": "close", "high": "high", "low": "low", "volume": "volume", "amount": "amount"}
-            elif kind == "etf":
-                frame = ak.fund_etf_hist_em(symbol=symbol, period="daily", start_date=start, end_date=end, adjust="qfq")
-                date_values = frame["日期"]
-                columns = {"open": "开盘", "close": "收盘", "high": "最高", "low": "最低", "volume": "成交量", "amount": "成交额"}
-            else:
-                frame = ak.stock_zh_a_hist(symbol=symbol, period="daily", start_date=start, end_date=end, adjust="qfq")
-                date_values = frame["日期"]
-                columns = {"open": "开盘", "close": "收盘", "high": "最高", "low": "最低", "volume": "成交量", "amount": "成交额"}
-            if frame is None or frame.empty:
-                raise PriceHistoryUnavailable("历史行情为空。")
-            bars = []
-            for index, day in enumerate(date_values):
-                trading_date = self._trading_date(day)
-                if trading_date is None:
-                    continue
-                close = decimal_text(frame.iloc[index].get(columns["close"]))
-                if close is None:
-                    continue
-                bars.append({
-                    "trading_date": trading_date, "open": decimal_text(frame.iloc[index].get(columns["open"])),
-                    "close": close, "high": decimal_text(frame.iloc[index].get(columns["high"])),
-                    "low": decimal_text(frame.iloc[index].get(columns["low"])),
-                    "volume": decimal_text(frame.iloc[index].get(columns["volume"])),
-                    "amount": decimal_text(frame.iloc[index].get(columns["amount"])),
-                    "amplitude_percent": decimal_text(frame.iloc[index].get("振幅")),
-                    "change_percent": decimal_text(frame.iloc[index].get("涨跌幅")),
-                    "change_amount": decimal_text(frame.iloc[index].get("涨跌额")),
-                    "turnover_rate": decimal_text(frame.iloc[index].get("换手率")),
-                    "adjustment": "qfq", "source": "AKShare daily history",
-                })
-        except PriceHistoryUnavailable as error:
-            akshare_error = error
+        if self._circuit_open(store, "akshare"):
             self._record_attempt(
-                store, symbol=symbol, provider="akshare", status="empty",
-                started_at=overall_started, elapsed_ms=round((time.monotonic() - provider_started) * 1000),
-                run_id=run_id, trigger=trigger, error_type=type(error).__name__, error_message=str(error),
+                store, symbol=symbol, provider="akshare", status="skipped",
+                started_at=overall_started, elapsed_ms=0, run_id=run_id, trigger=trigger,
+                detail={"reason": "circuit_open"},
             )
             logger.warning(
-                "历史日线获取失败 provider=akshare symbol=%s reason=%s elapsed_ms=%s",
-                symbol,
-                error,
-                round((time.monotonic() - provider_started) * 1000),
+                "历史日线熔断跳过 provider=akshare symbol=%s cooldown_seconds=%s",
+                symbol, PROVIDER_CIRCUIT_COOLDOWN_SECONDS,
             )
-        except Exception as error:
-            akshare_error = error
-            self._record_attempt(
-                store, symbol=symbol, provider="akshare", status="error",
-                started_at=overall_started, elapsed_ms=round((time.monotonic() - provider_started) * 1000),
-                run_id=run_id, trigger=trigger, error_type=type(error).__name__, error_message=str(error),
-            )
-            logger.exception(
-                "历史日线获取失败 provider=akshare symbol=%s error_type=%s elapsed_ms=%s",
-                symbol,
-                type(error).__name__,
-                round((time.monotonic() - provider_started) * 1000),
-            )
+            akshare_error = PriceHistoryUnavailable("AKShare 熔断中，跳过该源")
         else:
-            self._record_attempt(
-                store, symbol=symbol, provider="akshare", status="ok",
-                started_at=overall_started, elapsed_ms=round((time.monotonic() - provider_started) * 1000),
-                run_id=run_id, trigger=trigger, bar_count=len(bars),
-            )
+            try:
+                kind = self._kind(symbol)
+                if kind == "hk":
+                    frame = ak.stock_hk_daily(symbol=symbol)
+                    columns_available = set(getattr(frame, "columns", ()))
+                    # AKShare's HK endpoint returns a RangeIndex and an explicit `date`
+                    # column. Never persist that RangeIndex as a trading date.
+                    date_column = next((name for name in ("date", "Date", "日期") if name in columns_available), None)
+                    date_values = frame[date_column] if date_column else frame.index
+                    columns = {"open": "open", "close": "close", "high": "high", "low": "low", "volume": "volume", "amount": "amount"}
+                elif kind == "etf":
+                    frame = ak.fund_etf_hist_em(symbol=symbol, period="daily", start_date=start, end_date=end, adjust="qfq")
+                    date_values = frame["日期"]
+                    columns = {"open": "开盘", "close": "收盘", "high": "最高", "low": "最低", "volume": "成交量", "amount": "成交额"}
+                else:
+                    frame = ak.stock_zh_a_hist(symbol=symbol, period="daily", start_date=start, end_date=end, adjust="qfq")
+                    date_values = frame["日期"]
+                    columns = {"open": "开盘", "close": "收盘", "high": "最高", "low": "最低", "volume": "成交量", "amount": "成交额"}
+                if frame is None or frame.empty:
+                    raise PriceHistoryUnavailable("历史行情为空。")
+                bars = []
+                for index, day in enumerate(date_values):
+                    trading_date = self._trading_date(day)
+                    if trading_date is None:
+                        continue
+                    close = decimal_text(frame.iloc[index].get(columns["close"]))
+                    if close is None:
+                        continue
+                    bars.append({
+                        "trading_date": trading_date, "open": decimal_text(frame.iloc[index].get(columns["open"])),
+                        "close": close, "high": decimal_text(frame.iloc[index].get(columns["high"])),
+                        "low": decimal_text(frame.iloc[index].get(columns["low"])),
+                        "volume": decimal_text(frame.iloc[index].get(columns["volume"])),
+                        "amount": decimal_text(frame.iloc[index].get(columns["amount"])),
+                        "amplitude_percent": decimal_text(frame.iloc[index].get("振幅")),
+                        "change_percent": decimal_text(frame.iloc[index].get("涨跌幅")),
+                        "change_amount": decimal_text(frame.iloc[index].get("涨跌额")),
+                        "turnover_rate": decimal_text(frame.iloc[index].get("换手率")),
+                        "adjustment": "qfq", "source": "AKShare daily history",
+                    })
+            except PriceHistoryUnavailable as error:
+                akshare_error = error
+                self._record_attempt(
+                    store, symbol=symbol, provider="akshare", status="empty",
+                    started_at=overall_started, elapsed_ms=round((time.monotonic() - provider_started) * 1000),
+                    run_id=run_id, trigger=trigger, error_type=type(error).__name__, error_message=str(error),
+                )
+                logger.warning(
+                    "历史日线获取失败 provider=akshare symbol=%s reason=%s elapsed_ms=%s",
+                    symbol,
+                    error,
+                    round((time.monotonic() - provider_started) * 1000),
+                )
+            except Exception as error:
+                akshare_error = error
+                self._record_attempt(
+                    store, symbol=symbol, provider="akshare", status="error",
+                    started_at=overall_started, elapsed_ms=round((time.monotonic() - provider_started) * 1000),
+                    run_id=run_id, trigger=trigger, error_type=type(error).__name__, error_message=str(error),
+                )
+                logger.exception(
+                    "历史日线获取失败 provider=akshare symbol=%s error_type=%s elapsed_ms=%s",
+                    symbol,
+                    type(error).__name__,
+                    round((time.monotonic() - provider_started) * 1000),
+                )
+            else:
+                self._record_attempt(
+                    store, symbol=symbol, provider="akshare", status="ok",
+                    started_at=overall_started, elapsed_ms=round((time.monotonic() - provider_started) * 1000),
+                    run_id=run_id, trigger=trigger, bar_count=len(bars),
+                )
         if akshare_error is not None:
             # Tencent is independent from the Eastmoney endpoint behind
             # ``stock_zh_a_hist``. Tushare remains the final fallback.
@@ -258,6 +294,17 @@ class PriceHistoryService:
                 store, symbol=symbol, provider="tencent", status="skipped",
                 started_at=beijing_now().isoformat(), elapsed_ms=0, run_id=run_id, trigger=trigger,
                 detail={"reason": "not_applicable"},
+            )
+            return []
+        if self._circuit_open(store, "tencent"):
+            self._record_attempt(
+                store, symbol=symbol, provider="tencent", status="skipped",
+                started_at=beijing_now().isoformat(), elapsed_ms=0, run_id=run_id, trigger=trigger,
+                detail={"reason": "circuit_open"},
+            )
+            logger.warning(
+                "历史日线熔断跳过 provider=tencent symbol=%s cooldown_seconds=%s",
+                symbol, PROVIDER_CIRCUIT_COOLDOWN_SECONDS,
             )
             return []
         started = time.monotonic()
@@ -323,6 +370,17 @@ class PriceHistoryService:
             return
         today = now.date().isoformat()
         if any(str(bar.get("trading_date")) == today for bar in bars):
+            return
+        if self._circuit_open(store, "sina_minute"):
+            self._record_attempt(
+                store, symbol=symbol, provider="sina_minute", status="skipped",
+                started_at=beijing_now().isoformat(), elapsed_ms=0, run_id=run_id, trigger=trigger,
+                detail={"reason": "circuit_open"},
+            )
+            logger.warning(
+                "历史日线熔断跳过 provider=sina_minute symbol=%s cooldown_seconds=%s",
+                symbol, PROVIDER_CIRCUIT_COOLDOWN_SECONDS,
+            )
             return
         started_at = beijing_now().isoformat()
         started = time.monotonic()
@@ -463,6 +521,17 @@ class PriceHistoryService:
             logger.warning(
                 "历史日线备用源跳过 provider=tushare symbol=%s reason=hk_not_supported",
                 symbol,
+            )
+            return []
+        if self._circuit_open(store, "tushare"):
+            self._record_attempt(
+                store, symbol=symbol, provider="tushare", status="skipped",
+                started_at=started_at, elapsed_ms=0, run_id=run_id, trigger=trigger,
+                detail={"reason": "circuit_open"},
+            )
+            logger.warning(
+                "历史日线熔断跳过 provider=tushare symbol=%s cooldown_seconds=%s",
+                symbol, PROVIDER_CIRCUIT_COOLDOWN_SECONDS,
             )
             return []
         try:

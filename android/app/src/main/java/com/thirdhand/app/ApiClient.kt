@@ -496,6 +496,34 @@ data class TradePlanInputDto(
     val catalysts: List<String>, val entry_condition: String, val add_condition: String, val reduce_condition: String,
     val exit_condition: String, val max_position_percent: Double, val risk_budget_percent: Double, val enabled: Boolean = true,
 )
+data class ProviderHealthDto(
+    val provider: String,
+    val circuit_state: String = "closed",
+    val consecutive_failures: Int = 0,
+    val total_attempts: Int = 0,
+    val total_success: Int = 0,
+    val total_failures: Int = 0,
+    val last_attempt_at: String? = null,
+    val last_success_at: String? = null,
+    val last_failure_at: String? = null,
+    val circuit_opened_at: String? = null,
+    val cooldown_until: String? = null,
+    val error_type: String? = null,
+    val error_message: String? = null,
+    val updated_at: String? = null,
+)
+data class BackfillQueueItemDto(val symbol: String, val failed_at: String? = null)
+data class BackfillStateDto(
+    val last_attempt_at: String? = null,
+    val last_success_at: String? = null,
+    val last_symbols: List<String> = emptyList(),
+    val last_error: String? = null,
+)
+data class ProviderHealthResponseDto(
+    val providers: List<ProviderHealthDto> = emptyList(),
+    val backfill_queue: List<BackfillQueueItemDto> = emptyList(),
+    val backfill: BackfillStateDto? = null,
+)
 
 interface ThirdHandApi {
     @GET("health")
@@ -536,6 +564,8 @@ interface ThirdHandApi {
     suspend fun paperTradingDecisionAudit(@Path("decisionId") decisionId: String): PaperTradingDecisionAuditDto
     @GET("v1/decisions/{decisionId}/lineage")
     suspend fun decisionLineage(@Path("decisionId") decisionId: String): DecisionLineageDto
+    @GET("v1/data-quality/provider-health")
+    suspend fun providerHealth(): ProviderHealthResponseDto
     @GET("v1/news/cached")
     suspend fun cachedNews(@Query("limit") limit: Int = 20, @Query("offset") offset: Int = 0, @Query("scope") scope: String = "all"): List<NewsItemDto>
 

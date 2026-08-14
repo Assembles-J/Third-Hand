@@ -151,6 +151,66 @@ def test_daily_history_failure_records_structured_provider_attempts(monkeypatch,
     assert store.latest_daily_history_failure("600519") is not None
 
 
+def test_provider_circuit_opens_after_repeated_failures_and_recovers(monkeypatch, tmp_path):
+    monkeypatch.setitem(sys.modules, "akshare", SimpleNamespace(
+        stock_zh_a_hist=lambda **_: (_ for _ in ()).throw(ConnectionError("upstream timed out")),
+    ))
+    monkeypatch.delenv("TUSHARE_TOKEN", raising=False)
+    store = PortfolioStore(tmp_path / "history.db")
+    service = PriceHistoryService()
+    for _ in range(3):
+        with pytest.raises(PriceHistoryUnavailable):
+            service.refresh(store, "600519")
+
+    health = store.provider_health("akshare")
+    assert health["circuit_state"] == "open"
+    assert health["consecutive_failures"] == 3
+
+    # While the circuit is open, akshare is skipped but the fallback chain still runs.
+    with pytest.raises(PriceHistoryUnavailable):
+        service.refresh(store, "600519")
+    attempts = store.daily_history_attempts("600519")
+    akshare_skips = [item for item in attempts if item["provider"] == "akshare" and item["status"] == "skipped"]
+    assert any(item["detail"].get("reason") == "circuit_open" for item in akshare_skips)
+    # The skip must not inflate the failure counter.
+    assert store.provider_health("akshare")["consecutive_failures"] == 3
+
+    # Expiring the cooldown auto-closes the circuit on the next health read.
+    with store._connect() as connection:
+        connection.execute("UPDATE data_provider_health SET cooldown_until='2020-01-01T00:00:00+08:00' WHERE provider='akshare'")
+    assert store.provider_circuit_open("akshare") is False
+
+
+def test_failed_history_symbols_drop_out_after_a_successful_refresh(monkeypatch, tmp_path):
+    monkeypatch.setitem(sys.modules, "akshare", SimpleNamespace(
+        stock_zh_a_hist=lambda **_: (_ for _ in ()).throw(ConnectionError("upstream timed out")),
+    ))
+    monkeypatch.delenv("TUSHARE_TOKEN", raising=False)
+    from app.price_history import beijing_now as history_now
+    base = history_now()
+    monkeypatch.setattr("app.price_history.beijing_now", lambda: base)
+    store = PortfolioStore(tmp_path / "history.db")
+    service = PriceHistoryService()
+    with pytest.raises(PriceHistoryUnavailable):
+        service.refresh(store, "600519")
+
+    assert "600519" in [item["symbol"] for item in store.failed_history_symbols()]
+
+    tencent_frame = _Frame([{
+        "date": "2026-08-03", "open": "94", "close": "95", "high": "96", "low": "93",
+        "volume": "100", "amount": "9500", "turnover": "0.0021",
+    }])
+    monkeypatch.setitem(sys.modules, "akshare", SimpleNamespace(
+        stock_zh_a_hist=lambda **_: (_ for _ in ()).throw(ConnectionError("eastmoney unavailable")),
+        stock_zh_a_hist_tx=lambda **_: tencent_frame,
+        stock_zh_a_minute=lambda **_: _Frame([]),
+    ))
+    monkeypatch.setattr("app.price_history.beijing_now", lambda: base + timedelta(seconds=60))
+
+    assert service.refresh(store, "600519") == 1
+    assert "600519" not in [item["symbol"] for item in store.failed_history_symbols()]
+
+
 def test_tencent_daily_fallback_replaces_failed_eastmoney_history(monkeypatch, tmp_path):
     tencent_frame = _Frame([{
         "date": "2026-08-03", "open": "94", "close": "95", "high": "96", "low": "93",

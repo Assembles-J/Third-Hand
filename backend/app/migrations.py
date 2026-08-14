@@ -208,6 +208,34 @@ def _create_simulation_run_audit(connection: sqlite3.Connection) -> None:
     """)
 
 
+def _create_data_provider_health(connection: sqlite3.Connection) -> None:
+    """Track per-provider health and circuit state for daily-history sources.
+
+    A provider opens its circuit after repeated failures and stays closed for a
+    cooldown; a successful attempt closes it again.  The table also powers the
+    auto-backfill queue so stocks that failed data preparation are retried
+    after the provider recovers.
+    """
+    connection.executescript("""
+    CREATE TABLE IF NOT EXISTS data_provider_health (
+      provider TEXT PRIMARY KEY,
+      circuit_state TEXT NOT NULL DEFAULT 'closed',
+      consecutive_failures INTEGER NOT NULL DEFAULT 0,
+      total_attempts INTEGER NOT NULL DEFAULT 0,
+      total_success INTEGER NOT NULL DEFAULT 0,
+      total_failures INTEGER NOT NULL DEFAULT 0,
+      last_attempt_at TEXT,
+      last_success_at TEXT,
+      last_failure_at TEXT,
+      circuit_opened_at TEXT,
+      cooldown_until TEXT,
+      error_type TEXT,
+      error_message TEXT,
+      updated_at TEXT NOT NULL
+    );
+    """)
+
+
 MIGRATIONS = (
     Migration("0001_legacy_schema_baseline", _record_legacy_schema_baseline),
     Migration("0002_decision_contexts", _create_decision_contexts),
@@ -222,6 +250,7 @@ MIGRATIONS = (
     Migration("0011_research_reports", _create_research_reports),
     Migration("0012_research_theses", _create_research_theses),
     Migration("0013_simulation_run_audit", _create_simulation_run_audit),
+    Migration("0014_data_provider_health", _create_data_provider_health),
 )
 
 

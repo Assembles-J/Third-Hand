@@ -34,6 +34,7 @@ import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
@@ -63,6 +64,8 @@ fun CompactAdminDashboardScreen() {
     var availableUpdate by remember { mutableStateOf<AppUpdate?>(null) }
     var updateProgress by remember { mutableStateOf<UpdateDownloadProgress?>(null) }
     var updateStatus by remember { mutableStateOf<String?>(null) }
+    var providerHealth by remember { mutableStateOf<ProviderHealthResponseDto?>(null) }
+    var providerHealthError by remember { mutableStateOf<String?>(null) }
     fun saveConfig(next: SystemConfigDto, success: String) = scope.launch {
         saving = true; notice = "正在保存到服务端…"; error = null
         runCatching { api.saveAdminConfig(next) }
@@ -76,6 +79,7 @@ fun CompactAdminDashboardScreen() {
         runCatching { api.adminConfig() }.onSuccess { config = it; intervalInput = (it.paper_trading_interval_seconds / 60).toString() }
         runCatching { api.availableCash() }.onSuccess { cashInput = "%.2f".format(it.available_cash) }
         runCatching { api.paperTradingAccount() }.onSuccess { netContributionsInput = "%.2f".format(it.net_contributions) }
+        runCatching { api.providerHealth() }.onSuccess { providerHealth = it; providerHealthError = null }.onFailure { providerHealthError = "数据源健康读取失败：${it.message ?: "请检查服务连接"}" }
         // Management must discover a download started from the app launch as
         // well; otherwise the user sees a second download button while the
         // system DownloadManager is already working in the background.
@@ -164,6 +168,35 @@ fun CompactAdminDashboardScreen() {
                         saving = false
                     }
                 }) { Text("校准累计净入金") }
+            }
+        }
+        item { TradingSection("数据源健康", "熔断、最近成功/失败与自动补齐队列") }
+        item {
+            Card(Modifier.padding(horizontal = 20.dp).fillMaxWidth(), colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant)) {
+                Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                    providerHealthError?.let { Text(it, color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.bodySmall) }
+                    val health = providerHealth
+                    when {
+                        health == null -> Text("正在读取数据源健康状态…", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                        health.providers.isEmpty() -> Text("暂无数据源健康记录；完成一次行情或日线刷新后会自动统计。", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                        else -> health.providers.forEachIndexed { index, provider ->
+                            if (index > 0) TradingRowDivider()
+                            ProviderHealthLine(provider)
+                        }
+                    }
+                    TradingRowDivider()
+                    val queue = health?.backfill_queue.orEmpty()
+                    val lastBackfillAt = health?.backfill?.last_success_at ?: health?.backfill?.last_attempt_at
+                    TextButton(onClick = {
+                        scope.launch {
+                            runCatching { api.providerHealth() }
+                                .onSuccess { providerHealth = it; providerHealthError = null }
+                                .onFailure { providerHealthError = "数据源健康读取失败：${it.message ?: "请检查服务连接"}" }
+                        }
+                    }) {
+                        Text("补齐队列 ${queue.size} 只 · 最近补齐 ${lastBackfillAt?.replace('T', ' ')?.substringBefore("+") ?: "暂无"}（点击刷新）")
+                    }
+                }
             }
         }
         item {
@@ -268,6 +301,31 @@ fun CompactAdminDashboardScreen() {
                 }
                 updateStatus?.let { Text(it, style = MaterialTheme.typography.bodySmall, color = if (it.contains("失败") || it.contains("不可用")) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.onSurfaceVariant) }
             }
+        }
+    }
+}
+
+@Composable
+private fun ProviderHealthLine(provider: ProviderHealthDto) {
+    val circuitOpen = provider.circuit_state == "open"
+    val statusColor = if (circuitOpen) MaterialTheme.colorScheme.error else Color(0xFF2E7D32)
+    val lastSuccess = provider.last_success_at?.replace('T', ' ')?.substringBefore("+")
+    val lastFailure = provider.last_failure_at?.replace('T', ' ')?.substringBefore("+")
+    Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Column(Modifier.weight(1f)) {
+                Text(provider.provider, fontWeight = FontWeight.SemiBold)
+                Text(
+                    "连续失败 ${provider.consecutive_failures} 次 · 成功 ${provider.total_success}/${provider.total_attempts} 次",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            }
+            Text(if (circuitOpen) "熔断中" else "正常", color = statusColor, fontWeight = FontWeight.SemiBold, style = MaterialTheme.typography.labelMedium)
+        }
+        Text("最近成功 ${lastSuccess ?: "—"} · 最近失败 ${lastFailure ?: "—"}", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+        provider.error_message?.takeIf { it.isNotBlank() }?.let {
+            Text("错误：$it", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
         }
     }
 }

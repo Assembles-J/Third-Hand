@@ -161,6 +161,26 @@ def test_paper_run_records_skipped_data_unavailable_when_history_missing(monkeyp
     assert any(stage["stage"] == "daily_history" and stage["status"] == "failed" for stage in detail["stages"])
 
 
+def test_provider_health_endpoint_reports_circuit_and_backfill_queue():
+    store.record_daily_history_attempt(
+        symbol="600519", provider="overall", status="error",
+        started_at=beijing_now().isoformat(), elapsed_ms=10,
+        error_type="ConnectionError", error_message="upstream timed out",
+    )
+    store.record_provider_health(provider="akshare", success=False, error_type="ConnectionError", error_message="upstream timed out")
+    store.record_provider_health(provider="akshare", success=False, error_type="ConnectionError", error_message="upstream timed out")
+    store.record_provider_health(provider="akshare", success=False, error_type="ConnectionError", error_message="upstream timed out")
+
+    response = client.get("/v1/data-quality/provider-health")
+
+    assert response.status_code == 200
+    payload = response.json()
+    providers = {item["provider"]: item for item in payload["providers"]}
+    assert providers["akshare"]["circuit_state"] == "open"
+    assert any(item["symbol"] == "600519" for item in payload["backfill_queue"])
+    assert "backfill" in payload
+
+
 def test_manual_daily_history_refresh_returns_fresh_bars(monkeypatch):
     def refresh_history(target_store, symbol, **kwargs):
         target_store.replace_daily_prices(symbol, [{
@@ -388,7 +408,9 @@ def test_daily_review_closes_the_plan_execution_outcome_loop():
     result = client.post(f"/v1/daily-reviews/{review['id']}/evaluate")
     assert result.status_code == 200
     assert result.json()["status"] == "evaluated"
-    assert result.json()["items"][0]["theoretical_pnl"] is not None
+    # The watch item must not manufacture a paper trade: evaluation succeeds but
+    # leaves theoretical P&L empty instead of inventing a fill.
+    assert result.json()["items"][0]["theoretical_pnl"] is None
 
 
 def test_decision_generation_is_async_idempotent_and_persists_a_report():

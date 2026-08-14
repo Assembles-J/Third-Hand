@@ -134,6 +134,8 @@ MARKET_UNIVERSE_SCAN_INTERVAL_SECONDS = positive_environment_integer("MARKET_UNI
 PAPER_TRADING_INTERVAL_SECONDS = positive_environment_integer("PAPER_TRADING_INTERVAL_SECONDS", 600, 300)
 PAPER_TRADING_CANDIDATE_LIMIT = positive_environment_integer("PAPER_TRADING_CANDIDATE_LIMIT", 8, 1)
 DAILY_HISTORY_RETRY_SECONDS = positive_environment_integer("DAILY_HISTORY_RETRY_SECONDS", 300, 30)
+HISTORY_BACKFILL_ENABLED = os.getenv("HISTORY_BACKFILL_ENABLED", "true").lower() not in {"0", "false", "no"}
+HISTORY_BACKFILL_INTERVAL_SECONDS = positive_environment_integer("HISTORY_BACKFILL_INTERVAL_SECONDS", 1800, 300)
 market_refresh_stop = Event()
 market_refresh_thread: Thread | None = None
 market_refresh_state_lock = Lock()
@@ -150,6 +152,12 @@ paper_trading_state: dict[str, object] = {
     "running": False, "last_started_at": None, "last_finished_at": None,
     "last_status": "never_run", "last_message": "尚未执行交易判断", "last_executed": 0,
     "last_skipped": 0, "last_symbols": [], "last_run_id": None,
+}
+history_backfill_stop = Event()
+history_backfill_thread: Thread | None = None
+history_backfill_state_lock = Lock()
+history_backfill_state: dict[str, object] = {
+    "last_attempt_at": None, "last_success_at": None, "last_symbols": [], "last_error": None,
 }
 market_refresh_state: dict[str, object] = {
     "last_attempt_at": None,
@@ -1017,6 +1025,18 @@ def daily_history_provider_attempts(symbol: str | None = None, limit: int = Quer
     return store.daily_history_attempts(symbol, limit)
 
 
+@app.get("/v1/data-quality/provider-health")
+def data_provider_health() -> dict[str, object]:
+    """Return per-provider health, the auto-backfill queue and its last cycle state."""
+    with history_backfill_state_lock:
+        backfill_state = dict(history_backfill_state)
+    return {
+        "providers": store.provider_health_summary(),
+        "backfill_queue": store.failed_history_symbols(since_hours=24, limit=100),
+        "backfill": backfill_state,
+    }
+
+
 @app.post("/v1/paper-trading/run")
 def run_paper_trading_now() -> dict[str, object]:
     """Queue a requested paper pass; provider refreshes must never hold HTTP open."""
@@ -1157,6 +1177,10 @@ def fetch_and_store_quotes(
                 logger.warning("全市场快照入库跳过，不影响已获取持仓行情 markets=%s error=%s", ",".join(sorted(markets)), error)
         successful = [quote for quote in quotes if quote.get("price") is not None and not quote.get("error_code")]
         store.save_quotes(successful)
+        try:
+            store.record_provider_health(provider="market_quotes", success=True, circuit_threshold=1_000_000)
+        except Exception:
+            logger.warning("market quote health audit write skipped")
         _record_simulation_stage(
             run_id, "market_quotes", "ok",
             detail={"requested": len(symbols), "success": len(successful), "failed": len(quotes) - len(successful)},
@@ -1175,6 +1199,10 @@ def fetch_and_store_quotes(
             ],
         )
     except Exception as error:
+        try:
+            store.record_provider_health(provider="market_quotes", success=False, error_type=type(error).__name__, error_message=str(error), circuit_threshold=1_000_000)
+        except Exception:
+            logger.warning("market quote health audit write skipped")
         _record_simulation_stage(
             run_id, "market_quotes", "failed",
             detail={"error": f"{type(error).__name__}: {error}"},
@@ -1594,6 +1622,34 @@ def _daily_history_retry_seconds_left(symbol: str) -> int:
     return max(0, round(remaining)) if remaining > 0 else 0
 
 
+def run_history_backfill() -> dict[str, object]:
+    """Retry symbols whose daily history failed once the provider recovers.
+
+    The per-symbol persisted backoff and the provider circuit breaker both live
+    inside ``refresh_derived_cache`` / ``price_history_service``, so this loop
+    can safely run on a fixed cadence without hammering an unhealthy source.
+    """
+    failed = store.failed_history_symbols(since_hours=24, limit=100)
+    symbols = [str(item["symbol"]) for item in failed]
+    with history_backfill_state_lock:
+        history_backfill_state.update({"last_attempt_at": beijing_now(), "last_symbols": symbols, "last_error": None})
+    if symbols:
+        refresh_derived_cache(symbols, "history-backfill")
+        with history_backfill_state_lock:
+            history_backfill_state.update({"last_success_at": beijing_now(), "last_symbols": symbols})
+    return {"symbols": symbols}
+
+
+def history_backfill_loop() -> None:
+    while not history_backfill_stop.wait(HISTORY_BACKFILL_INTERVAL_SECONDS):
+        try:
+            run_history_backfill()
+        except Exception as error:
+            with history_backfill_state_lock:
+                history_backfill_state["last_error"] = f"{type(error).__name__}: {error}"
+            logger.warning("history backfill cycle failed error_type=%s", type(error).__name__)
+
+
 def refresh_paper_market_intelligence(symbols: list[str], names: dict[str, str]) -> None:
     """Persist current news for the active market candidates without blocking the cycle."""
     try:
@@ -1838,7 +1894,7 @@ def resolve_holding_drafts(draft_ids: list[str]) -> None:
 @app.on_event("startup")
 def resume_background_work() -> None:
     """Resume persisted lookups and start the server-side quote refresh worker."""
-    global market_refresh_thread
+    global market_refresh_thread, history_backfill_thread
     draft_ids = store.draft_ids_needing_lookup()
     if draft_ids:
         Thread(target=resolve_holding_drafts, args=(draft_ids,), daemon=True).start()
@@ -1859,11 +1915,16 @@ def resume_background_work() -> None:
         market_refresh_stop.clear()
         market_refresh_thread = Thread(target=scheduled_market_refresh_loop, daemon=True, name="market-refresh")
         market_refresh_thread.start()
+    if HISTORY_BACKFILL_ENABLED and (history_backfill_thread is None or not history_backfill_thread.is_alive()):
+        history_backfill_stop.clear()
+        history_backfill_thread = Thread(target=history_backfill_loop, daemon=True, name="history-backfill")
+        history_backfill_thread.start()
 
 
 @app.on_event("shutdown")
 def stop_background_work() -> None:
     market_refresh_stop.set()
+    history_backfill_stop.set()
 
 
 @app.get("/v1/market/quotes", response_model=list[MarketQuote])
@@ -2687,7 +2748,19 @@ def evaluate_daily_review(review_id: str) -> DailyReview:
             mistakes.append(f"{item['symbol']}：尚未录入是否执行，无法评价实际账户结果。")
         completed += 1
     if not completed:
-        raise HTTPException(status_code=422, detail="尚无下一交易日收盘数据，暂不能生成结果复盘。")
+        # A review whose items are all observation (watch) entries, or that has
+        # no next-day close data, still closes the plan-execution loop.  It is
+        # marked evaluated but produces no theoretical P&L, so a watch item never
+        # manufactures a paper trade just to make the daily page active.
+        review.update({
+            "status": "evaluated",
+            "evaluated_at": beijing_now().isoformat(),
+            "theoretical_pnl": None,
+            "actual_pnl": 0.0,
+            "highlights": highlights[:6] or ["本轮无建议参与计算：所有条目为观察项或缺少下一交易日收盘数据。"],
+            "mistakes": mistakes[:6],
+        })
+        return DailyReview.model_validate(store.save_daily_review(review))
     if theoretical_total >= 0:
         highlights.insert(0, "计划组合按下一交易日收盘衡量为正收益；这仅是单日验证，不代表策略有效性。")
     else:

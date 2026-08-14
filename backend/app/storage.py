@@ -6,6 +6,7 @@ import sqlite3
 import json
 import math
 import hashlib
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from threading import Lock
 from uuid import uuid4
@@ -583,6 +584,7 @@ class PortfolioStore:
             connection.execute("DELETE FROM simulation_run_stages")
             connection.execute("DELETE FROM simulation_run_symbols")
             connection.execute("DELETE FROM daily_history_provider_attempts")
+            connection.execute("DELETE FROM data_provider_health")
 
     def admin_summary(self) -> dict[str, int]:
         """Return only aggregate, non-sensitive operational counters for the admin console."""
@@ -1592,6 +1594,113 @@ class PortfolioStore:
         with self._connect() as connection:
             rows = connection.execute(query, args).fetchall()
         return [{**dict(row), "detail": json.loads(str(row["detail"]))} for row in rows]
+
+    def record_provider_health(self, *, provider: str, success: bool, error_type: str | None = None, error_message: str | None = None, circuit_threshold: int = 3, cooldown_seconds: int = 600) -> dict[str, object]:
+        """Update one provider's counters and open/close its circuit breaker."""
+        now = beijing_now()
+        now_text = now.isoformat()
+        with self._connect() as connection:
+            row = connection.execute("SELECT * FROM data_provider_health WHERE provider=?", (provider,)).fetchone()
+            previous = dict(row) if row else {}
+            consecutive = int(previous.get("consecutive_failures", 0))
+            total_attempts = int(previous.get("total_attempts", 0)) + 1
+            total_success = int(previous.get("total_success", 0)) + (1 if success else 0)
+            total_failures = int(previous.get("total_failures", 0)) + (0 if success else 1)
+            consecutive = 0 if success else consecutive + 1
+            circuit_state = "closed"
+            circuit_opened_at: str | None = None
+            cooldown_until: str | None = None
+            if not success and consecutive >= max(1, circuit_threshold):
+                circuit_state = "open"
+                circuit_opened_at = now_text
+                cooldown_until = (now + timedelta(seconds=max(1, cooldown_seconds))).isoformat()
+            connection.execute(
+                "INSERT INTO data_provider_health (provider,circuit_state,consecutive_failures,total_attempts,total_success,total_failures,last_attempt_at,last_success_at,last_failure_at,circuit_opened_at,cooldown_until,error_type,error_message,updated_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?) "
+                "ON CONFLICT(provider) DO UPDATE SET circuit_state=excluded.circuit_state, consecutive_failures=excluded.consecutive_failures, total_attempts=excluded.total_attempts, total_success=excluded.total_success, total_failures=excluded.total_failures, last_attempt_at=excluded.last_attempt_at, last_success_at=excluded.last_success_at, last_failure_at=excluded.last_failure_at, circuit_opened_at=excluded.circuit_opened_at, cooldown_until=excluded.cooldown_until, error_type=excluded.error_type, error_message=excluded.error_message, updated_at=excluded.updated_at",
+                (provider, circuit_state, consecutive, total_attempts, total_success, total_failures,
+                 now_text, now_text if success else previous.get("last_success_at"), now_text if not success else previous.get("last_failure_at"),
+                 circuit_opened_at, cooldown_until, error_type, error_message, now_text),
+            )
+        return self.provider_health(provider) or {"provider": provider, "circuit_state": "closed"}
+
+    def provider_health(self, provider: str) -> dict[str, object] | None:
+        """Return one provider's health; an expired cooldown automatically closes the circuit."""
+        with self._connect() as connection:
+            row = connection.execute("SELECT * FROM data_provider_health WHERE provider=?", (provider,)).fetchone()
+            if not row:
+                return None
+            item = dict(row)
+            if item.get("circuit_state") == "open" and item.get("cooldown_until"):
+                try:
+                    from datetime import datetime
+                    cooldown_end = datetime.fromisoformat(str(item["cooldown_until"]))
+                    if beijing_now() >= cooldown_end:
+                        item["circuit_state"] = "closed"
+                        item["consecutive_failures"] = 0
+                        item["circuit_opened_at"] = None
+                        item["cooldown_until"] = None
+                        connection.execute(
+                            "UPDATE data_provider_health SET circuit_state='closed', consecutive_failures=0, circuit_opened_at=NULL, cooldown_until=NULL, updated_at=? WHERE provider=?",
+                            (beijing_now().isoformat(), provider),
+                        )
+                except (TypeError, ValueError):
+                    pass
+        return item
+
+    def provider_health_summary(self) -> list[dict[str, object]]:
+        with self._connect() as connection:
+            rows = connection.execute("SELECT * FROM data_provider_health ORDER BY provider ASC").fetchall()
+        return [dict(row) for row in rows]
+
+    def provider_circuit_open(self, provider: str) -> bool:
+        health = self.provider_health(provider)
+        return bool(health and health.get("circuit_state") == "open")
+
+    def failed_history_symbols(self, since_hours: int = 24, limit: int = 100) -> list[dict[str, object]]:
+        """Symbols whose daily-history preparation failed recently, newest first.
+
+        The queue combines provider-level overall failures with simulation
+        terminal states so a stock blocked only by missing bars is retried too.
+        A symbol whose most recent overall refresh succeeded drops out even if
+        an older failure row remains in the append-only attempt log.
+        """
+        candidates: dict[str, str] = {}
+        latest_overall: dict[str, str] = {}
+        now = beijing_now()
+        with self._connect() as connection:
+            rows = connection.execute(
+                """SELECT a.symbol, a.started_at, a.status
+                   FROM daily_history_provider_attempts a
+                   WHERE a.provider='overall'
+                     AND a.started_at = (SELECT MAX(b.started_at) FROM daily_history_provider_attempts b WHERE b.provider='overall' AND b.symbol=a.symbol)"""
+            ).fetchall()
+            for row in rows:
+                symbol = str(row["symbol"])
+                latest_overall[symbol] = str(row["status"])
+                if str(row["status"]) == "error" and symbol not in candidates:
+                    candidates[symbol] = str(row["started_at"])
+            symbol_rows = connection.execute(
+                "SELECT symbol, updated_at FROM simulation_run_symbols WHERE terminal_state='skipped_data_unavailable' ORDER BY updated_at DESC"
+            ).fetchall()
+            for row in symbol_rows:
+                symbol = str(row["symbol"])
+                # Simulation terminal states fill gaps where no refresh was
+                # attempted; an existing successful refresh takes precedence.
+                if symbol not in candidates and latest_overall.get(symbol) != "ok":
+                    candidates[symbol] = str(row["updated_at"])
+        filtered: list[tuple[str, str]] = []
+        for symbol, moment in candidates.items():
+            try:
+                parsed = datetime.fromisoformat(moment)
+            except ValueError:
+                parsed = None
+            if parsed is not None and parsed.tzinfo is None:
+                # Naive timestamps produced by tests or older rows are Beijing time.
+                parsed = parsed.replace(tzinfo=timezone(timedelta(hours=8)))
+            if parsed is None or (now - parsed).total_seconds() <= max(1, since_hours) * 3600:
+                filtered.append((symbol, moment))
+        filtered.sort(key=lambda item: item[1], reverse=True)
+        return [{"symbol": symbol, "failed_at": moment} for symbol, moment in filtered[:max(1, min(limit, 500))]]
 
     def simulation_runs(self, limit: int = 50) -> list[dict[str, object]]:
         with self._connect() as connection:

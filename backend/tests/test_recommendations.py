@@ -18,7 +18,7 @@ def test_candidate_blocks_without_quote_history_or_enabled_plan():
 
     assert blocked == {
         "symbol": "600519", "status": "blocked",
-        "blocked_reasons": ["quote_or_daily_history_or_enabled_plan_missing"],
+        "blocked_reasons": ["quote_or_daily_history_missing"],
         "automatic_execution": False,
     }
 

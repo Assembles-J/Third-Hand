@@ -18,13 +18,21 @@ def _context(tmp_path, *, volume=2000, lot_size=100, cap=50):
 def test_add_size_is_limited_by_risk_cash_position_liquidity_and_lot(tmp_path):
     result = PositionSizingEngine().size(_context(tmp_path), "ADD")
 
+    # risk-sizing-v1 applies one system-wide policy (not per-stock plan values):
+    #   total_assets = 10_000 cash + 100 shares * 10 = 11_000
+    #   risk_capital = 11_000 * 1% = 110;  invalidation = entry * 0.95 = 9.5
+    #   risk_per_share = 10 - 9.5 = 0.5  ->  quantity_by_risk = floor(110 / 0.5) = 220
+    #   quantity_by_cash = floor(10_000 / 10) = 1000
+    #   quantity_by_position_cap = max(0, floor(11_000 * 20% / 10) - 100) = 120
+    #   quantity_by_liquidity = floor(2000 * 10%) = 200
+    #   suggested = min(220, 1000, 120, 200) rounded to the 100-share lot = 100
     assert result.status == "ready"
-    assert result.quantity_by_risk == 330
+    assert result.quantity_by_risk == 220
     assert result.quantity_by_cash == 1000
-    assert result.quantity_by_position_cap == 450
+    assert result.quantity_by_position_cap == 120
     assert result.quantity_by_liquidity == 200
-    assert result.suggested_quantity == 200
-    assert result.target_quantity == 300
+    assert result.suggested_quantity == 100
+    assert result.target_quantity == 200
     assert result.lot_size == 100
 
 

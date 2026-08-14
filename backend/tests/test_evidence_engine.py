@@ -33,7 +33,11 @@ def test_evidence_engine_emits_deterministic_traceable_unique_evidence(tmp_path)
 
     assert first == second
     assert len(ids) == len(set(ids))
-    assert {"position.above_max", "position.loss_exceeds_review_threshold", "trend.below_sma20_and_sma60", "momentum.rsi_hot", "momentum.macd_negative", "volatility.atr_high", "risk.historical_downside_high", "risk.annualized_volatility_high", "event.negative.notice-1", "plan.entry_condition_met"}.issubset(ids)
-    event = next(item for item in first if item.evidence_id == "event.negative.notice-1")
+    # Event evidence is directionally neutral by design (cached AI analysis is
+    # research-only), and editable trade-plan templates are excluded from the
+    # signal path, so neither "event.negative.*" nor "plan.entry_condition_met"
+    # is emitted.
+    assert {"position.above_max", "position.loss_exceeds_review_threshold", "trend.below_sma20_and_sma60", "momentum.rsi_hot", "momentum.macd_negative", "volatility.atr_high", "risk.historical_downside_high", "risk.annualized_volatility_high", "event.uncertain.notice-1"}.issubset(ids)
+    event = next(item for item in first if item.evidence_id == "event.uncertain.notice-1")
     assert event.source_reference == "https://example.com/notice"
     assert next(item for item in first if item.evidence_id == "position.above_max").strength == .9
