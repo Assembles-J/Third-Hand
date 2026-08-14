@@ -18,4 +18,9 @@ def build_router(legacy: ModuleType) -> APIRouter:
         legacy.data_provider_health,
         methods=["GET"],
     )
+    router.add_api_route(
+        "/v1/data-quality/events",
+        legacy.data_quality_events,
+        methods=["GET"],
+    )
     return router
