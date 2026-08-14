@@ -1,5 +1,6 @@
 from app.action_policy import ActionPolicyEngine
 from app.decision_context import DecisionContextBuilder
+from app.decision_models import EvidenceItem
 from app.evidence_engine import EvidenceEngine
 from app.storage import PortfolioStore
 
@@ -38,3 +39,22 @@ def test_add_requires_every_hard_precondition(tmp_path):
     candidates = ActionPolicyEngine().evaluate(context, EvidenceEngine().build(context))
 
     assert all(candidate.action != "ADD" for candidate in candidates)
+
+
+def test_research_only_negative_event_cannot_change_policy_action(tmp_path):
+    context = _context(tmp_path, rule_cap=100)
+    evidence = (*EvidenceEngine().build(context), EvidenceItem(
+        evidence_id="event.negative.synthetic",
+        category="event",
+        direction="negative",
+        strength=.95,
+        title="synthetic negative event",
+        description="must remain research only",
+        source="test",
+        fresh=True,
+        usage_scope="RESEARCH_ONLY",
+    ))
+
+    candidates = ActionPolicyEngine().evaluate(context, evidence)
+    assert candidates[0].action == "HOLD"
+    assert "event.negative.synthetic" not in candidates[0].supporting_evidence_ids
