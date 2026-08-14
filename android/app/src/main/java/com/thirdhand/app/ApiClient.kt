@@ -418,7 +418,7 @@ data class OperationItemDto(
     val status: String, val blockers: List<String>? = emptyList(),
 )
 data class DecisionReportDto(
-    val decision_id: String, val context_id: String, val symbol: String, val generated_at: String, val status: String,
+    val decision_id: String, val context_id: String, val symbol: String, val name: String = "", val generated_at: String, val status: String,
     val action: String, val summary: String, val data_quality: DecisionDataQualityDto? = null, val evidence: List<DecisionEvidenceDto> = emptyList(),
     val action_candidates: List<DecisionActionCandidateDto> = emptyList(), val operation_items: List<OperationItemDto>? = emptyList(), val ai_assessment: DecisionAiAssessmentDto? = null,
     val ai_status: String? = null, val ai_error_code: String? = null, val model: String? = null,

@@ -1279,7 +1279,7 @@ private fun DecisionHistoryDialog(symbol: String, onDismiss: () -> Unit) {
         Surface(Modifier.fillMaxWidth().heightIn(max = 760.dp), shape = RoundedCornerShape(18.dp)) {
             Column(Modifier.padding(18.dp)) {
                 Row(verticalAlignment = Alignment.CenterVertically) {
-                    Column(Modifier.weight(1f)) { Text("决策历史 · $symbol", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold); Text("每次报告保留独立输入快照，不会覆盖旧记录。", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant) }
+                    Column(Modifier.weight(1f)) { Text("决策历史 · ${reports.firstOrNull()?.name?.takeIf { it.isNotBlank() } ?: symbol}", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold); Text("每次报告保留独立输入快照，不会覆盖旧记录。", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant) }
                     IconButton(onClick = onDismiss) { Icon(Icons.Filled.Close, "关闭") }
                 }
                 if (loading) Text("正在读取历史报告…", Modifier.padding(vertical = 20.dp))

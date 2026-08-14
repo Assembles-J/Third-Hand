@@ -343,6 +343,7 @@ class DecisionReport(DecisionModel):
     decision_id: str
     context_id: str
     symbol: str
+    name: str = ""
     generated_at: datetime
     status: Literal["READY", "BLOCKED", "DEGRADED"]
     action: Literal["OPEN", "ADD", "HOLD", "WATCH", "REDUCE", "EXIT", "BLOCKED"]

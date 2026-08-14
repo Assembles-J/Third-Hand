@@ -1581,11 +1581,14 @@ def _record_simulation_stage(run_id: str | None, stage: str, status: str, symbol
         logger.warning("simulation stage audit write skipped run_id=%s stage=%s status=%s", run_id, stage, status)
 
 
-def _record_simulation_symbol_state(run_id: str | None, symbol: str, terminal_state: str, detail: dict[str, object] | None = None) -> None:
+def _record_simulation_symbol_state(run_id: str | None, symbol: str, terminal_state: str, detail: dict[str, object] | None = None, name: str | None = None) -> None:
     if not run_id:
         return
     try:
-        store.record_simulation_symbol(run_id=run_id, symbol=symbol, terminal_state=terminal_state, detail=detail)
+        merged = dict(detail or {})
+        if name:
+            merged.setdefault("name", name)
+        store.record_simulation_symbol(run_id=run_id, symbol=symbol, terminal_state=terminal_state, detail=merged)
     except Exception:
         logger.warning("simulation symbol audit write skipped run_id=%s symbol=%s state=%s", run_id, symbol, terminal_state)
 
@@ -1679,7 +1682,7 @@ def refresh_paper_candidate_data(symbols: list[str], *, force_refresh: bool, run
     refresh_derived_cache(symbols, "paper-trading-decision", force_history=force_refresh, run_id=run_id)
 
 
-def prepare_paper_decisions(symbols: list[str], run_id: str | None = None) -> int:
+def prepare_paper_decisions(symbols: list[str], run_id: str | None = None, names: dict[str, str] | None = None) -> int:
     """Create a fresh, auditable decision only for a bounded market slice."""
     generated = 0
     paper_account = store.paper_account()
@@ -1687,6 +1690,7 @@ def prepare_paper_decisions(symbols: list[str], run_id: str | None = None) -> in
         {"symbol": item["symbol"], "name": item["name"], "quantity": item["quantity"], "average_cost": item["average_cost"], "created_at": item.get("updated_at")}
         for item in paper_account.get("positions", [])
     ]
+    names = names or {str(item["symbol"]).strip().upper(): str(item.get("name") or item["symbol"]) for item in paper_holdings}
     for symbol in symbols:
         stage_started_at = beijing_now().isoformat()
         quote = next(iter(store.cached_quotes([symbol])), None)
@@ -1698,7 +1702,7 @@ def prepare_paper_decisions(symbols: list[str], run_id: str | None = None) -> in
                 "quote_price": quote.get("price") if quote else None,
                 "daily_bar_count": len(daily_bars),
             }
-            _record_simulation_symbol_state(run_id, symbol, "skipped_data_unavailable", detail)
+            _record_simulation_symbol_state(run_id, symbol, "skipped_data_unavailable", detail, name=names.get(symbol.strip().upper(), symbol))
             _record_simulation_stage(run_id, "decision", "skipped", symbol=symbol, detail={"terminal_state": "skipped_data_unavailable", **detail}, started_at=stage_started_at)
             continue
         latest = (store.decision_reports(symbol, 1) or [None])[0]
@@ -1709,7 +1713,7 @@ def prepare_paper_decisions(symbols: list[str], run_id: str | None = None) -> in
                         "decision_id": str(latest.get("decision_id") or ""),
                         "generated_at": str(latest.get("generated_at") or ""),
                         "reason": "within_interval",
-                    })
+                    }, name=names.get(symbol.strip().upper(), symbol))
                     _record_simulation_stage(run_id, "decision", "ok", symbol=symbol, detail={
                         "terminal_state": "decision_reused",
                         "decision_id": str(latest.get("decision_id") or ""),
@@ -1736,7 +1740,7 @@ def prepare_paper_decisions(symbols: list[str], run_id: str | None = None) -> in
             "status": report.get("status"),
             "data_quality_status": str((report.get("data_quality") or {}).get("status") or ""),
         }
-        _record_simulation_symbol_state(run_id, symbol, terminal_state, decision_detail)
+        _record_simulation_symbol_state(run_id, symbol, terminal_state, decision_detail, name=names.get(symbol.strip().upper(), symbol))
         _record_simulation_stage(run_id, "decision", "ok", symbol=symbol, detail={"terminal_state": terminal_state, **decision_detail}, started_at=stage_started_at)
         generated += 1
     return generated
@@ -1748,10 +1752,11 @@ def execute_due_paper_decisions(symbols: list[str], names: dict[str, str], run_i
     executed = skipped = 0
     for symbol in symbols:
         stage_started_at = beijing_now().isoformat()
+        symbol_name = names.get(symbol.strip().upper(), symbol)
         report = (store.decision_reports(symbol, 1) or [None])[0]
         quote = next(iter(store.cached_quotes([symbol])), None)
         if not report:
-            _record_simulation_symbol_state(run_id, symbol, "not_due", {"reason": "no_decision_report"})
+            _record_simulation_symbol_state(run_id, symbol, "not_due", {"reason": "no_decision_report"}, name=symbol_name)
             _record_simulation_stage(run_id, "execution", "skipped", symbol=symbol, detail={"terminal_state": "not_due", "reason": "no_decision_report"}, started_at=stage_started_at)
             continue
         check = validate_daily_execution(report, quote)
@@ -1764,7 +1769,7 @@ def execute_due_paper_decisions(symbols: list[str], names: dict[str, str], run_i
             _record_simulation_symbol_state(run_id, symbol, terminal_state, {
                 "decision_id": str(report.get("decision_id") or ""),
                 "reason": check.reason,
-            })
+            }, name=symbol_name)
             _record_simulation_stage(run_id, "execution", "skipped", symbol=symbol, detail={"terminal_state": terminal_state, "reason": check.reason}, started_at=stage_started_at)
             continue
         action = str(report.get("action") or "").upper()
@@ -1777,12 +1782,12 @@ def execute_due_paper_decisions(symbols: list[str], names: dict[str, str], run_i
                 "decision_id": str(report.get("decision_id") or ""),
                 "reason": "invalid_side_or_sizing",
                 "action": action, "quantity": quantity, "price": price,
-            })
+            }, name=symbol_name)
             _record_simulation_stage(run_id, "execution", "skipped", symbol=symbol, detail={"terminal_state": "skipped_execution", "reason": "invalid_side_or_sizing"}, started_at=stage_started_at)
             continue
         if side == "SELL" and positions.get(symbol, 0.0) <= 0:
             store.record_paper_skip(symbol=symbol, name=names.get(symbol, symbol), decision_id=str(report.get("decision_id") or "") or None, reason="paper_sell_blocked_no_position", price=price)
-            _record_simulation_symbol_state(run_id, symbol, "skipped_execution", {"decision_id": str(report.get("decision_id") or ""), "reason": "paper_sell_blocked_no_position"})
+            _record_simulation_symbol_state(run_id, symbol, "skipped_execution", {"decision_id": str(report.get("decision_id") or ""), "reason": "paper_sell_blocked_no_position"}, name=symbol_name)
             _record_simulation_stage(run_id, "execution", "skipped", symbol=symbol, detail={"terminal_state": "skipped_execution", "reason": "paper_sell_blocked_no_position"}, started_at=stage_started_at)
             skipped += 1
             continue
@@ -1793,18 +1798,18 @@ def execute_due_paper_decisions(symbols: list[str], names: dict[str, str], run_i
             _record_simulation_symbol_state(run_id, symbol, "executed", {
                 "decision_id": str(report.get("decision_id") or ""),
                 "side": side, "quantity": quantity, "price": price,
-            })
+            }, name=symbol_name)
             _record_simulation_stage(run_id, "execution", "ok", symbol=symbol, detail={"terminal_state": "executed", "side": side, "quantity": quantity, "price": price}, started_at=stage_started_at)
             executed += 1
             positions[symbol] = positions.get(symbol, 0.0) + (quantity if side == "BUY" else -quantity)
         except ValueError as error:
             if str(error) != "paper_decision_already_executed":
                 store.record_paper_skip(symbol=symbol, name=names.get(symbol, symbol), decision_id=str(report.get("decision_id") or "") or None, reason=str(error), price=price)
-                _record_simulation_symbol_state(run_id, symbol, "skipped_execution", {"decision_id": str(report.get("decision_id") or ""), "reason": str(error)})
+                _record_simulation_symbol_state(run_id, symbol, "skipped_execution", {"decision_id": str(report.get("decision_id") or ""), "reason": str(error)}, name=symbol_name)
                 _record_simulation_stage(run_id, "execution", "skipped", symbol=symbol, detail={"terminal_state": "skipped_execution", "reason": str(error)}, started_at=stage_started_at)
                 skipped += 1
             else:
-                _record_simulation_symbol_state(run_id, symbol, "not_due", {"decision_id": str(report.get("decision_id") or ""), "reason": "decision_already_executed"})
+                _record_simulation_symbol_state(run_id, symbol, "not_due", {"decision_id": str(report.get("decision_id") or ""), "reason": "decision_already_executed"}, name=symbol_name)
                 _record_simulation_stage(run_id, "execution", "skipped", symbol=symbol, detail={"terminal_state": "not_due", "reason": "decision_already_executed"}, started_at=stage_started_at)
     return executed, skipped
 
@@ -1841,7 +1846,7 @@ def run_paper_trading_cycle(symbols: list[str], force: bool = False, allow_when_
         due_executed, due_skipped = execute_due_paper_decisions(symbols, names, run_id=run_id)
         executed += due_executed
         skipped += due_skipped
-        generated_reports = prepare_paper_decisions(symbols, run_id=run_id)
+        generated_reports = prepare_paper_decisions(symbols, run_id=run_id, names=names)
         if not due_executed:
             no_action_reasons.append("本交易时段没有到期且可执行的历史决策")
         store.record_paper_equity_snapshot()

@@ -355,6 +355,7 @@ fun PaperTradingScreen(onOpenDetail: (ResearchTargetDto) -> Unit) {
 @Composable private fun PaperSymbolStateRow(symbol: SimulationRunSymbolDto, onOpenDecision: () -> Unit) {
     val terminal = paperTerminalLabels[symbol.terminal_state] ?: symbol.terminal_state
     val decisionId = symbol.detail["decision_id"] as? String
+    val symbolName = symbol.detail["name"] as? String ?: ""
     val terminalColor = when (symbol.terminal_state) {
         "executed" -> Color(0xFF2E7D32)
         "skipped_data_unavailable", "blocked_by_gate", "skipped_execution" -> Color(0xFFC62828)
@@ -363,7 +364,7 @@ fun PaperTradingScreen(onOpenDetail: (ResearchTargetDto) -> Unit) {
     }
     Column(Modifier.fillMaxWidth().clickable(enabled = decisionId != null, onClick = onOpenDecision).padding(vertical = 4.dp)) {
         Row(verticalAlignment = Alignment.CenterVertically) {
-            Text(symbol.symbol, fontWeight = FontWeight.SemiBold, style = MaterialTheme.typography.bodyMedium)
+            Text(if (symbolName.isNotBlank() && symbolName != symbol.symbol) "$symbolName · ${symbol.symbol}" else symbol.symbol, fontWeight = FontWeight.SemiBold, style = MaterialTheme.typography.bodyMedium)
             Spacer(Modifier.width(8.dp))
             Text(terminal, color = terminalColor, style = MaterialTheme.typography.labelMedium, fontWeight = FontWeight.SemiBold)
             if (decisionId != null) {
@@ -430,7 +431,7 @@ private fun paperTerminalReason(reason: String): String = when {
             if (loading) item { LinearProgressIndicator(Modifier.fillMaxWidth()); Text("正在加载完整决策留档…") }
             error?.let { item { Text(it, color = MaterialTheme.colorScheme.error) } }
             report?.let { item {
-                Text("${it.symbol} · ${it.action} · ${paperBeijingTimestamp(it.generated_at)}", fontWeight = FontWeight.Bold)
+                Text("${it.name.ifBlank { it.symbol }} · ${it.action} · ${paperBeijingTimestamp(it.generated_at)}", fontWeight = FontWeight.Bold)
                 Text(it.summary, style = MaterialTheme.typography.bodySmall)
                 it.data_quality?.let { quality ->
                     DecisionAuditLine("输入完整度", "${quality.score_percent}% · ${quality.status}", error = quality.status != "ready")
