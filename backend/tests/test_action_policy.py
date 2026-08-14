@@ -34,6 +34,43 @@ def test_position_cap_generates_reduce_before_default_hold(tmp_path):
     assert "position.above_max" in candidates[0].supporting_evidence_ids
 
 
+def test_empty_position_can_never_generate_reduce_from_risk_evidence(tmp_path):
+    context = _context(tmp_path, rule_cap=100).model_copy(update={"position": None})
+    evidence = (*EvidenceEngine().build(context), EvidenceItem(
+        evidence_id="risk.annualized_volatility_high",
+        category="risk",
+        direction="negative",
+        strength=.9,
+        title="synthetic high risk",
+        description="no position means this may block OPEN but cannot mean REDUCE",
+        source="test",
+        fresh=True,
+        usage_scope="POLICY",
+    ))
+
+    candidates = ActionPolicyEngine().evaluate(context, evidence)
+
+    assert candidates[0].action != "REDUCE"
+    assert all(candidate.action != "REDUCE" for candidate in candidates)
+
+
+def test_open_gate_audit_explains_existing_formal_preconditions(tmp_path):
+    context = _context(tmp_path, rule_cap=100).model_copy(update={"position": None})
+    evidence = EvidenceEngine().build(context)
+
+    audit = ActionPolicyEngine().open_gate_audit(context, evidence)
+    checks = {item["check_id"]: item for item in audit["checks"]}
+
+    assert audit["diagnostic_only"] is True
+    assert audit["policy_version"] == ActionPolicyEngine.version
+    assert checks["position.absent"]["passed"] is True
+    assert checks["quote.available"]["passed"] is True
+    assert checks["risk.available"]["passed"] is True
+    assert checks["action_gate.open"]["passed"] is False
+    assert audit["permission"] == "blocked"
+    assert audit["blockers"]
+
+
 def test_add_requires_every_hard_precondition(tmp_path):
     context = _context(tmp_path, rule_cap=100, plan_conditions=[{"trigger": "add", "field": "close", "operator": "between", "value": [9, 11]}])
     candidates = ActionPolicyEngine().evaluate(context, EvidenceEngine().build(context))

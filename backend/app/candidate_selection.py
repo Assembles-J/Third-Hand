@@ -21,6 +21,8 @@ class CandidateSelection:
     candidate_pool_hash: str
     selection_version: str
     rotation_key: str
+    eligible_count: int = 0
+    requested_limit: int = 0
 
     def audit_for(self, symbol: str) -> dict[str, object]:
         """Return immutable per-symbol selection lineage for DecisionReport."""
@@ -93,4 +95,6 @@ def select_candidates(
         candidate_pool_hash=_pool_hash(eligible),
         selection_version=config.CANDIDATE_SELECTION_VERSION,
         rotation_key=rotation_key,
+        eligible_count=len(eligible),
+        requested_limit=limit,
     )

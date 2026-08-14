@@ -1,4 +1,4 @@
-"""Deterministic action candidates for shadow analysis only."""
+"""Deterministic action candidates and explainable formal gate diagnostics."""
 from __future__ import annotations
 
 from app import decision_config as config
@@ -22,7 +22,11 @@ class ActionPolicyEngine:
             return (self._candidate("BLOCKED", 100, (), (), ("data_quality.blocked",), context.data_quality.missing_fields),)
 
         candidates: list[ActionCandidate] = []
-        if self._reduce_ids(ids):
+        # REDUCE is a position-management verb.  Risk evidence may block a new
+        # position, but an empty account can never formally reduce something it
+        # does not own.  This is a semantic correctness guard, not a looser OPEN
+        # threshold.
+        if context.position and self._reduce_ids(ids):
             support = tuple(sorted(self._reduce_ids(ids)))
             candidates.append(self._candidate("REDUCE", 85, support, (), ("position_or_risk.reduce",)))
         elif self._add_allowed(context, ids):
@@ -39,6 +43,73 @@ class ActionPolicyEngine:
         if context.data_quality.status == "degraded" and candidates[0].action in {"ADD", "OPEN", "HOLD"} and has_critical_degradation:
             candidates.insert(0, self._candidate("WATCH", 60, ("data_quality.summary",), (), ("data_quality.degraded",), context.data_quality.warnings))
         return tuple(candidates[:3])
+
+    def open_gate_audit(self, context: DecisionContext, evidence: tuple[EvidenceItem, ...]) -> dict[str, object]:
+        """Explain the existing OPEN rule without changing or scoring it.
+
+        The audit is intentionally deterministic and POLICY-only.  It answers
+        whether an empty-account candidate *could* OPEN under the frozen formal
+        rule, and if not, which exact precondition is missing.  It is diagnostics,
+        not a new opportunity score and not AI authority.
+        """
+        policy_ids = {
+            item.evidence_id
+            for item in evidence
+            if item.usage_scope == "POLICY"
+        }
+        positive = self._positive_ids(policy_ids)
+        gate = next(
+            (item for item in context.data_quality.action_gates if item.action == "OPEN"),
+            None,
+        )
+        gate_allowed = bool(gate and gate.permission == "allowed")
+
+        checks: list[dict[str, object]] = []
+        blockers: list[str] = []
+
+        def add(check_id: str, passed: bool, detail: str, *, evidence_ids=()) -> None:
+            checks.append({
+                "check_id": check_id,
+                "passed": bool(passed),
+                "detail": detail,
+                "evidence_ids": list(evidence_ids),
+            })
+            if not passed:
+                blockers.append(detail)
+
+        gate_detail = "OPEN action gate allowed"
+        if not gate_allowed:
+            reasons = list(gate.reasons) if gate else ["OPEN action gate missing"]
+            unavailable = list(gate.unavailable_fields) if gate else []
+            suffix = "; ".join([*reasons, *(f"unavailable:{item}" for item in unavailable)])
+            gate_detail = f"OPEN action gate blocked: {suffix}" if suffix else "OPEN action gate blocked"
+        add("action_gate.open", gate_allowed, gate_detail)
+        add("position.absent", context.position is None, "existing position blocks OPEN; use HOLD/ADD/REDUCE semantics")
+        add("quote.available", context.quote is not None, "quote unavailable")
+        add("risk.available", context.risk is not None, "risk unavailable")
+        add("cash.positive", context.account.available_cash > 0, "available cash is not positive")
+        add(
+            "positive_policy_evidence.present",
+            bool(positive),
+            "no positive POLICY evidence for OPEN",
+            evidence_ids=positive,
+        )
+        add(
+            "market.not_defensive",
+            "market.defensive" not in policy_ids,
+            "market.defensive blocks OPEN",
+            evidence_ids=("market.defensive",) if "market.defensive" in policy_ids else (),
+        )
+
+        permission = "allowed" if all(bool(item["passed"]) for item in checks) else "blocked"
+        return {
+            "permission": permission,
+            "checks": checks,
+            "positive_evidence_ids": list(positive),
+            "blockers": list(dict.fromkeys(blockers)),
+            "policy_version": self.version,
+            "diagnostic_only": True,
+        }
 
     @staticmethod
     def _candidate(action, priority, supporting, opposing, rules, blocked=()):
@@ -69,11 +140,20 @@ class ActionPolicyEngine:
             return False
         return bool(ActionPolicyEngine._positive_ids(ids))
 
-    @staticmethod
-    def _open_allowed(context: DecisionContext, ids: set[str]) -> bool:
-        if ActionPolicyEngine._gate(context, "OPEN") != "allowed":
+    def _open_allowed(self, context: DecisionContext, ids: set[str]) -> bool:
+        # Keep the formal predicate in lock-step with the audit checks.  The
+        # synthetic EvidenceItems are unnecessary here, so retain the compact
+        # predicate while tests assert parity with open_gate_audit.
+        if self._gate(context, "OPEN") != "allowed":
             return False
-        return bool(not context.position and context.quote and context.risk and context.account.available_cash > 0 and ActionPolicyEngine._positive_ids(ids) and "market.defensive" not in ids)
+        return bool(
+            not context.position
+            and context.quote
+            and context.risk
+            and context.account.available_cash > 0
+            and self._positive_ids(ids)
+            and "market.defensive" not in ids
+        )
 
     @staticmethod
     def _gate(context: DecisionContext, action: str) -> str:
