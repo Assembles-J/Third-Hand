@@ -33,6 +33,7 @@ def test_route_ownership_has_explicit_governance_domains() -> None:
     assert owner_for_path("/v1/admin/overview") == "admin"
     assert owner_for_path("/v1/paper-trading/run") == "paper"
     assert owner_for_path("/v1/data-quality/provider-health") == "data_quality"
+    assert owner_for_path("/v1/system/ai-capabilities") == "ai"
     assert owner_for_path("/v1/feed") == "research"
     assert owner_for_path("/v1/announcements") == "research"
     assert owner_for_path("/v1/decisions/latest") == "decision"
@@ -56,6 +57,7 @@ def test_first_migrated_routes_are_registered_once_per_method() -> None:
 
     expected = {
         ("/health", "GET"),
+        ("/v1/system/ai-capabilities", "GET"),
         ("/v1/app-update", "GET"),
         ("/v1/app-update/apk", "GET"),
         ("/v1/admin/overview", "GET"),
