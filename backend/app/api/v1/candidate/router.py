@@ -1,7 +1,7 @@
 """Candidate Management HTTP API.
 
-These endpoints control research scheduling only.  No endpoint in this router
-can submit a formal trade, alter ActionPolicy or invoke PositionSizing.
+These endpoints control research scheduling only. No endpoint in this router can
+submit a formal trade, alter ActionPolicy or invoke PositionSizing.
 """
 from __future__ import annotations
 
@@ -11,6 +11,7 @@ from app.api.v1.candidate.schemas import (
     CandidateActivationRuleEnabledRequest,
     CandidateActivationRuleRequest,
     CandidateAnalysisResultRequest,
+    CandidateAnalysisStartRequest,
     CandidateCreateRequest,
     CandidatePriorityRequest,
     CandidateTransitionRequest,
@@ -97,11 +98,28 @@ def create_candidate_router(service) -> APIRouter:
             translate_error(error)
             return {}
 
+    @router.get("/{symbol}/analysis-readiness")
+    def analysis_readiness(symbol: str) -> dict[str, object]:
+        try:
+            return service.analysis_readiness(symbol)
+        except Exception as error:
+            translate_error(error)
+            return {}
+
+    @router.post("/{symbol}/analysis/start")
+    def start_analysis(symbol: str, payload: CandidateAnalysisStartRequest) -> dict[str, object]:
+        """Enter ANALYZING only after lifecycle/cooldown readiness passes."""
+        try:
+            return service.start_analysis(symbol, reason=payload.reason)
+        except Exception as error:
+            translate_error(error)
+            return {}
+
     @router.post("/{symbol}/analysis-result")
     def record_analysis_result(symbol: str, payload: CandidateAnalysisResultRequest) -> dict[str, object]:
         """Persist a completed deep-research result/cooldown contract.
 
-        This is an integration seam for the later Research AI worker.  It stores
+        This is an integration seam for the later Research AI worker. It stores
         research lifecycle state only and cannot emit/override a formal action.
         """
         try:
