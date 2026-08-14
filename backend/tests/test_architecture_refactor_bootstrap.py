@@ -22,7 +22,7 @@ def test_bootstrap_runtime_preserves_governance_import_order() -> None:
     source = (ROOT / "app" / "bootstrap" / "runtime.py").read_text(encoding="utf-8")
     policy = source.index("install_daily_history_policy()")
     compat = source.index("install_daily_history_compat()")
-    application_import = source.index("from app import application")
+    application_import = source.index("from app.legacy import application_legacy as application")
     paper = source.index("install_paper_runtime_governance(application)")
     assert policy < compat < application_import < paper
     assert "install_migrated_routers" not in source
@@ -48,13 +48,13 @@ def test_new_domain_package_does_not_depend_on_transport_or_legacy_app() -> None
         assert "from fastapi" not in source
         assert "import fastapi" not in source
         assert "app.application" not in source
+        assert "app.legacy" not in source
 
 
 def test_every_public_api_route_has_a_v2_domain_owner() -> None:
-    # The existing route table is still authoritative in PR-A1. This inventory
-    # test turns the live OpenAPI surface into the migration ledger: any route
-    # added without a v2 domain assignment fails CI instead of disappearing in
-    # the legacy application monolith.
+    # PR-A2 keeps the quarantined legacy route table authoritative.  The live
+    # inventory still guards the future migration: a new endpoint cannot hide in
+    # the monolith without an explicit v2 domain owner.
     import app.main as runtime
 
     routes = [route for route in runtime.app.routes if isinstance(route, APIRoute)]
