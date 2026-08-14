@@ -208,8 +208,9 @@ fun PaperTradingScreen(onOpenDetail: (ResearchTargetDto) -> Unit) {
                 }
                 Text("候选 → 行情 → 日线 → 风险 → 新闻 → 决策 → 执行；每只股票都有明确终态", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
                 runs.firstOrNull()?.let { latest ->
+                    val elapsed = paperRunElapsed(latest.started_at, latest.finished_at)
                     Text(
-                        "最近：${paperBeijingTimestamp(latest.started_at)} · ${if (latest.trigger == "manual") "手动" else "自动"} · 生成 ${latest.generated} · 执行 ${latest.executed} · 跳过 ${latest.skipped} · ${paperRunStatusLabel(latest.status)}",
+                        "最近：${paperBeijingTimestamp(latest.started_at)} · ${if (latest.trigger == "manual") "手动" else "自动"} · 生成 ${latest.generated} · 执行 ${latest.executed} · 跳过 ${latest.skipped}${elapsed?.let { " · 总耗时 $it" }.orEmpty()} · ${paperRunStatusLabel(latest.status)}",
                         style = MaterialTheme.typography.labelSmall,
                         color = MaterialTheme.colorScheme.primary,
                     )
@@ -302,6 +303,7 @@ fun PaperTradingScreen(onOpenDetail: (ResearchTargetDto) -> Unit) {
 
 @Composable private fun PaperRunRow(run: SimulationRunDto, onClick: () -> Unit) {
     val statusColor = when (run.status) { "completed" -> Color(0xFF2E7D32); "failed" -> Color(0xFFC62828); else -> MaterialTheme.colorScheme.onSurfaceVariant }
+    val elapsed = paperRunElapsed(run.started_at, run.finished_at)
     Column(Modifier.fillMaxWidth().clickable(onClick = onClick).padding(vertical = 10.dp)) {
         Row(verticalAlignment = Alignment.CenterVertically) {
             Text("${paperBeijingTimestamp(run.started_at)} · ${if (run.trigger == "manual") "手动" else "自动"}", fontWeight = FontWeight.SemiBold, style = MaterialTheme.typography.titleSmall)
@@ -309,7 +311,7 @@ fun PaperTradingScreen(onOpenDetail: (ResearchTargetDto) -> Unit) {
             Text(paperRunStatusLabel(run.status), color = statusColor, style = MaterialTheme.typography.labelMedium, fontWeight = FontWeight.SemiBold)
             Icon(Icons.AutoMirrored.Filled.KeyboardArrowRight, null, tint = MaterialTheme.colorScheme.onSurfaceVariant)
         }
-        Text("候选 ${run.symbol_count} · 生成 ${run.generated} · 执行 ${run.executed} · 跳过 ${run.skipped}", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+        Text("候选 ${run.symbol_count} · 生成 ${run.generated} · 执行 ${run.executed} · 跳过 ${run.skipped}${elapsed?.let { " · 总耗时 $it" }.orEmpty()}", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
         if (run.message.isNotBlank()) Text(run.message, maxLines = 2, overflow = TextOverflow.Ellipsis, style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
     }
 }
@@ -322,12 +324,18 @@ fun PaperTradingScreen(onOpenDetail: (ResearchTargetDto) -> Unit) {
             if (loading) item { LinearProgressIndicator(Modifier.fillMaxWidth()); Text("正在加载本轮链路…") }
             error?.let { item { Text(it, color = MaterialTheme.colorScheme.error) } }
             run?.let { data ->
+                val elapsed = paperRunElapsed(data.started_at, data.finished_at)
+                val symbolNames = data.symbols.associate { state ->
+                    state.symbol to ((state.detail["name"] as? String)?.takeIf { it.isNotBlank() } ?: state.symbol)
+                }
+                val candidateStage = data.stages.firstOrNull { it.stage == "candidate_pool" }
                 item {
                     Text(data.message, style = MaterialTheme.typography.bodySmall)
-                    Text("状态 ${paperRunStatusLabel(data.status)} · 候选 ${data.symbol_count} · 生成 ${data.generated} · 执行 ${data.executed} · 跳过 ${data.skipped}", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    Text("状态 ${paperRunStatusLabel(data.status)} · 候选 ${data.symbol_count} · 生成 ${data.generated} · 执行 ${data.executed} · 跳过 ${data.skipped}${elapsed?.let { " · 总耗时 $it" }.orEmpty()}", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
                 }
+                candidateStage?.let { stage -> item { PaperCandidatePoolAudit(stage.detail) } }
                 item { Text("阶段时间线", fontWeight = FontWeight.SemiBold) }
-                data.stages.forEach { stage -> item { PaperStageRow(stage) } }
+                data.stages.forEach { stage -> item { PaperStageRow(stage, symbolNames) } }
                 if (data.symbols.isNotEmpty()) {
                     item { Text("每只股票终态", fontWeight = FontWeight.SemiBold, modifier = Modifier.padding(top = 6.dp)) }
                     data.symbols.forEach { symbol -> item { PaperSymbolStateRow(symbol, onOpenDecision = { onOpenDecision(symbol.detail["decision_id"] as? String) }) } }
@@ -338,17 +346,82 @@ fun PaperTradingScreen(onOpenDetail: (ResearchTargetDto) -> Unit) {
     confirmButton = { TextButton(onClick = onDismiss) { Text("关闭") } },
 )
 
-@Composable private fun PaperStageRow(stage: SimulationRunStageDto) {
+@Composable private fun PaperCandidatePoolAudit(detail: Map<String, Any>) {
+    val eligible = paperDetailInt(detail["eligible_count"])
+    val limit = paperDetailInt(detail["requested_limit"])
+    val selected = paperDetailInt(detail["selected_count"])
+    val version = detail["candidate_selection_version"]?.toString().orEmpty()
+    val rotationKey = detail["rotation_key"]?.toString().orEmpty()
+    val poolHash = detail["candidate_pool_hash"]?.toString().orEmpty()
+    val selectedItems = (detail["selected_items"] as? List<*>)?.mapNotNull { it as? Map<*, *> }.orEmpty()
+    Column(verticalArrangement = Arrangement.spacedBy(3.dp)) {
+        Text("候选池选取依据", fontWeight = FontWeight.SemiBold)
+        Text("可选 $eligible · 配置限额 $limit · 本轮选择 $selected", style = MaterialTheme.typography.bodySmall)
+        Text("规则：纸面持仓优先保留用于风险监控；其余按 SHA256(version + rotation_key + symbol) 确定性轮换。", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+        Text("明确不使用：自选股、热门板块、当日涨跌、资金流、新闻、LLM 输出。", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+        if (version.isNotBlank() || rotationKey.isNotBlank()) Text("版本 $version · 轮换键 $rotationKey", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+        if (poolHash.isNotBlank()) Text("Pool hash ${poolHash.take(12)}…", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+        selectedItems.forEach { item ->
+            val symbol = item["symbol"]?.toString().orEmpty()
+            val name = item["name"]?.toString().orEmpty()
+            val rank = paperDetailInt(item["rank"])
+            val reason = when (item["reason"]?.toString()) {
+                "paper_position_risk_monitor" -> "持仓风险监控"
+                "deterministic_rotation" -> "确定性轮换"
+                else -> item["reason"]?.toString().orEmpty()
+            }
+            val display = if (name.isNotBlank() && name != symbol) "$name · $symbol" else symbol
+            Text("$rank. $display · $reason", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+        }
+    }
+}
+
+@Composable private fun PaperStageRow(stage: SimulationRunStageDto, symbolNames: Map<String, String>) {
     val label = paperStageLabels[stage.stage] ?: stage.stage
+    val stageName = (stage.detail["name"] as? String)?.takeIf { it.isNotBlank() }
+        ?: stage.symbol?.let { symbolNames[it] }
     Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
         Row(verticalAlignment = Alignment.CenterVertically) {
             Text(label, fontWeight = FontWeight.SemiBold, style = MaterialTheme.typography.bodyMedium)
-            stage.symbol?.let { Text(" · $it", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant) }
+            stage.symbol?.let { symbol ->
+                val display = if (!stageName.isNullOrBlank() && stageName != symbol) "$stageName · $symbol" else symbol
+                Text(" · $display", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            }
             Spacer(Modifier.weight(1f))
             Text("${paperStageStatusLabel(stage.status)}${if (stage.elapsed_ms > 0) " · ${stage.elapsed_ms}ms" else ""}", color = paperStageStatusColor(stage.status), style = MaterialTheme.typography.labelMedium, fontWeight = FontWeight.SemiBold)
         }
         val reason = stage.detail["reason"] as? String ?: stage.detail["error"] as? String
         if (!reason.isNullOrBlank()) Text(paperTerminalReason(reason), style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+        if (stage.stage == "decision") PaperOpenGateAudit(stage.detail["open_gate_audit"])
+    }
+}
+
+@Composable private fun PaperOpenGateAudit(value: Any?) {
+    val audit = value as? Map<*, *> ?: return
+    val permission = audit["permission"]?.toString().orEmpty()
+    val checks = (audit["checks"] as? List<*>)?.mapNotNull { it as? Map<*, *> }.orEmpty()
+    val blockers = paperDetailStrings(audit["blockers"])
+    val positive = paperDetailStrings(audit["positive_evidence_ids"])
+    val allowed = permission == "allowed"
+    Column(Modifier.padding(top = 3.dp), verticalArrangement = Arrangement.spacedBy(2.dp)) {
+        Text(
+            if (allowed) "OPEN 诊断：允许" else "OPEN 诊断：未放行",
+            style = MaterialTheme.typography.labelMedium,
+            fontWeight = FontWeight.SemiBold,
+            color = if (allowed) Color(0xFF2E7D32) else MaterialTheme.colorScheme.error,
+        )
+        checks.forEach { check ->
+            val id = check["check_id"]?.toString().orEmpty()
+            val passed = check["passed"] as? Boolean ?: false
+            val detail = check["detail"]?.toString().orEmpty()
+            Text(
+                "${if (passed) "✓" else "✗"} ${paperOpenCheckLabel(id)}${if (!passed && detail.isNotBlank()) " · ${paperOpenAuditDetail(detail)}" else ""}",
+                style = MaterialTheme.typography.labelSmall,
+                color = if (passed) MaterialTheme.colorScheme.onSurfaceVariant else MaterialTheme.colorScheme.error,
+            )
+        }
+        if (positive.isNotEmpty()) Text("正向 POLICY 证据：${positive.joinToString()}", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+        if (blockers.isNotEmpty()) Text("阻断原因：${blockers.joinToString("；") { paperOpenAuditDetail(it) }}", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.error)
     }
 }
 
@@ -405,6 +478,43 @@ private fun paperStageStatusLabel(status: String): String = when (status) {
 }
 private fun paperStageStatusColor(status: String): Color = when (status) {
     "ok" -> Color(0xFF2E7D32); "failed" -> Color(0xFFC62828); "skipped" -> Color(0xFF9E9E9E); else -> Color(0xFF616161)
+}
+private fun paperRunElapsed(startedAt: String, finishedAt: String?): String? {
+    if (finishedAt.isNullOrBlank()) return null
+    return runCatching {
+        val millis = java.time.Duration.between(OffsetDateTime.parse(startedAt), OffsetDateTime.parse(finishedAt)).toMillis().coerceAtLeast(0)
+        when {
+            millis < 1_000 -> "${millis}ms"
+            millis < 60_000 -> String.format(Locale.US, "%.1fs", millis / 1_000.0)
+            else -> "${millis / 60_000}m ${(millis % 60_000) / 1_000}s"
+        }
+    }.getOrNull()
+}
+private fun paperDetailInt(value: Any?): Int = when (value) {
+    is Number -> value.toInt()
+    is String -> value.toDoubleOrNull()?.toInt() ?: 0
+    else -> 0
+}
+private fun paperDetailStrings(value: Any?): List<String> = (value as? List<*>)?.mapNotNull { it?.toString() }.orEmpty()
+private fun paperOpenCheckLabel(id: String): String = when (id) {
+    "action_gate.open" -> "OPEN 数据门禁"
+    "position.absent" -> "当前无持仓"
+    "quote.available" -> "行情可用"
+    "risk.available" -> "风险数据可用"
+    "cash.positive" -> "可用现金大于 0"
+    "positive_policy_evidence.present" -> "存在正向 POLICY 证据"
+    "market.not_defensive" -> "市场不是 defensive"
+    else -> id
+}
+private fun paperOpenAuditDetail(detail: String): String = when {
+    detail.contains("no positive POLICY evidence") -> "缺少正向 POLICY 证据（趋势、市场或相对强度）"
+    detail.contains("market.defensive") -> "市场环境为 defensive，OPEN 被阻断"
+    detail.contains("quote unavailable") -> "缺少可用行情"
+    detail.contains("risk unavailable") -> "缺少风险数据"
+    detail.contains("available cash is not positive") -> "可用现金不足"
+    detail.contains("existing position blocks OPEN") -> "已有持仓，OPEN 不适用"
+    detail.contains("OPEN action gate blocked") -> detail.replace("OPEN action gate blocked:", "OPEN 数据门禁未放行：")
+    else -> detail
 }
 private fun paperTerminalReason(reason: String): String = when {
     reason.contains("missing_quote") -> "缺少可用行情"
