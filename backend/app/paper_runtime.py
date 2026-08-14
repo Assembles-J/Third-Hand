@@ -11,14 +11,36 @@ from app import decision_config as config
 from app.candidate_selection import CandidateSelection, select_candidates
 
 
+def _history_eligible_symbols(store, *, minimum_daily_bars: int = 60, limit: int = 10_000) -> tuple[str, ...]:
+    """Return locally history-ready symbols without requiring a cached quote.
+
+    Quote freshness belongs to the later DataQuality/ActionGate boundary. Requiring
+    a quote here would make a cold start produce an empty candidate cohort before
+    the paper runtime had a chance to refresh market data.
+    """
+    with store._connect() as connection:  # package-internal read-only adapter
+        rows = connection.execute(
+            """SELECT symbol
+               FROM daily_price_cache
+               GROUP BY symbol
+               HAVING COUNT(*) >= ?
+               ORDER BY symbol ASC
+               LIMIT ?""",
+            (max(1, minimum_daily_bars), max(1, limit)),
+        ).fetchall()
+    return tuple(str(row["symbol"]).strip().upper() for row in rows)
+
+
 def current_candidate_selection(store, *, limit: int, rotation_key: str) -> CandidateSelection:
-    """Build the formal paper-decision cohort from the full locally eligible pool.
+    """Build the formal paper-decision cohort from the locally history-ready pool.
 
     Watchlists, hot-sector metadata, price rankings, fund flow and LLM output are
     intentionally unavailable here. Existing paper positions are supplied as a
-    safety override and are retained even when they lack 60 ready bars.
+    safety override and are retained even when they lack 60 ready bars. Current
+    quotes are refreshed only after selection and are then governed by freshness
+    and action gates.
     """
-    eligible = store.opportunity_symbols(minimum_daily_bars=60, limit=10_000)
+    eligible = _history_eligible_symbols(store, minimum_daily_bars=60, limit=10_000)
     positions = [str(item["symbol"]) for item in store.paper_account().get("positions", [])]
     return select_candidates(
         eligible,
@@ -62,11 +84,6 @@ def pending_current_version_decision_symbols(
     reports from an older policy/candidate regime must never leak into the frozen
     observation ledger. Newer manual/research DecisionReports without candidate
     lineage are ignored rather than masking the latest formal paper report.
-
-    ``PortfolioStore`` does not yet expose a global latest-report query, so this
-    governance adapter uses its package-private connection boundary read-only.
-    Moving this query into the repository class later is an implementation cleanup,
-    not a strategy change.
     """
     with store._connect() as connection:  # package-internal read-only adapter
         rows = connection.execute(
@@ -146,6 +163,13 @@ def runtime_scope(
     )
     runtime_symbols = tuple(dict.fromkeys((*decision_symbols, *due_symbols)))
     return decision_symbols, due_symbols, runtime_symbols
+
+
+def excluded_requested_symbols(selection: CandidateSelection, *, requested_symbols=(), pending_symbols=()) -> tuple[str, ...]:
+    """Return explicit requests that are not authorized by selection or pending due work."""
+    requested = tuple(dict.fromkeys(str(item).strip().upper() for item in requested_symbols if str(item).strip()))
+    authorized = set(selection.symbols) | {str(item).strip().upper() for item in pending_symbols if str(item).strip()}
+    return tuple(symbol for symbol in requested if symbol not in authorized)
 
 
 def candidate_pool_audit(
