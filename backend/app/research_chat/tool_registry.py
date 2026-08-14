@@ -1,4 +1,9 @@
-"""Explicit, read-only tool definitions exposed to the research model."""
+"""Explicit read-only/proposal-only tools exposed to the research model.
+
+Research Chat may inspect persisted data and propose user-confirmed data changes.
+It cannot execute paper trades, alter ActionPolicy, change formal sizing, or
+bypass the historical DecisionReport -> next eligible quote execution boundary.
+"""
 from __future__ import annotations
 
 ALLOWED_TOOLS = {
@@ -23,8 +28,6 @@ ALLOWED_TOOLS = {
     "get_recommendation_evaluations",
     "request_user_input",
     "propose_data_change",
-    "paper_add_position",
-    "paper_reduce_position",
 }
 
 _DESCRIPTIONS = {
@@ -49,16 +52,12 @@ _DESCRIPTIONS = {
     "get_recommendation_evaluations": "Read historical recommendation evaluations for a symbol.",
     "request_user_input": "Ask one to three concise questions only when missing user information materially changes the conclusion.",
     "propose_data_change": "Propose a create, update, or delete of a holding, trade plan, or personal rule. This never writes data: it creates a user-confirmation step.",
-    "paper_add_position": "Execute an explicit simulated add/buy using the latest cached quote. It only affects the isolated paper ledger and rejects insufficient simulated cash.",
-    "paper_reduce_position": "Execute an explicit simulated reduce/sell using the latest cached quote. It only affects the isolated paper ledger and returns proceeds to simulated cash.",
 }
 
 _NO_ARGUMENT_TOOLS = {"get_account_summary", "get_personal_rule"}
 
 
 def _parameters(name: str) -> dict[str, object]:
-    if name in {"paper_add_position", "paper_reduce_position"}:
-        return {"type":"object","properties":{"symbol":{"type":"string"},"quantity":{"type":"number","exclusiveMinimum":0}},"required":["symbol","quantity"],"additionalProperties":False}
     if name == "request_user_input":
         return {
             "type": "object",
@@ -74,7 +73,16 @@ def _parameters(name: str) -> dict[str, object]:
             "additionalProperties": False,
         }
     if name == "propose_data_change":
-        return {"type":"object","properties":{"entity":{"type":"string","enum":["holding","trade_plan","personal_rule"]},"operation":{"type":"string","enum":["create","update","delete"]},"summary":{"type":"string","maxLength":500}},"required":["entity","operation","summary"],"additionalProperties":False}
+        return {
+            "type": "object",
+            "properties": {
+                "entity": {"type": "string", "enum": ["holding", "trade_plan", "personal_rule"]},
+                "operation": {"type": "string", "enum": ["create", "update", "delete"]},
+                "summary": {"type": "string", "maxLength": 500},
+            },
+            "required": ["entity", "operation", "summary"],
+            "additionalProperties": False,
+        }
     if name in _NO_ARGUMENT_TOOLS:
         return {"type": "object", "properties": {}, "additionalProperties": False}
     return {
