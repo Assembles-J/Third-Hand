@@ -1,38 +1,157 @@
-"""Bounded local implementation of the tool whitelist."""
+"""Read-only/proposal-only Research Chat tool execution.
+
+The executor only reads persisted local state or returns an explicit confirmation
+proposal. Direct paper-ledger mutation was removed; formal execution remains the
+current-version DecisionReport -> next eligible observed quote path.
+"""
 from __future__ import annotations
-import json
+
+from typing import Any
+
 from .tool_registry import ALLOWED_TOOLS
+
+
 class ToolExecutor:
- def __init__(self,store):self.store=store
- def execute(self,name,args,context):
-  if name not in ALLOWED_TOOLS:raise ValueError("tool_not_allowed")
-  symbol=str(args.get("symbol") or context.symbol).upper()
-  if name=="request_user_input":
-   questions=args.get("questions") or []
-   if not isinstance(questions,list) or not 1<=len(questions)<=3:raise ValueError("tool_invalid_arguments")
-   return {"clarification":True,"questions":[str(q)[:240] for q in questions]}
-  if name=="propose_data_change":
-   entity=str(args.get("entity") or "")
-   operation=str(args.get("operation") or "")
-   if entity not in {"holding","trade_plan","personal_rule"} or operation not in {"create","update","delete"}:raise ValueError("tool_invalid_arguments")
-   return {"confirmation_required":True,"entity":entity,"operation":operation,"summary":str(args.get("summary") or "")[:500],"automatic_execution":False}
-  if name=="request_daily_history_refresh":
-   available=len(self.store.daily_prices(symbol,60))
-   return {"confirmation_required":available<60,"action":"daily_history_refresh","symbol":symbol,"required_days":60,"available_days":available,"summary":f"当前仅有 {available} 条日线，需要拉取至少 60 条后再继续研究。","automatic_execution":False}
-  if name in {"paper_add_position","paper_reduce_position"}:
-   quantity=float(args.get("quantity") or 0)
-   quote=(self.store.cached_quotes([symbol]) or [{}])[0]
-   price=float(quote.get("price") or 0)
-   if quantity<=0 or price<=0:raise ValueError("paper_trade_quote_or_quantity_invalid")
-   names={str(item.get("symbol")):str(item.get("name")) for item in [*self.store.list(),*self.store.watchlist()]}
-   from uuid import uuid4
-   return self.store.execute_paper_trade(trade_id=str(uuid4()),symbol=symbol,name=names.get(symbol,symbol),side="BUY" if name=="paper_add_position" else "SELL",quantity=quantity,price=price,decision_id=None,reason="MCP 显式交易操作")
-  content=self.store.cached_content([symbol],limit=30)
-  announcements=[item for item in content if str(item.get("id", "")).startswith("announcement-")]
-  news=[item for item in content if str(item.get("id", "")).startswith("news-")]
-  business_evidence={"announcements":announcements,"news":news,"trade_plan":self.store.trade_plan(symbol),"market_regime":context.market_regime.model_dump(mode="json") if context.market_regime else None,"relative_strength":context.relative_strength.model_dump(mode="json") if context.relative_strength else None,"note":"Publication times and source links are included. Formal announcements take precedence over news when evidence conflicts."}
-  mapping={"get_decision_context":context.model_dump(mode="json"),"get_holding":self.store.list(),"get_account_summary":self.store.available_cash(),"get_market_quote":self.store.cached_quotes([symbol]),"get_daily_price_summary":self.store.daily_prices(symbol,60),"get_risk_snapshot":self.store.cached_risk(symbol),"get_trade_plan":self.store.trade_plan(symbol),"get_personal_rule":self.store.personal_rules(),"get_previous_decisions":self.store.decision_reports(symbol),"get_recommendation_evaluations":self.store.recommendations(symbol),"get_event_evidence":[e.model_dump(mode="json") for e in context.events],"get_company_announcements":announcements,"get_company_news":news,"get_business_evidence":business_evidence,"get_technical_snapshot":context.technical.model_dump(mode="json") if context.technical else None,"get_market_regime":context.market_regime.model_dump(mode="json") if context.market_regime else None,"get_relative_strength":context.relative_strength.model_dump(mode="json") if context.relative_strength else None,"get_current_decision_report":(self.store.decision_reports(symbol,1) or [None])[0]}
-  result=mapping.get(name)
-  encoded=json.dumps(result,ensure_ascii=False,default=str)
-  if len(encoded)>12000:result={"truncated":True,"summary":encoded[:12000]}
-  return result
+    def __init__(self, store):
+        self.store = store
+
+    @staticmethod
+    def _symbol(args: dict[str, Any], context) -> str:
+        value = args.get("symbol") or getattr(context, "symbol", "")
+        symbol = str(value or "").strip().upper()
+        if not symbol:
+            raise ValueError("tool_symbol_required")
+        return symbol
+
+    @staticmethod
+    def _json_safe(value):
+        if hasattr(value, "model_dump"):
+            return value.model_dump(mode="json")
+        if isinstance(value, dict):
+            return {str(key): ToolExecutor._json_safe(item) for key, item in value.items()}
+        if isinstance(value, (list, tuple)):
+            return [ToolExecutor._json_safe(item) for item in value]
+        return value
+
+    def _optional_store_call(self, names: tuple[str, ...], *args):
+        for method_name in names:
+            method = getattr(self.store, method_name, None)
+            if not callable(method):
+                continue
+            try:
+                return method(*args)
+            except TypeError:
+                try:
+                    return method(args[0]) if args else method()
+                except TypeError:
+                    continue
+        return None
+
+    def execute(self, name, args, context):
+        if name not in ALLOWED_TOOLS:
+            raise ValueError(f"unknown_tool:{name}")
+        args = dict(args or {})
+
+        if name == "request_user_input":
+            questions = args.get("questions") or []
+            if not isinstance(questions, list) or not 1 <= len(questions) <= 3:
+                raise ValueError("tool_invalid_arguments")
+            return {"clarification": True, "questions": [str(question)[:240] for question in questions]}
+
+        if name == "propose_data_change":
+            target = str(args.get("target") or "")
+            operation = str(args.get("operation") or "")
+            payload = args.get("payload") or {}
+            if target not in {"holding", "watchlist", "trade_plan"}:
+                raise ValueError("tool_invalid_arguments")
+            if operation not in {"create", "update", "delete"} or not isinstance(payload, dict):
+                raise ValueError("tool_invalid_arguments")
+            return {
+                "requires_confirmation": True,
+                "confirmation_required": True,
+                "automatic_execution": False,
+                "target": target,
+                "operation": operation,
+                "payload": self._json_safe(payload),
+            }
+
+        symbol = self._symbol(args, context)
+
+        if name == "get_current_quote":
+            return self._json_safe(self.store.cached_quotes([symbol]))
+
+        if name == "get_daily_history":
+            limit = max(1, min(int(args.get("limit") or 60), 240))
+            return self._json_safe(self.store.daily_prices(symbol, limit))
+
+        if name == "request_daily_history_refresh":
+            required_days = max(30, min(int(args.get("required_days") or 60), 240))
+            available_days = len(self.store.daily_prices(symbol, required_days))
+            needed = available_days < required_days
+            return {
+                "requires_confirmation": needed,
+                "confirmation_required": needed,
+                "automatic_execution": False,
+                "action": "daily_history_refresh",
+                "symbol": symbol,
+                "required_days": required_days,
+                "available_days": available_days,
+            }
+
+        if name == "get_position_snapshot":
+            holdings = self.store.list()
+            holding = next(
+                (item for item in holdings if str(item.get("symbol") or "").strip().upper() == symbol),
+                None,
+            )
+            paper_position = None
+            paper_account = getattr(self.store, "paper_account", None)
+            if callable(paper_account):
+                account = paper_account() or {}
+                paper_position = next(
+                    (item for item in account.get("positions", []) if str(item.get("symbol") or "").strip().upper() == symbol),
+                    None,
+                )
+            return self._json_safe({"holding": holding, "paper_position": paper_position})
+
+        if name == "get_risk_snapshot":
+            return self._json_safe(self.store.cached_risk(symbol))
+
+        if name == "get_company_fundamentals":
+            return self._json_safe(self.store.instrument_metadata(symbol))
+
+        if name in {"get_announcement_timeline", "get_company_news"}:
+            limit = max(1, min(int(args.get("limit") or 20), 50))
+            content = self.store.cached_content([symbol], limit=max(limit * 3, limit))
+            if name == "get_announcement_timeline":
+                rows = [
+                    item for item in content
+                    if str(item.get("source_type") or "").lower() == "announcement"
+                    or str(item.get("id") or "").startswith("announcement-")
+                ]
+            else:
+                rows = [
+                    item for item in content
+                    if str(item.get("source_type") or "").lower() != "announcement"
+                    and not str(item.get("id") or "").startswith("announcement-")
+                ]
+            return self._json_safe(rows[:limit])
+
+        if name == "get_research_evidence":
+            context_events = getattr(context, "events", ()) or ()
+            events = [self._json_safe(item) for item in context_events]
+            reports = self._optional_store_call(("research_reports", "latest_research_reports"), symbol, 5)
+            return self._json_safe({"events": events, "research_reports": reports or []})
+
+        if name == "get_research_thesis":
+            thesis = self._optional_store_call(
+                ("latest_research_thesis", "research_thesis", "research_thesis_versions"),
+                symbol,
+            )
+            return self._json_safe(thesis)
+
+        if name == "get_decision_report":
+            reports = self.store.decision_reports(symbol, 1)
+            return self._json_safe(reports[0] if reports else None)
+
+        raise ValueError(f"unknown_tool:{name}")
