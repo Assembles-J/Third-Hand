@@ -4,6 +4,11 @@ Architecture Refactor v2 moves route ownership without changing endpoint
 implementations. Legacy decorators are removed from the live router table, then
 the same endpoint callables are registered by domain packages, avoiding duplicate
 paths while keeping URL/signature/business behavior stable.
+
+The installer is intentionally idempotent and does not rely on a module-level
+"installed" flag. ``app.application`` is still a legacy module and some tests or
+dev reloaders may rebuild its FastAPI object while retaining old module globals.
+Reconcile-by-path is therefore safer than a stale boolean guard.
 """
 from __future__ import annotations
 
@@ -50,17 +55,18 @@ _MIGRATED_PATHS = {
 }
 
 
-def _remove_legacy_routes(legacy: ModuleType) -> None:
+def _remove_migrated_routes(legacy: ModuleType) -> None:
     routes = legacy.app.router.routes
     routes[:] = [route for route in routes if getattr(route, "path", None) not in _MIGRATED_PATHS]
 
 
 def install_migrated_routers(legacy: ModuleType) -> None:
-    """Replace selected legacy routes with domain-owned registrations once."""
-    if getattr(legacy, "_V2_API_MIGRATION_INSTALLED", False):
-        return
+    """Reconcile selected routes into their v2 domain-owned registrations.
 
-    _remove_legacy_routes(legacy)
+    Safe to call repeatedly: every call removes only this migration's owned path
+    set and then registers one canonical copy of each route.
+    """
+    _remove_migrated_routes(legacy)
     legacy.app.include_router(build_health_router(legacy))
     legacy.app.include_router(build_ai_router(legacy))
     legacy.app.include_router(build_app_update_router(legacy))
@@ -68,4 +74,3 @@ def install_migrated_routers(legacy: ModuleType) -> None:
     legacy.app.include_router(build_data_quality_router(legacy))
     legacy.app.include_router(build_paper_router(legacy))
     legacy.app.include_router(build_decision_router(legacy))
-    legacy._V2_API_MIGRATION_INSTALLED = True
