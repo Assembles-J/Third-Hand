@@ -1,5 +1,10 @@
+from app import decision_config as config
 from app.candidate_selection import select_candidates
-from app.paper_runtime import report_matches_current_selection, runtime_scope
+from app.paper_runtime import (
+    latest_current_version_decision_report,
+    report_matches_current_selection,
+    runtime_scope,
+)
 
 
 def test_requested_scope_can_only_narrow_not_inject_candidates_or_due_items():
@@ -54,3 +59,24 @@ def test_report_reuse_requires_same_candidate_and_policy_lineage():
     assert report_matches_current_selection(report, selection, policy_version="policy-v2")
     assert not report_matches_current_selection({**report, "policy_version": "policy-v1"}, selection, policy_version="policy-v2")
     assert not report_matches_current_selection({**report, "candidate_pool_hash": "old"}, selection, policy_version="policy-v2")
+
+
+def test_newer_manual_report_does_not_mask_latest_formal_paper_report():
+    formal = {
+        "decision_id": "formal",
+        "policy_version": "policy-v2",
+        "candidate_selection_version": config.CANDIDATE_SELECTION_VERSION,
+    }
+    manual = {
+        "decision_id": "manual",
+        "policy_version": "policy-v2",
+        "candidate_selection_version": None,
+    }
+
+    class Store:
+        @staticmethod
+        def decision_reports(_symbol, _limit):
+            return [manual, formal]
+
+    resolved = latest_current_version_decision_report(Store(), "600001", policy_version="policy-v2")
+    assert resolved is formal
