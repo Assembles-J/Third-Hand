@@ -1,4 +1,5 @@
 from app.decision_context import DecisionContextBuilder
+from app.decision_models import MarketFlowSnapshot
 from app.evidence_engine import EvidenceEngine
 from app.storage import PortfolioStore
 
@@ -33,11 +34,24 @@ def test_evidence_engine_emits_deterministic_traceable_unique_evidence(tmp_path)
 
     assert first == second
     assert len(ids) == len(set(ids))
-    # Event evidence is directionally neutral by design (cached AI analysis is
-    # research-only), and editable trade-plan templates are excluded from the
-    # signal path, so neither "event.negative.*" nor "plan.entry_condition_met"
-    # is emitted.
     assert {"position.above_max", "position.loss_exceeds_review_threshold", "trend.below_sma20_and_sma60", "momentum.rsi_hot", "momentum.macd_negative", "volatility.atr_high", "risk.historical_downside_high", "risk.annualized_volatility_high", "event.uncertain.notice-1"}.issubset(ids)
     event = next(item for item in first if item.evidence_id == "event.uncertain.notice-1")
     assert event.source_reference == "https://example.com/notice"
+    assert event.usage_scope == "RESEARCH_ONLY"
+    assert next(item for item in first if item.evidence_id == "position.above_max").usage_scope == "POLICY"
     assert next(item for item in first if item.evidence_id == "position.above_max").strength == .9
+
+
+def test_fund_flow_is_research_only_when_present(tmp_path):
+    context = _context(tmp_path).model_copy(update={
+        "market_flow": MarketFlowSnapshot(
+            retrieved_at="2026-07-31T10:00:00+08:00",
+            data_health="fresh",
+            main_net_amount=-1000000,
+            source="fixture",
+        )
+    })
+    evidence = EvidenceEngine().build(context)
+    flow = next(item for item in evidence if item.evidence_id == "market.main_fund_flow")
+    assert flow.direction == "negative"
+    assert flow.usage_scope == "RESEARCH_ONLY"

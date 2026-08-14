@@ -194,6 +194,7 @@ class EvidenceItem(DecisionModel):
     source: str
     as_of: datetime | str | None = None
     fresh: bool
+    usage_scope: Literal["POLICY", "RESEARCH_ONLY", "AUDIT_ONLY"] = "POLICY"
     rule_id: str | None = None
     source_reference: str | None = None
 
@@ -355,6 +356,8 @@ class DecisionReport(DecisionModel):
     ai_assessment: AiResearchAssessment | None = None
     ai_status: Literal["succeeded", "failed", "skipped", "disabled"] = "disabled"
     ai_error_code: str | None = None
+    ai_shadow_action: Literal["OPEN", "ADD", "HOLD", "WATCH", "REDUCE", "EXIT", "BLOCKED"] | None = None
+    ai_shadow_agreement: bool | None = None
     market_price: float | None = None
     market_change_percent: float | None = None
     market_as_of: str | None = None
@@ -363,6 +366,11 @@ class DecisionReport(DecisionModel):
     prompt_version: str | None = None
     schema_version: str = "context-v1"
     audit_versions: dict[str, str] = {}
+    candidate_selection_version: str | None = None
+    candidate_pool_hash: str | None = None
+    candidate_rotation_key: str | None = None
+    candidate_rank: int | None = Field(default=None, ge=1)
+    candidate_selection_reason: Literal["paper_position_risk_monitor", "deterministic_rotation"] | None = None
     execution_price_mode: Literal["NEXT_ELIGIBLE_OBSERVED_QUOTE"] = "NEXT_ELIGIBLE_OBSERVED_QUOTE"
     execution_eligible_after: str | None = None
     model: str | None = None

@@ -3,9 +3,11 @@ import hashlib
 import json
 import os
 
-EVIDENCE_VERSION = "evidence-v1"
-ACTION_POLICY_VERSION = "swing-policy-v1"
+EVIDENCE_VERSION = "evidence-v2-usage-scope"
+ACTION_POLICY_VERSION = "swing-policy-v2-research-isolation"
 FRESHNESS_POLICY_VERSION = "freshness-v1"
+CANDIDATE_SELECTION_VERSION = "candidate-rotation-v1"
+OPPORTUNITY_SCORING_VERSION = "research-priority-v1"
 # P0 deliberately applies one conservative, documented age budget across the
 # daily decision flow. Intraday execution is not supported by this policy.
 QUOTE_MAX_AGE_SECONDS = 86_400
@@ -32,9 +34,13 @@ def audit_version_snapshot() -> dict[str, str]:
         "sizing_version": SIZING_VERSION,
         "freshness_policy_version": FRESHNESS_POLICY_VERSION,
         "decision_prompt_version": DECISION_RESEARCH_PROMPT_VERSION,
+        "candidate_selection_version": CANDIDATE_SELECTION_VERSION,
+        "opportunity_scoring_version": OPPORTUNITY_SCORING_VERSION,
     }
     values["config_hash"] = hashlib.sha256(json.dumps(values, sort_keys=True).encode("utf-8")).hexdigest()
     return values
+
+
 POSITION_CAP_EXCESS_MEDIUM_PERCENT = 30.0
 LARGE_PROFIT_PERCENT = 20.0
 CASH_CONSTRAINED_PERCENT = 5.0

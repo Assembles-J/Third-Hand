@@ -6,14 +6,17 @@ from app.decision_models import ActionCandidate, DecisionContext, EvidenceItem
 
 
 class ActionPolicyEngine:
-    """Apply hard-rule precedence without producing a live recommendation or size."""
+    """Apply hard-rule precedence using POLICY-scoped evidence only."""
 
     version = config.ACTION_POLICY_VERSION
 
     def evaluate(self, context: DecisionContext, evidence: tuple[EvidenceItem, ...]) -> tuple[ActionCandidate, ...]:
-        # Precedence is deliberate: data-quality blocks first, then exit/risk
-        # constraints, and only then add/open conditions.  AI cannot reorder it.
-        by_id = {item.evidence_id: item for item in evidence}
+        # Research-only and audit-only evidence must never influence formal
+        # actions. This structural filter is the policy boundary: upstream
+        # labels can change without granting news, fund flow or LLM output
+        # trading authority.
+        policy_evidence = tuple(item for item in evidence if item.usage_scope == "POLICY")
+        by_id = {item.evidence_id: item for item in policy_evidence}
         ids = set(by_id)
         if context.data_quality.status == "blocked":
             return (self._candidate("BLOCKED", 100, (), (), ("data_quality.blocked",), context.data_quality.missing_fields),)
@@ -31,10 +34,6 @@ class ActionPolicyEngine:
         else:
             candidates.append(self._candidate("WATCH", 30, (), (), ("default.watch",)))
 
-        # A missing user-authored plan, event enrichment, or relative-strength
-        # comparison should lower confidence, not turn every whole-market paper
-        # candidate into WATCH.  Quote, bars, risk, and portfolio inputs remain
-        # the hard prerequisites for an autonomous simulated action.
         critical_degradation = ("daily_bars.minimum_60", "account.total_assets", "risk")
         has_critical_degradation = any(warning.startswith(critical_degradation) for warning in context.data_quality.warnings)
         if context.data_quality.status == "degraded" and candidates[0].action in {"ADD", "OPEN", "HOLD"} and has_critical_degradation:
@@ -47,12 +46,12 @@ class ActionPolicyEngine:
 
     @staticmethod
     def _reduce_ids(ids: set[str]) -> set[str]:
+        # Deliberately excludes event/news/research evidence. A future event
+        # signal may enter policy only as a separately promoted deterministic
+        # feature with its own version and point-in-time validation.
         direct = {"position.above_max", "risk.historical_downside_high", "risk.annualized_volatility_high"}
         matched = ids.intersection(direct)
-        bearish_event = any(item.startswith("event.negative.") for item in ids) and "trend.below_sma20_and_sma60" in ids
         defensive_weak = {"market.defensive", "relative.underperform_20d", "trend.below_sma20_and_sma60"}.issubset(ids)
-        if bearish_event:
-            matched.add("event.negative")
         if defensive_weak:
             matched.add("market.defensive")
         return matched
@@ -64,7 +63,7 @@ class ActionPolicyEngine:
             return False
         if not position or not context.quote or not context.risk:
             return False
-        if context.account.available_cash <= 0 or any(item.startswith("event.negative.") for item in ids):
+        if context.account.available_cash <= 0:
             return False
         if "trend.below_sma20_and_sma60" in ids or "market.defensive" in ids:
             return False

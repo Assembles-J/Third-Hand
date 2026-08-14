@@ -17,7 +17,7 @@ class DecisionOrchestrator:
         self.evidence_engine, self.policy_engine = evidence_engine, policy_engine
         self.sizing_engine, self.ai_service, self.guard = sizing_engine, ai_service, guard
 
-    def generate(self, context) -> DecisionReport:
+    def generate(self, context, *, candidate_audit: dict[str, object] | None = None) -> DecisionReport:
         evidence = self.evidence_engine.build(context)
         candidates = self.policy_engine.evaluate(context, evidence)
         if config.DECISION_AI_ENABLED:
@@ -38,9 +38,33 @@ class DecisionOrchestrator:
             ai_outcome = DecisionAiOutcome(None, "disabled", "feature_disabled")
         assessment = self.guard.guard(candidates, ai_outcome.assessment)
         action = candidates[0].action
+        ai_shadow_action = assessment.preferred_action if assessment else None
         sizing = self.sizing_engine.size(context, action) if config.DECISION_SIZING_ENABLED else None
         status = "BLOCKED" if context.data_quality.status == "blocked" else "DEGRADED" if context.data_quality.status == "degraded" else "READY"
-        return DecisionReport(decision_id=str(uuid4()), context_id=context.context_id, symbol=context.symbol, name=context.name, generated_at=beijing_now(), status=status, action=action, summary=self._summary(action, candidates[0].blocked_reasons), data_quality=context.data_quality, evidence=evidence, action_candidates=candidates, operation_items=self._operation_items(context, action, candidates[0].blocked_reasons, sizing), ai_assessment=assessment, ai_status=ai_outcome.status, ai_error_code=ai_outcome.error_code, market_price=context.quote.price if context.quote else None, market_change_percent=context.quote.change_percent if context.quote else None, market_as_of=context.quote.as_of if context.quote else None, sizing=sizing, policy_version=self.policy_engine.version, prompt_version=config.DECISION_RESEARCH_PROMPT_VERSION if assessment else None, audit_versions=config.audit_version_snapshot(), execution_eligible_after=context.quote.as_of if context.quote else None, model=ai_outcome.model, input_hash=context.input_hash)
+        candidate_audit = candidate_audit or {}
+        return DecisionReport(
+            decision_id=str(uuid4()), context_id=context.context_id, symbol=context.symbol,
+            name=context.name, generated_at=beijing_now(), status=status, action=action,
+            summary=self._summary(action, candidates[0].blocked_reasons), data_quality=context.data_quality,
+            evidence=evidence, action_candidates=candidates,
+            operation_items=self._operation_items(context, action, candidates[0].blocked_reasons, sizing),
+            ai_assessment=assessment, ai_status=ai_outcome.status, ai_error_code=ai_outcome.error_code,
+            ai_shadow_action=ai_shadow_action,
+            ai_shadow_agreement=(ai_shadow_action == action) if ai_shadow_action is not None else None,
+            market_price=context.quote.price if context.quote else None,
+            market_change_percent=context.quote.change_percent if context.quote else None,
+            market_as_of=context.quote.as_of if context.quote else None,
+            sizing=sizing, policy_version=self.policy_engine.version,
+            prompt_version=config.DECISION_RESEARCH_PROMPT_VERSION if assessment else None,
+            audit_versions=config.audit_version_snapshot(),
+            candidate_selection_version=candidate_audit.get("candidate_selection_version"),
+            candidate_pool_hash=candidate_audit.get("candidate_pool_hash"),
+            candidate_rotation_key=candidate_audit.get("candidate_rotation_key"),
+            candidate_rank=candidate_audit.get("candidate_rank"),
+            candidate_selection_reason=candidate_audit.get("candidate_selection_reason"),
+            execution_eligible_after=context.quote.as_of if context.quote else None,
+            model=ai_outcome.model, input_hash=context.input_hash,
+        )
 
     @staticmethod
     def _operation_items(context, action, candidate_blockers, sizing) -> tuple[OperationItem, ...]:
