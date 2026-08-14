@@ -194,6 +194,7 @@ class EvidenceItem(DecisionModel):
     source: str
     as_of: datetime | str | None = None
     fresh: bool
+    usage_scope: Literal["POLICY", "RESEARCH_ONLY", "AUDIT_ONLY"] = "POLICY"
     rule_id: str | None = None
     source_reference: str | None = None
 
