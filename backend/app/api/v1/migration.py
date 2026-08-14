@@ -14,6 +14,7 @@ from app.api.v1.ai.router import build_router as build_ai_router
 from app.api.v1.app_update.router import build_router as build_app_update_router
 from app.api.v1.data_quality.router import build_router as build_data_quality_router
 from app.api.v1.health.router import build_router as build_health_router
+from app.api.v1.paper.router import build_router as build_paper_router
 
 
 _MIGRATED_PATHS = {
@@ -25,6 +26,16 @@ _MIGRATED_PATHS = {
     "/v1/admin/config",
     "/v1/data-quality/daily-history-attempts",
     "/v1/data-quality/provider-health",
+    "/v1/paper-trading/account",
+    "/v1/paper-trading/net-contributions",
+    "/v1/paper-trading/logs",
+    "/v1/paper-trading/equity-snapshots",
+    "/v1/paper-trading/status",
+    "/v1/paper-trading/dashboard",
+    "/v1/paper-trading/runs",
+    "/v1/paper-trading/runs/{run_id}",
+    "/v1/paper-trading/run",
+    "/v1/paper-trading/decision-audit/{decision_id}",
 }
 
 
@@ -44,4 +55,5 @@ def install_migrated_routers(legacy: ModuleType) -> None:
     legacy.app.include_router(build_app_update_router(legacy))
     legacy.app.include_router(build_admin_router(legacy))
     legacy.app.include_router(build_data_quality_router(legacy))
+    legacy.app.include_router(build_paper_router(legacy))
     legacy._V2_API_MIGRATION_INSTALLED = True
