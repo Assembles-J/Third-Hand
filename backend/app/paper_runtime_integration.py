@@ -15,6 +15,7 @@ from app.candidate_selection import CandidateSelection, select_candidates
 from app.paper_runtime import (
     candidate_pool_audit,
     current_candidate_selection,
+    excluded_requested_symbols,
     latest_current_version_decision_report,
     pending_current_version_decision_symbols,
     report_matches_current_selection,
@@ -393,6 +394,11 @@ def install(m) -> None:
             requested_symbols=requested_symbols,
             pending_symbols=pending,
         )
+        excluded = excluded_requested_symbols(
+            selection,
+            requested_symbols=requested_symbols,
+            pending_symbols=pending,
+        )
         with m.paper_trading_state_lock:
             m.paper_trading_state.update({
                 "running": True,
@@ -402,7 +408,7 @@ def install(m) -> None:
                 "last_symbols": list(symbols),
             })
         m.last_paper_trading_run_at = m.time.monotonic()
-        names = m.paper_trading_names(list(symbols))
+        names = m.paper_trading_names(list(dict.fromkeys((*symbols, *excluded))))
         run_id = m._create_simulation_run("manual" if force else "scheduler", list(symbols), "交易运行开始")
         m._record_simulation_stage(
             run_id,
@@ -416,14 +422,39 @@ def install(m) -> None:
                     due_symbols=due_symbols,
                 ),
                 "runtime_symbols": list(symbols),
+                "excluded_requested_symbols": list(excluded),
             },
         )
+        for symbol in excluded:
+            bar_count = len(m.store.daily_prices(symbol, 60))
+            terminal_state = "skipped_data_unavailable" if bar_count < 60 else "not_due"
+            reason = "insufficient_daily_bars" if bar_count < 60 else "not_selected_by_deterministic_scheduler"
+            detail = {
+                "reason": reason,
+                "daily_bar_count": bar_count,
+                "candidate_selection_version": selection.selection_version,
+                "candidate_pool_hash": selection.candidate_pool_hash,
+            }
+            m._record_simulation_symbol_state(
+                run_id,
+                symbol,
+                terminal_state,
+                detail,
+                name=names.get(symbol.strip().upper(), symbol),
+            )
+            m._record_simulation_stage(
+                run_id,
+                "decision",
+                "skipped",
+                symbol=symbol,
+                detail={"terminal_state": terminal_state, **detail},
+            )
         executed = 0
         skipped = 0
         no_action_reasons: list[str] = []
         try:
             refresh_paper_candidate_data(list(symbols), force_refresh=force, run_id=run_id)
-            names = m.paper_trading_names(list(symbols))
+            names = m.paper_trading_names(list(dict.fromkeys((*symbols, *excluded))))
             with m.paper_trading_state_lock:
                 m.paper_trading_state.update({"last_status": "researching", "last_message": "行情已同步；新闻仅做研究补充，正式动作继续由确定性策略生成。"})
             m.refresh_paper_market_intelligence(list(symbols), names)
@@ -439,6 +470,8 @@ def install(m) -> None:
             )
             if not due_executed:
                 no_action_reasons.append("本交易时段没有到期且可执行的当前版本历史决策")
+            if excluded:
+                no_action_reasons.append(f"{len(excluded)} 个显式请求不属于当前 formal cohort，已仅记录审计状态")
             m.store.record_paper_equity_snapshot()
             m._record_simulation_stage(run_id, "equity_snapshot", "ok", detail={})
             result = {"executed": executed, "skipped": skipped, "run_id": run_id}
@@ -466,9 +499,6 @@ def install(m) -> None:
             m._finish_simulation_run(run_id, "failed", f"交易判断异常：{type(error).__name__}: {error}", executed=executed, skipped=skipped)
             raise
 
-    # Patch globals in the module where the existing startup loops/routes were
-    # defined. Python resolves these names at call time, so all registered
-    # FastAPI callbacks use the governed implementations after installation.
     m.paper_candidate_selection = paper_candidate_selection
     m.paper_trading_symbols = paper_trading_symbols
     m.refresh_universe_opportunity_inputs = refresh_universe_opportunity_inputs
