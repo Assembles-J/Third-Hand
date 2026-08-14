@@ -1,4 +1,5 @@
 from app.decision_context import DecisionContextBuilder
+from app.decision_models import MarketFlowSnapshot
 from app.evidence_engine import EvidenceEngine
 from app.storage import PortfolioStore
 
@@ -42,14 +43,13 @@ def test_evidence_engine_emits_deterministic_traceable_unique_evidence(tmp_path)
 
 
 def test_fund_flow_is_research_only_when_present(tmp_path):
-    context = _context(tmp_path)
-    context = context.model_copy(update={
-        "market_flow": {
-            "retrieved_at": "2026-07-31T10:00:00+08:00",
-            "data_health": "fresh",
-            "main_net_amount": -1000000,
-            "source": "fixture",
-        }
+    context = _context(tmp_path).model_copy(update={
+        "market_flow": MarketFlowSnapshot(
+            retrieved_at="2026-07-31T10:00:00+08:00",
+            data_health="fresh",
+            main_net_amount=-1000000,
+            source="fixture",
+        )
     })
     evidence = EvidenceEngine().build(context)
     flow = next(item for item in evidence if item.evidence_id == "market.main_fund_flow")
