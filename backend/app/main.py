@@ -8,6 +8,14 @@ from __future__ import annotations
 
 import sys
 
+from app.daily_history_policy import install as _install_daily_history_policy
+
+# Tighten the formal daily-price contract before app.application constructs its
+# PortfolioStore and PriceHistoryService singletons.  This keeps migration,
+# local-first routing, qfq normalization and provider rate limiting active for
+# every runtime path without widening trading-policy authority.
+_install_daily_history_policy()
+
 from app import application as _application
 from app.paper_runtime_integration import install as _install_paper_runtime_governance
 
