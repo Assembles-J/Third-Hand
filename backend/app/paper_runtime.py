@@ -179,18 +179,40 @@ def candidate_pool_audit(
     decision_symbols=(),
     due_symbols=(),
 ) -> dict[str, object]:
-    """Stable run-stage payload used by Day-0/Observation audit."""
+    """Stable run-stage payload explaining exactly how the cohort was selected."""
     requested = tuple(dict.fromkeys(str(item).strip().upper() for item in requested_symbols if str(item).strip()))
     reasons = {
         symbol: selection.audit_for(symbol)["candidate_selection_reason"]
         for symbol in selection.symbols
     }
     ranks = {symbol: selection.audit_for(symbol)["candidate_rank"] for symbol in selection.symbols}
+    selected_items = [
+        {
+            "symbol": symbol,
+            "rank": ranks[symbol],
+            "reason": reasons[symbol],
+        }
+        for symbol in selection.symbols
+    ]
     return {
         "candidate_selection_version": selection.selection_version,
         "candidate_pool_hash": selection.candidate_pool_hash,
         "rotation_key": selection.rotation_key,
+        "eligible_count": selection.eligible_count,
+        "requested_limit": selection.requested_limit,
+        "selected_count": len(selection.symbols),
+        "selection_algorithm": "paper_positions_first_then_sha256_deterministic_rotation",
+        "rotation_material": f"{selection.selection_version}|{selection.rotation_key}|<symbol>",
+        "selection_independent_of": [
+            "watchlist",
+            "hot_sector",
+            "same_day_price_change",
+            "fund_flow",
+            "news",
+            "llm_output",
+        ],
         "selected_symbols": list(selection.symbols),
+        "selected_items": selected_items,
         "position_symbols": list(selection.position_symbols),
         "rotated_symbols": list(selection.rotated_symbols),
         "requested_scope": list(requested),
