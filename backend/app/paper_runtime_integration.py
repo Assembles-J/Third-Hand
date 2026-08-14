@@ -15,6 +15,7 @@ from app.candidate_selection import CandidateSelection, select_candidates
 from app.paper_runtime import (
     candidate_pool_audit,
     current_candidate_selection,
+    latest_current_version_decision_report,
     pending_current_version_decision_symbols,
     report_matches_current_selection,
     runtime_scope,
@@ -189,7 +190,11 @@ def install(m) -> None:
                 )
                 continue
 
-            latest = (m.store.decision_reports(symbol, 1) or [None])[0]
+            latest = latest_current_version_decision_report(
+                m.store,
+                symbol,
+                policy_version=m.action_policy_engine.version,
+            )
             if latest and selection is not None:
                 try:
                     recent = (
@@ -290,11 +295,15 @@ def install(m) -> None:
         for symbol in symbols:
             stage_started_at = m.beijing_now().isoformat()
             symbol_name = names.get(symbol.strip().upper(), symbol)
-            report = (m.store.decision_reports(symbol, 1) or [None])[0]
+            report = latest_current_version_decision_report(
+                m.store,
+                symbol,
+                policy_version=m.action_policy_engine.version,
+            )
             quote = next(iter(m.store.cached_quotes([symbol])), None)
             if not report:
-                m._record_simulation_symbol_state(run_id, symbol, "not_due", {"reason": "no_decision_report"}, name=symbol_name)
-                m._record_simulation_stage(run_id, "execution", "skipped", symbol=symbol, detail={"terminal_state": "not_due", "reason": "no_decision_report"}, started_at=stage_started_at)
+                m._record_simulation_symbol_state(run_id, symbol, "not_due", {"reason": "no_current_formal_decision_report"}, name=symbol_name)
+                m._record_simulation_stage(run_id, "execution", "skipped", symbol=symbol, detail={"terminal_state": "not_due", "reason": "no_current_formal_decision_report"}, started_at=stage_started_at)
                 continue
             if (
                 report.get("policy_version") != m.action_policy_engine.version
