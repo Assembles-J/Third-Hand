@@ -5,6 +5,7 @@ from datetime import date, timedelta, datetime
 import logging
 import math
 import os
+import time
 
 from app.decimal_utils import decimal_text
 from app.time_utils import beijing_now
@@ -24,6 +25,35 @@ class PriceHistoryService:
 
     def __init__(self, trading_calendar: TradingCalendarService | None = None) -> None:
         self._trading_calendar = trading_calendar or TradingCalendarService()
+
+    @staticmethod
+    def _record_attempt(
+        store,
+        *,
+        symbol: str,
+        provider: str,
+        status: str,
+        started_at: str,
+        elapsed_ms: int,
+        run_id: str | None = None,
+        trigger: str | None = None,
+        bar_count: int = 0,
+        error_type: str | None = None,
+        error_message: str | None = None,
+        detail: dict[str, object] | None = None,
+    ) -> None:
+        """Persist one observable provider attempt; audit failures never block refresh."""
+        try:
+            store.record_daily_history_attempt(
+                symbol=symbol, provider=provider, status=status, started_at=started_at,
+                elapsed_ms=elapsed_ms, run_id=run_id, trigger=trigger, bar_count=bar_count,
+                error_type=error_type, error_message=error_message, detail=detail,
+            )
+        except Exception:
+            logger.warning(
+                "daily history attempt audit write skipped provider=%s symbol=%s status=%s",
+                provider, symbol, status,
+            )
 
     @staticmethod
     def _kind(symbol: str) -> str:
@@ -63,7 +93,7 @@ class PriceHistoryService:
         except (KeyError, TypeError, ValueError):
             return False
 
-    def refresh(self, store, symbol: str, start_date: str | None = None, end_date: str | None = None) -> int:
+    def refresh(self, store, symbol: str, start_date: str | None = None, end_date: str | None = None, trigger: str | None = None, run_id: str | None = None) -> int:
         """Fill only missing daily-session ranges and preserve cached history."""
         symbol = symbol.strip().upper()
         market = "HK" if self._kind(symbol) == "hk" else "CN"
@@ -93,17 +123,25 @@ class PriceHistoryService:
             previous = session
         groups.append((group_start, previous))
         for range_start, range_end in groups:
-            self._refresh_range(store, symbol, range_start.replace("-", ""), range_end.replace("-", ""))
+            self._refresh_range(store, symbol, range_start.replace("-", ""), range_end.replace("-", ""), trigger=trigger, run_id=run_id)
         return len(store.daily_prices(symbol, 1000))
 
-    def _refresh_range(self, store, symbol: str, start: str, end: str) -> int:
+    def _refresh_range(self, store, symbol: str, start: str, end: str, trigger: str | None = None, run_id: str | None = None) -> int:
         """Fetch outside request handling, then persist normalized daily OHLCV bars."""
         symbol = symbol.strip().upper()
+        overall_started = beijing_now().isoformat()
+        overall_started_mono = time.monotonic()
         try:
             import akshare as ak
         except ImportError as error:
+            self._record_attempt(
+                store, symbol=symbol, provider="overall", status="error",
+                started_at=overall_started, elapsed_ms=0, run_id=run_id, trigger=trigger,
+                error_type="ImportError", error_message="未安装历史行情依赖。",
+            )
             raise PriceHistoryUnavailable("未安装历史行情依赖。") from error
         akshare_error: Exception | None = None
+        provider_started = time.monotonic()
         try:
             kind = self._kind(symbol)
             if kind == "hk":
@@ -146,47 +184,84 @@ class PriceHistoryService:
                 })
         except PriceHistoryUnavailable as error:
             akshare_error = error
+            self._record_attempt(
+                store, symbol=symbol, provider="akshare", status="empty",
+                started_at=overall_started, elapsed_ms=round((time.monotonic() - provider_started) * 1000),
+                run_id=run_id, trigger=trigger, error_type=type(error).__name__, error_message=str(error),
+            )
             logger.warning(
-                "历史日线获取失败 provider=akshare symbol=%s reason=%s",
+                "历史日线获取失败 provider=akshare symbol=%s reason=%s elapsed_ms=%s",
                 symbol,
                 error,
+                round((time.monotonic() - provider_started) * 1000),
             )
         except Exception as error:
             akshare_error = error
+            self._record_attempt(
+                store, symbol=symbol, provider="akshare", status="error",
+                started_at=overall_started, elapsed_ms=round((time.monotonic() - provider_started) * 1000),
+                run_id=run_id, trigger=trigger, error_type=type(error).__name__, error_message=str(error),
+            )
             logger.exception(
-                "历史日线获取失败 provider=akshare symbol=%s error_type=%s",
+                "历史日线获取失败 provider=akshare symbol=%s error_type=%s elapsed_ms=%s",
                 symbol,
                 type(error).__name__,
+                round((time.monotonic() - provider_started) * 1000),
+            )
+        else:
+            self._record_attempt(
+                store, symbol=symbol, provider="akshare", status="ok",
+                started_at=overall_started, elapsed_ms=round((time.monotonic() - provider_started) * 1000),
+                run_id=run_id, trigger=trigger, bar_count=len(bars),
             )
         if akshare_error is not None:
             # Tencent is independent from the Eastmoney endpoint behind
             # ``stock_zh_a_hist``. Tushare remains the final fallback.
-            bars = self._tencent_bars(symbol, start, end)
+            bars = self._tencent_bars(store, symbol, start, end, trigger=trigger, run_id=run_id)
             if not bars:
-                bars = self._tushare_bars(symbol, start, end)
+                bars = self._tushare_bars(store, symbol, start, end, trigger=trigger, run_id=run_id)
             if not bars:
+                self._record_attempt(
+                    store, symbol=symbol, provider="overall", status="error",
+                    started_at=overall_started, elapsed_ms=round((time.monotonic() - overall_started_mono) * 1000),
+                    run_id=run_id, trigger=trigger, error_type=type(akshare_error).__name__,
+                    error_message=str(akshare_error), detail={"providers": ["akshare", "tencent", "tushare"]},
+                )
                 raise PriceHistoryUnavailable(
                     "历史日线不可用：AKShare、Tencent 均失败，Tushare 未返回可用数据；"
                     "请查看各 provider 日志。"
                 ) from akshare_error
         else:
             logger.info(
-                "历史日线获取成功 provider=akshare symbol=%s bar_count=%s",
+                "历史日线获取成功 provider=akshare symbol=%s bar_count=%s elapsed_ms=%s",
                 symbol,
                 len(bars),
+                round((time.monotonic() - provider_started) * 1000),
             )
         # Tencent daily data can lag after the close. Fill only a missing
         # completed-session bar from Sina's independently sourced 1-minute feed.
-        self._append_sina_closing_bar(symbol, bars)
+        self._append_sina_closing_bar(symbol, bars, store=store, trigger=trigger, run_id=run_id)
         if not bars:
             raise PriceHistoryUnavailable("行情源未返回可用的交易日期。")
         store.save_daily_prices(symbol, bars)
+        self._record_attempt(
+            store, symbol=symbol, provider="overall", status="ok",
+            started_at=overall_started, elapsed_ms=round((time.monotonic() - overall_started_mono) * 1000),
+            run_id=run_id, trigger=trigger, bar_count=len(bars),
+        )
         return len(bars)
 
-    def _tencent_bars(self, symbol: str, start: str, end: str) -> list[dict[str, object]]:
+    def _tencent_bars(self, store, symbol: str, start: str, end: str, trigger: str | None = None, run_id: str | None = None) -> list[dict[str, object]]:
         """Fetch A-share daily history from Tencent when Eastmoney is down."""
         if self._kind(symbol) != "a" or self._is_beijing_symbol(symbol):
+            self._record_attempt(
+                store, symbol=symbol, provider="tencent", status="skipped",
+                started_at=beijing_now().isoformat(), elapsed_ms=0, run_id=run_id, trigger=trigger,
+                detail={"reason": "not_applicable"},
+            )
             return []
+        started = time.monotonic()
+        started_at = beijing_now().isoformat()
         try:
             import akshare as ak
             exchange = "sh" if symbol.startswith(("5", "6", "9")) else "sz"
@@ -215,18 +290,33 @@ class PriceHistoryService:
                     "source": "Tencent daily history",
                 })
             if bars:
-                logger.info("历史日线获取成功 provider=tencent symbol=%s bar_count=%s", symbol, len(bars))
+                self._record_attempt(
+                    store, symbol=symbol, provider="tencent", status="ok",
+                    started_at=started_at, elapsed_ms=round((time.monotonic() - started) * 1000),
+                    run_id=run_id, trigger=trigger, bar_count=len(bars),
+                )
+                logger.info("历史日线获取成功 provider=tencent symbol=%s bar_count=%s elapsed_ms=%s", symbol, len(bars), round((time.monotonic() - started) * 1000))
             else:
-                logger.warning("历史日线获取失败 provider=tencent symbol=%s reason=no_usable_close", symbol)
+                self._record_attempt(
+                    store, symbol=symbol, provider="tencent", status="empty",
+                    started_at=started_at, elapsed_ms=round((time.monotonic() - started) * 1000),
+                    run_id=run_id, trigger=trigger, error_type="ValueError", error_message="no_usable_close",
+                )
+                logger.warning("历史日线获取失败 provider=tencent symbol=%s reason=no_usable_close elapsed_ms=%s", symbol, round((time.monotonic() - started) * 1000))
             return bars
         except Exception as error:
+            self._record_attempt(
+                store, symbol=symbol, provider="tencent", status="error",
+                started_at=started_at, elapsed_ms=round((time.monotonic() - started) * 1000),
+                run_id=run_id, trigger=trigger, error_type=type(error).__name__, error_message=str(error),
+            )
             logger.warning(
-                "历史日线获取失败 provider=tencent symbol=%s error_type=%s",
-                symbol, type(error).__name__,
+                "历史日线获取失败 provider=tencent symbol=%s error_type=%s elapsed_ms=%s",
+                symbol, type(error).__name__, round((time.monotonic() - started) * 1000),
             )
             return []
 
-    def _append_sina_closing_bar(self, symbol: str, bars: list[dict[str, object]]) -> None:
+    def _append_sina_closing_bar(self, symbol: str, bars: list[dict[str, object]], store=None, trigger: str | None = None, run_id: str | None = None) -> None:
         """Append a complete post-close A-share bar from Sina minute history."""
         now = beijing_now()
         if self._kind(symbol) != "a" or self._is_beijing_symbol(symbol) or now.hour < 15:
@@ -234,11 +324,18 @@ class PriceHistoryService:
         today = now.date().isoformat()
         if any(str(bar.get("trading_date")) == today for bar in bars):
             return
+        started_at = beijing_now().isoformat()
+        started = time.monotonic()
         try:
             import akshare as ak
             exchange = "sh" if symbol.startswith(("5", "6", "9")) else "sz"
             frame = ak.stock_zh_a_minute(symbol=f"{exchange}{symbol}", period="1", adjust="qfq")
             if frame is None or frame.empty:
+                self._record_attempt(
+                    store, symbol=symbol, provider="sina_minute", status="skipped",
+                    started_at=started_at, elapsed_ms=round((time.monotonic() - started) * 1000),
+                    run_id=run_id, trigger=trigger, detail={"reason": "empty_minute_feed"},
+                )
                 return
             rows = []
             for index, value in enumerate(frame["day"]):
@@ -248,6 +345,11 @@ class PriceHistoryService:
                 if decimal_text(row.get("close")) is not None:
                     rows.append(row)
             if not rows:
+                self._record_attempt(
+                    store, symbol=symbol, provider="sina_minute", status="skipped",
+                    started_at=started_at, elapsed_ms=round((time.monotonic() - started) * 1000),
+                    run_id=run_id, trigger=trigger, detail={"reason": "no_minute_rows_for_today"},
+                )
                 return
             volumes = [float(row.get("volume")) for row in rows if decimal_text(row.get("volume")) is not None]
             amounts = [float(row.get("amount")) for row in rows if decimal_text(row.get("amount")) is not None]
@@ -260,11 +362,21 @@ class PriceHistoryService:
                 "amount": decimal_text(sum(amounts)) if amounts else None,
                 "adjustment": "qfq", "source": "Sina minute aggregation",
             })
-            logger.info("历史日线补齐成功 provider=sina_minute symbol=%s trading_date=%s", symbol, today)
+            self._record_attempt(
+                store, symbol=symbol, provider="sina_minute", status="ok",
+                started_at=started_at, elapsed_ms=round((time.monotonic() - started) * 1000),
+                run_id=run_id, trigger=trigger, bar_count=1, detail={"trading_date": today},
+            )
+            logger.info("历史日线补齐成功 provider=sina_minute symbol=%s trading_date=%s elapsed_ms=%s", symbol, today, round((time.monotonic() - started) * 1000))
         except Exception as error:
+            self._record_attempt(
+                store, symbol=symbol, provider="sina_minute", status="error",
+                started_at=started_at, elapsed_ms=round((time.monotonic() - started) * 1000),
+                run_id=run_id, trigger=trigger, error_type=type(error).__name__, error_message=str(error),
+            )
             logger.warning(
-                "历史日线补齐跳过 provider=sina_minute symbol=%s error_type=%s",
-                symbol, type(error).__name__,
+                "历史日线补齐跳过 provider=sina_minute symbol=%s error_type=%s elapsed_ms=%s",
+                symbol, type(error).__name__, round((time.monotonic() - started) * 1000),
             )
 
     def refresh_intraday(self, store, symbol: str) -> int:
@@ -326,16 +438,28 @@ class PriceHistoryService:
         store.save_intraday_prices(symbol, valid_bars)
         return len(valid_bars)
 
-    def _tushare_bars(self, symbol: str, start: str, end: str) -> list[dict[str, object]]:
+    def _tushare_bars(self, store, symbol: str, start: str, end: str, trigger: str | None = None, run_id: str | None = None) -> list[dict[str, object]]:
         """Use end-of-day Tushare data when an AKShare public endpoint is unavailable."""
+        started_at = beijing_now().isoformat()
+        started = time.monotonic()
         token = os.getenv("TUSHARE_TOKEN", "").strip()
         if not token:
+            self._record_attempt(
+                store, symbol=symbol, provider="tushare", status="skipped",
+                started_at=started_at, elapsed_ms=0, run_id=run_id, trigger=trigger,
+                detail={"reason": "tushare_token_missing"},
+            )
             logger.warning(
                 "历史日线备用源跳过 provider=tushare symbol=%s reason=tushare_token_missing",
                 symbol,
             )
             return []
         if len(symbol) == 5:
+            self._record_attempt(
+                store, symbol=symbol, provider="tushare", status="skipped",
+                started_at=started_at, elapsed_ms=0, run_id=run_id, trigger=trigger,
+                detail={"reason": "hk_not_supported"},
+            )
             logger.warning(
                 "历史日线备用源跳过 provider=tushare symbol=%s reason=hk_not_supported",
                 symbol,
@@ -348,34 +472,57 @@ class PriceHistoryService:
             is_etf = self._kind(symbol) == "etf"
             frame = (client.fund_daily if is_etf else client.daily)(ts_code=f"{symbol}.{exchange}", start_date=start, end_date=end)
             if frame is None or frame.empty:
+                self._record_attempt(
+                    store, symbol=symbol, provider="tushare", status="empty",
+                    started_at=started_at, elapsed_ms=round((time.monotonic() - started) * 1000),
+                    run_id=run_id, trigger=trigger, error_type="ValueError", error_message="empty_response",
+                )
                 logger.warning(
-                    "历史日线获取失败 provider=tushare symbol=%s reason=empty_response",
-                    symbol,
+                    "历史日线获取失败 provider=tushare symbol=%s reason=empty_response elapsed_ms=%s",
+                    symbol, round((time.monotonic() - started) * 1000),
                 )
                 return []
-            bars = [{
-                "trading_date": str(row["trade_date"]), "open": decimal_text(row.get("open")),
-                "close": decimal_text(row.get("close")), "high": decimal_text(row.get("high")),
-                "low": decimal_text(row.get("low")), "volume": decimal_text(row.get("vol")),
-                "amount": decimal_text(row.get("amount")), "adjustment": "provider-default",
-                "source": "Tushare daily history",
-            } for _, row in frame.iterrows() if decimal_text(row.get("close")) is not None]
+            bars = []
+            for _, row in frame.iterrows():
+                trading_date = self._trading_date(row.get("trade_date"))
+                if trading_date is None or decimal_text(row.get("close")) is None:
+                    continue
+                bars.append({
+                    "trading_date": trading_date, "open": decimal_text(row.get("open")),
+                    "close": decimal_text(row.get("close")), "high": decimal_text(row.get("high")),
+                    "low": decimal_text(row.get("low")), "volume": decimal_text(row.get("vol")),
+                    "amount": decimal_text(row.get("amount")), "adjustment": "provider-default",
+                    "source": "Tushare daily history",
+                })
             if bars:
+                self._record_attempt(
+                    store, symbol=symbol, provider="tushare", status="ok",
+                    started_at=started_at, elapsed_ms=round((time.monotonic() - started) * 1000),
+                    run_id=run_id, trigger=trigger, bar_count=len(bars),
+                )
                 logger.info(
-                    "历史日线获取成功 provider=tushare symbol=%s bar_count=%s",
-                    symbol,
-                    len(bars),
+                    "历史日线获取成功 provider=tushare symbol=%s bar_count=%s elapsed_ms=%s",
+                    symbol, len(bars), round((time.monotonic() - started) * 1000),
                 )
             else:
+                self._record_attempt(
+                    store, symbol=symbol, provider="tushare", status="empty",
+                    started_at=started_at, elapsed_ms=round((time.monotonic() - started) * 1000),
+                    run_id=run_id, trigger=trigger, error_type="ValueError", error_message="no_usable_close",
+                )
                 logger.warning(
-                    "历史日线获取失败 provider=tushare symbol=%s reason=no_usable_close",
-                    symbol,
+                    "历史日线获取失败 provider=tushare symbol=%s reason=no_usable_close elapsed_ms=%s",
+                    symbol, round((time.monotonic() - started) * 1000),
                 )
             return bars
         except Exception as error:
+            self._record_attempt(
+                store, symbol=symbol, provider="tushare", status="error",
+                started_at=started_at, elapsed_ms=round((time.monotonic() - started) * 1000),
+                run_id=run_id, trigger=trigger, error_type=type(error).__name__, error_message=str(error),
+            )
             logger.exception(
-                "历史日线获取失败 provider=tushare symbol=%s error_type=%s",
-                symbol,
-                type(error).__name__,
+                "历史日线获取失败 provider=tushare symbol=%s error_type=%s elapsed_ms=%s",
+                symbol, type(error).__name__, round((time.monotonic() - started) * 1000),
             )
             return []

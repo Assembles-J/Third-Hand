@@ -1,11 +1,13 @@
 import hashlib
 import json
 import time
+from datetime import date, timedelta
 
 from fastapi.testclient import TestClient
 
 import app.main as main
 from app.main import announcement_service, app, market_data, news_service, risk_service, store
+from app.price_history import PriceHistoryUnavailable
 from app.time_utils import beijing_now
 
 client = TestClient(app)
@@ -25,6 +27,9 @@ def test_health():
 def test_manual_paper_run_uses_saved_snapshot_when_market_is_closed(monkeypatch):
     store.add("holding-1", "600519", "test", 100, 10)
     monkeypatch.setattr(main.trading_calendar, "open_symbols", lambda *_args, **_kwargs: [])
+    # Keep the manual bootstrap deterministic: the background pass must use the
+    # saved holding instead of starting a real whole-market provider scan.
+    monkeypatch.setattr(main, "paper_trading_symbols", lambda: ["600519"])
     calls = []
     monkeypatch.setattr(
         main,
@@ -35,8 +40,11 @@ def test_manual_paper_run_uses_saved_snapshot_when_market_is_closed(monkeypatch)
     response = client.post("/v1/paper-trading/run")
 
     assert response.status_code == 200
-    assert response.json()["status"] == "completed"
-    assert response.json()["symbols"] == ["600519"]
+    assert response.json()["status"] == "queued"
+    deadline = time.monotonic() + 5
+    while time.monotonic() < deadline and main.paper_trading_state.get("last_status") not in {"completed", "completed_closed_market_snapshot"}:
+        time.sleep(0.01)
+    assert main.paper_trading_state.get("last_status") in {"completed", "completed_closed_market_snapshot"}
     assert calls == [(["600519"], True, True)]
 
 
@@ -66,8 +74,95 @@ def test_derived_refresh_skips_empty_daily_history_without_aborting(monkeypatch)
     assert store.cached_portfolio_analysis() is not None
 
 
+def test_derived_refresh_uses_sufficient_local_history_without_remote_fetch(monkeypatch):
+    class MarketRegimeFixture:
+        def assess(self):
+            return {"status": "unavailable"}
+
+    symbol = "600519"
+    store.add("holding-1", symbol, "test", 100, 10)
+    start = date(2026, 5, 1)
+    store.save_daily_prices(symbol, [{
+        "trading_date": (start + timedelta(days=index)).isoformat(),
+        "open": 10 + index, "close": 10.5 + index,
+        "high": 11 + index, "low": 9 + index, "source": "local-test",
+    } for index in range(65)])
+    remote_calls = []
+    monkeypatch.setattr(main.price_history_service, "refresh", lambda *_: remote_calls.append(True))
+    monkeypatch.setattr(main, "market_regime_service", MarketRegimeFixture())
+
+    main.refresh_derived_cache([symbol], "paper-trading-decision", force_history=True)
+
+    assert remote_calls == []
+    assert store.cached_risk(symbol) is not None
+
+
+def test_paper_run_persists_run_stages_and_symbol_terminal_state(monkeypatch):
+    class MarketRegimeFixture:
+        def assess(self):
+            return {"status": "unavailable"}
+
+    symbol = "600519"
+    store.save_paper_account(100_000)
+    start = date(2026, 4, 1)
+    store.save_daily_prices(symbol, [{
+        "trading_date": (start + timedelta(days=index)).isoformat(),
+        "open": 10 + index, "close": 10.5 + index,
+        "high": 11 + index, "low": 9 + index, "source": "local-test",
+    } for index in range(65)])
+    quote = {
+        "symbol": symbol, "name": "test", "price": 1500.0,
+        "as_of": "2026-08-14T10:00:00+08:00", "retrieved_at": "2026-08-14T10:00:00+08:00",
+        "source": "test", "change_percent": 1.2, "refresh_status": "stored",
+    }
+    monkeypatch.setattr(main.market_data, "quotes", lambda symbols, force_refresh=False: [dict(quote)])
+    monkeypatch.setattr(main.market_data, "latest_market_snapshot", lambda markets: [])
+    monkeypatch.setattr(main.news_service, "fetch", lambda symbols, names: [])
+    monkeypatch.setattr(main, "market_regime_service", MarketRegimeFixture())
+
+    result = main.run_paper_trading_cycle([symbol], force=True, allow_when_disabled=True)
+
+    assert result["run_id"]
+    runs = store.simulation_runs()
+    assert len(runs) == 1
+    assert runs[0]["status"] == "completed"
+    detail = store.simulation_run(result["run_id"])
+    stages = {stage["stage"] for stage in detail["stages"]}
+    assert {"candidate_pool", "market_quotes", "daily_history", "risk", "news", "decision", "equity_snapshot"}.issubset(stages)
+    assert detail["symbols"][0]["terminal_state"] == "decision_generated"
+
+    response = client.get(f"/v1/paper-trading/runs/{result['run_id']}")
+    assert response.status_code == 200
+    assert response.json()["status"] == "completed"
+
+
+def test_paper_run_records_skipped_data_unavailable_when_history_missing(monkeypatch):
+    class MarketRegimeFixture:
+        def assess(self):
+            return {"status": "unavailable"}
+
+    symbol = "000001"
+    store.save_paper_account(100_000)
+    quote = {
+        "symbol": symbol, "name": "test", "price": 10.0,
+        "as_of": "2026-08-14T10:00:00+08:00", "retrieved_at": "2026-08-14T10:00:00+08:00",
+        "source": "test", "change_percent": 0.0, "refresh_status": "stored",
+    }
+    monkeypatch.setattr(main.market_data, "quotes", lambda symbols, force_refresh=False: [dict(quote)])
+    monkeypatch.setattr(main.market_data, "latest_market_snapshot", lambda markets: [])
+    monkeypatch.setattr(main.news_service, "fetch", lambda symbols, names: [])
+    monkeypatch.setattr(main, "market_regime_service", MarketRegimeFixture())
+    monkeypatch.setattr(main.price_history_service, "refresh", lambda *args, **kwargs: (_ for _ in ()).throw(PriceHistoryUnavailable("test outage")))
+
+    result = main.run_paper_trading_cycle([symbol], force=True, allow_when_disabled=True)
+
+    detail = store.simulation_run(result["run_id"])
+    assert detail["symbols"][0]["terminal_state"] == "skipped_data_unavailable"
+    assert any(stage["stage"] == "daily_history" and stage["status"] == "failed" for stage in detail["stages"])
+
+
 def test_manual_daily_history_refresh_returns_fresh_bars(monkeypatch):
-    def refresh_history(target_store, symbol):
+    def refresh_history(target_store, symbol, **kwargs):
         target_store.replace_daily_prices(symbol, [{
             "trading_date": "2026-08-03", "open": 10, "close": 11,
             "high": 12, "low": 9, "source": "test",

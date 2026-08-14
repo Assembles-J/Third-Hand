@@ -1061,7 +1061,7 @@ private fun DecisionWorkbenchRoute(
             onOpenRules = onOpenRules,
             onResolveBlocker = onResolveBlocker,
         )
-        Text("仅供研究和模拟复核，不会自动执行交易。", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+        Text("仅供研究和交易复核，不会自动执行真实交易。", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
     }
 }
 
@@ -2515,7 +2515,7 @@ private fun HoldingDetailScreen(holding: HoldingDto, onBack: () -> Unit) {
                 review.technical_snapshot?.let { snapshot -> Text(snapshot.summary, style = MaterialTheme.typography.bodySmall) }
             } } }
             recommendation?.let { item -> item { Column(Modifier.padding(horizontal = 20.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
-                Text("历史模拟记录（兼容）", fontWeight = FontWeight.SemiBold)
+                Text("历史交易记录（兼容）", fontWeight = FontWeight.SemiBold)
                 TextButton(onClick = { planEditorOpen = true }) { Text(if (tradePlan == null) "录入交易计划与条件" else "修改入场、加仓、减仓、退出条件") }
                 if (item.status != "ready") {
                     Text("暂不能生成：${item.blocked_reasons.joinToString("、")}", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
@@ -2524,11 +2524,11 @@ private fun HoldingDetailScreen(holding: HoldingDto, onBack: () -> Unit) {
                     val zone = item.price_zone
                     Text("$action：候选区间 ${marketNumber(zone?.get("low"))} – ${marketNumber(zone?.get("high"))}；失效价 ${marketNumber(item.invalidation_price)}", style = MaterialTheme.typography.bodySmall)
                     Text(if (item.suggested_quantity != null) "建议数量 ${item.suggested_quantity.toInt()}（${item.quantity_status ?: "规则计算"}）" else "暂不建议计算买入数量：${item.quantity_status ?: "缺少账户可用资金"}", style = MaterialTheme.typography.bodySmall)
-                    if (evaluations.isEmpty()) Text("模拟成交尚未形成足够的后续交易日。", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    if (evaluations.isEmpty()) Text("交易记录尚未形成足够的后续交易日。", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
                     evaluations.forEach { evaluation ->
-                        Text("${evaluation.horizon}日模拟：${signedPositionValue(evaluation.net_pnl)}，${"%.2f".format(evaluation.return_percent)}%｜最大有利 ${"%.2f".format(evaluation.mfe_percent)}%｜最大不利 ${"%.2f".format(evaluation.mae_percent)}%", style = MaterialTheme.typography.labelSmall)
+                        Text("${evaluation.horizon}日交易：${signedPositionValue(evaluation.net_pnl)}，${"%.2f".format(evaluation.return_percent)}%｜最大有利 ${"%.2f".format(evaluation.mfe_percent)}%｜最大不利 ${"%.2f".format(evaluation.mae_percent)}%", style = MaterialTheme.typography.labelSmall)
                     }
-                    Text("仅作研究与模拟复盘，不会自动执行交易。", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    Text("仅作研究与复盘，不会自动执行真实交易。", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
                 }
             } } }
             risk?.let { assessment -> item { Column(Modifier.padding(horizontal = 20.dp)) {
@@ -2739,7 +2739,7 @@ fun TradingPeriodKLinePanel(symbol: String, quote: MarketQuoteDto?) {
             }
     }
     if (false && paperTradeMarkers.isNotEmpty()) {
-        Text("模拟 B/S 标记（紫色，与真实操作区分）", style = MaterialTheme.typography.labelSmall, color = Color(0xFF7E57C2))
+        Text("交易 B/S 标记（紫色，与真实操作区分）", style = MaterialTheme.typography.labelSmall, color = Color(0xFF7E57C2))
         Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
             paperTradeMarkers.take(4).forEach { marker ->
                 Text("${if (marker.side == "BUY") "B" else "S"} ${marker.executed_at.take(10)} ¥${marketNumber(marker.price)}", style = MaterialTheme.typography.labelSmall, color = Color(0xFF7E57C2))

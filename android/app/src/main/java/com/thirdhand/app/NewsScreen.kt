@@ -80,7 +80,7 @@ fun NewsScreen() {
         item { TradingPageHeader("新闻", "本地缓存优先加载，后台逐步刷新") { IconButton(onClick = { loadPage(true); refreshInBackground() }, enabled = !loading) { Icon(Icons.Filled.Refresh, "刷新新闻") } } }
         if (loading) item { LinearProgressIndicator(Modifier.fillMaxWidth().padding(horizontal = 20.dp)) }
         error?.let { item { Text(it, Modifier.padding(horizontal = 20.dp, vertical = 12.dp), color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.bodySmall) } }
-        item { LazyRow(Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 8.dp)) { items(listOf("all" to "全部", "paper_positions" to "模拟持仓", "learning_cases" to "案例关联")) { (value, label) -> FilterChip(selected = scopeFilter == value, onClick = { scopeFilter = value }, label = { Text(label) }, modifier = Modifier.padding(end = 8.dp)) } } }
+        item { LazyRow(Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 8.dp)) { items(listOf("all" to "全部", "paper_positions" to "持仓", "learning_cases" to "案例关联")) { (value, label) -> FilterChip(selected = scopeFilter == value, onClick = { scopeFilter = value }, label = { Text(label) }, modifier = Modifier.padding(end = 8.dp)) } } }
         item { TradingSection("最新动态", if (news.isEmpty()) "正在读取本地内容" else "已加载 ${news.size} 条 · 可继续翻页") }
         if (!loading && news.isEmpty()) item { Text("暂时没有已缓存的新闻。后台抓取完成后会自动显示。", Modifier.padding(horizontal = 20.dp, vertical = 14.dp), style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant) }
         items(news, key = { it.id }) { item ->

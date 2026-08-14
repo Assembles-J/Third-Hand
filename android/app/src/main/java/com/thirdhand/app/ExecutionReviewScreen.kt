@@ -51,13 +51,13 @@ fun ExecutionReviewScreen() {
     ) {
         item { Column(Modifier.padding(horizontal = 20.dp, vertical = 20.dp)) {
             Text("执行与收益", style = MaterialTheme.typography.headlineMedium, fontWeight = FontWeight.Bold)
-            Text("收盘自动生成 · 模拟收益与真实成交分开计算", color = MaterialTheme.colorScheme.onSurfaceVariant)
+            Text("收盘自动生成 · 交易收益与真实成交分开计算", color = MaterialTheme.colorScheme.onSurfaceVariant)
         } }
         item { Card(Modifier.padding(horizontal = 20.dp).fillMaxWidth()) {
             Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
                 Text("使用流程", fontWeight = FontWeight.Bold)
                 Text("决策台分析自选股和持仓，读取行情、新闻、公告、行业与热点；工作台只给待执行项与建议仓位。你在同花顺或券商手动操作。", style = MaterialTheme.typography.bodySmall)
-                Text("每个交易日收盘，服务端自动保存建议快照；次日有行情后，系统按建议价格与数量计算模拟浮盈。观察/无建议不会参与计算。", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                Text("每个交易日收盘，服务端自动保存建议快照；次日有行情后，系统按建议价格与数量计算交易浮盈。观察/无建议不会参与计算。", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
             }
         } }
         message?.let { item { Text(it, Modifier.padding(horizontal = 20.dp), color = MaterialTheme.colorScheme.error) } }
@@ -74,15 +74,15 @@ private fun DailyExecutionCard(review: DailyReviewDto, onEvaluate: () -> Unit) =
     Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
         Text("${review.review_date} · ${if (review.status == "evaluated") "已评估" else "等待后续行情"}", fontWeight = FontWeight.Bold)
         val executable = review.items.filter { it.action != "watch" && (it.suggested_quantity ?: 0.0) > 0.0 }
-        if (executable.isEmpty()) Text("当日没有待执行项，因此不计算模拟收益。", style = MaterialTheme.typography.bodySmall)
+        if (executable.isEmpty()) Text("当日没有待执行项，因此不计算交易收益。", style = MaterialTheme.typography.bodySmall)
         executable.forEach { item ->
             Text("${item.name.ifBlank { item.symbol }}：${item.action} · 参考价 ${item.reference_price.reviewMoney()} · 建议 ${item.suggested_quantity?.reviewQuantity()}", style = MaterialTheme.typography.bodySmall)
-            item.theoretical_pnl?.let { Text("模拟浮盈 ${it.reviewSignedMoney()}（未代表真实收益）", style = MaterialTheme.typography.bodySmall, fontWeight = FontWeight.SemiBold) }
+            item.theoretical_pnl?.let { Text("交易浮盈 ${it.reviewSignedMoney()}（未代表真实收益）", style = MaterialTheme.typography.bodySmall, fontWeight = FontWeight.SemiBold) }
         }
         if (review.status == "evaluated") {
-            Text("本次模拟合计 ${review.theoretical_pnl?.reviewSignedMoney() ?: "—"}", style = MaterialTheme.typography.bodyMedium, fontWeight = FontWeight.Bold)
+            Text("本次交易合计 ${review.theoretical_pnl?.reviewSignedMoney() ?: "—"}", style = MaterialTheme.typography.bodyMedium, fontWeight = FontWeight.Bold)
         } else if (executable.isNotEmpty()) {
-            TextButton(onClick = onEvaluate) { Text("有新行情后计算模拟收益") }
+            TextButton(onClick = onEvaluate) { Text("有新行情后计算交易收益") }
         }
     }
 }

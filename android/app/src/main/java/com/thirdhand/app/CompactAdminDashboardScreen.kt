@@ -113,7 +113,7 @@ fun CompactAdminDashboardScreen() {
         }
     }
     LazyColumn(Modifier.fillMaxSize(), contentPadding = PaddingValues(bottom = 28.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
-        item { TradingPageHeader("管理", "服务连接、数据状态与模拟盘设置") { IconButton(onClick = { refreshKey++ }, enabled = !loading) { if (loading) CircularProgressIndicator(Modifier.size(20.dp), strokeWidth = 2.dp) else Icon(Icons.Filled.Refresh, "刷新管理状态") } } }
+        item { TradingPageHeader("管理", "服务连接、数据状态与交易设置") { IconButton(onClick = { refreshKey++ }, enabled = !loading) { if (loading) CircularProgressIndicator(Modifier.size(20.dp), strokeWidth = 2.dp) else Icon(Icons.Filled.Refresh, "刷新管理状态") } } }
         error?.let { item { Text(it, Modifier.padding(horizontal = 20.dp, vertical = 8.dp), color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.bodySmall) } }
         notice?.let { item { Text(it, Modifier.padding(horizontal = 20.dp, vertical = 8.dp), color = MaterialTheme.colorScheme.tertiary, style = MaterialTheme.typography.bodySmall) } }
         if (saving) item { LinearProgressIndicator(Modifier.fillMaxWidth().padding(horizontal = 20.dp)) }
@@ -129,7 +129,7 @@ fun CompactAdminDashboardScreen() {
                 }
             }
         }
-        item { TradingSection("模拟账套", "可用资金由数据库统一保存；买入扣款，卖出回流") }
+        item { TradingSection("交易账套", "可用资金由数据库统一保存；买入扣款，卖出回流") }
         item {
             Column(Modifier.padding(horizontal = 20.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
                 OutlinedTextField(value = cashInput, onValueChange = { cashInput = it }, modifier = Modifier.fillMaxWidth(), label = { Text("可用资金（元）") }, keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal), singleLine = true)
@@ -139,7 +139,7 @@ fun CompactAdminDashboardScreen() {
                     scope.launch {
                         saving = true; notice = "正在保存可用资金…"; error = null
                         runCatching { api.saveAvailableCash(AvailableCashInputDto(cash)) }
-                            .onSuccess { cashInput = "%.2f".format(it.available_cash); notice = "可用资金已保存，模拟盘会立即读取新余额" }
+                            .onSuccess { cashInput = "%.2f".format(it.available_cash); notice = "可用资金已保存，交易账套会立即读取新余额" }
                             .onFailure { error = "保存失败：${it.message ?: "请检查服务连接"}" }
                         saving = false
                     }
@@ -171,7 +171,7 @@ fun CompactAdminDashboardScreen() {
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     Column(Modifier.weight(1f)) {
                         Text("自动执行", fontWeight = FontWeight.SemiBold)
-                        Text("开盘时间内按固定间隔分析市场并记入模拟账套。", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                        Text("开盘时间内按固定间隔分析市场并记入交易账套。", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
                     }
                     Switch(checked = config?.paper_trading_enabled == true, enabled = !saving, onCheckedChange = { enabled -> saveConfig((config ?: SystemConfigDto()).copy(paper_trading_enabled = enabled), if (enabled) "自动执行已开启" else "自动执行已关闭") })
                 }

@@ -579,6 +579,10 @@ class PortfolioStore:
             connection.execute("DELETE FROM decision_ai_runs")
             connection.execute("DELETE FROM decision_reports")
             connection.execute("DELETE FROM decision_jobs")
+            connection.execute("DELETE FROM simulation_runs")
+            connection.execute("DELETE FROM simulation_run_stages")
+            connection.execute("DELETE FROM simulation_run_symbols")
+            connection.execute("DELETE FROM daily_history_provider_attempts")
 
     def admin_summary(self) -> dict[str, int]:
         """Return only aggregate, non-sensitive operational counters for the admin console."""
@@ -1515,6 +1519,109 @@ class PortfolioStore:
             item = {"id": trade_id, "symbol": symbol, "name": name, "side": side, "quantity": quantity, "price": price, "fee": fee, "cash_before": cash_before, "cash_after": cash_after, "decision_id": decision_id, "reason": reason, "execution_quote_at": execution_quote_at, "execution_quote_source": execution_quote_source, "fill_price_mode": fill_price_mode, "executed_at": now}
             connection.execute("INSERT INTO paper_trading_logs (id,symbol,name,side,quantity,price,fee,cash_before,cash_after,decision_id,reason,status,execution_quote_at,execution_quote_source,fill_price_mode,executed_at) VALUES (:id,:symbol,:name,:side,:quantity,:price,:fee,:cash_before,:cash_after,:decision_id,:reason,'executed',:execution_quote_at,:execution_quote_source,:fill_price_mode,:executed_at)", item)
         return item
+
+    def create_simulation_run(self, *, run_id: str, trigger: str, symbols: list[str], message: str) -> dict[str, object]:
+        """Open an auditable paper-trading run; every later stage links to run_id."""
+        now = beijing_now().isoformat()
+        with self._connect() as connection:
+            connection.execute(
+                "INSERT INTO simulation_runs (run_id,trigger,started_at,status,symbol_count,message) VALUES (?,?,?,?,?,?)",
+                (run_id, trigger, now, "running", len(symbols), message),
+            )
+        return {"run_id": run_id, "started_at": now, "status": "running", "symbol_count": len(symbols), "message": message}
+
+    def finish_simulation_run(self, *, run_id: str, status: str, message: str, executed: int = 0, skipped: int = 0, generated: int = 0) -> None:
+        with self._connect() as connection:
+            connection.execute(
+                "UPDATE simulation_runs SET finished_at=?, status=?, executed=?, skipped=?, generated=?, message=? WHERE run_id=?",
+                (beijing_now().isoformat(), status, int(executed), int(skipped), int(generated), message, run_id),
+            )
+
+    def record_simulation_stage(self, *, run_id: str, stage: str, status: str, symbol: str | None = None, detail: dict[str, object] | None = None, started_at: str | None = None) -> None:
+        """Append one immutable stage row for a simulation run."""
+        started_at = started_at or beijing_now().isoformat()
+        finished_at = beijing_now().isoformat()
+        elapsed_ms = 0
+        try:
+            from datetime import datetime
+            start = datetime.fromisoformat(started_at)
+            end = datetime.fromisoformat(finished_at)
+            elapsed_ms = max(0, round((end - start).total_seconds() * 1000))
+        except (TypeError, ValueError):
+            elapsed_ms = 0
+        with self._connect() as connection:
+            connection.execute(
+                "INSERT INTO simulation_run_stages (run_id,stage,symbol,status,detail,started_at,finished_at,elapsed_ms) VALUES (?,?,?,?,?,?,?,?)",
+                (run_id, stage, symbol, status, json.dumps(detail or {}, ensure_ascii=False, default=str), started_at, finished_at, elapsed_ms),
+            )
+
+    def record_simulation_symbol(self, *, run_id: str, symbol: str, terminal_state: str, detail: dict[str, object] | None = None) -> None:
+        """Persist the final per-symbol state so an untraded pass remains auditable."""
+        with self._connect() as connection:
+            connection.execute(
+                "INSERT INTO simulation_run_symbols (run_id,symbol,terminal_state,detail,updated_at) VALUES (?,?,?,?,?) "
+                "ON CONFLICT(run_id,symbol) DO UPDATE SET terminal_state=excluded.terminal_state, detail=excluded.detail, updated_at=excluded.updated_at",
+                (run_id, symbol.strip().upper(), terminal_state, json.dumps(detail or {}, ensure_ascii=False, default=str), beijing_now().isoformat()),
+            )
+
+    def record_daily_history_attempt(self, *, symbol: str, provider: str, status: str, started_at: str, elapsed_ms: int, run_id: str | None = None, trigger: str | None = None, bar_count: int = 0, error_type: str | None = None, error_message: str | None = None, detail: dict[str, object] | None = None) -> None:
+        """Persist one observable provider attempt with timing and outcome counts."""
+        with self._connect() as connection:
+            connection.execute(
+                "INSERT INTO daily_history_provider_attempts (run_id,trigger,symbol,provider,status,started_at,elapsed_ms,bar_count,error_type,error_message,detail) VALUES (?,?,?,?,?,?,?,?,?,?,?)",
+                (run_id, trigger, symbol.strip().upper(), provider, status, started_at, max(0, int(elapsed_ms)), max(0, int(bar_count)), error_type, error_message, json.dumps(detail or {}, ensure_ascii=False, default=str)),
+            )
+
+    def latest_daily_history_failure(self, symbol: str) -> dict[str, object] | None:
+        """Most recent symbol-level history failure, used to enforce a restart-safe backoff."""
+        with self._connect() as connection:
+            row = connection.execute(
+                "SELECT started_at, elapsed_ms, error_type, error_message FROM daily_history_provider_attempts "
+                "WHERE symbol=? AND provider='overall' AND status='error' ORDER BY started_at DESC LIMIT 1",
+                (symbol.strip().upper(),),
+            ).fetchone()
+        return dict(row) if row else None
+
+    def daily_history_attempts(self, symbol: str | None = None, limit: int = 200) -> list[dict[str, object]]:
+        query, args = "SELECT * FROM daily_history_provider_attempts", []
+        if symbol:
+            query += " WHERE symbol=?"
+            args.append(symbol.strip().upper())
+        query += " ORDER BY started_at DESC LIMIT ?"
+        args.append(max(1, min(limit, 1000)))
+        with self._connect() as connection:
+            rows = connection.execute(query, args).fetchall()
+        return [{**dict(row), "detail": json.loads(str(row["detail"]))} for row in rows]
+
+    def simulation_runs(self, limit: int = 50) -> list[dict[str, object]]:
+        with self._connect() as connection:
+            rows = connection.execute(
+                "SELECT run_id, trigger, started_at, finished_at, status, symbol_count, generated, executed, skipped, message "
+                "FROM simulation_runs ORDER BY started_at DESC LIMIT ?",
+                (max(1, min(limit, 500)),),
+            ).fetchall()
+        return [dict(row) for row in rows]
+
+    def simulation_run(self, run_id: str) -> dict[str, object] | None:
+        with self._connect() as connection:
+            row = connection.execute(
+                "SELECT run_id, trigger, started_at, finished_at, status, symbol_count, generated, executed, skipped, message "
+                "FROM simulation_runs WHERE run_id=?", (run_id,),
+            ).fetchone()
+            if not row:
+                return None
+            stages = [dict(item) for item in connection.execute(
+                "SELECT id, stage, symbol, status, detail, started_at, finished_at, elapsed_ms "
+                "FROM simulation_run_stages WHERE run_id=? ORDER BY id ASC", (run_id,),
+            ).fetchall()]
+            symbols = [dict(item) for item in connection.execute(
+                "SELECT symbol, terminal_state, detail, updated_at FROM simulation_run_symbols WHERE run_id=? ORDER BY symbol ASC", (run_id,),
+            ).fetchall()]
+        for stage in stages:
+            stage["detail"] = json.loads(str(stage["detail"]))
+        for item in symbols:
+            item["detail"] = json.loads(str(item["detail"]))
+        return {**dict(row), "stages": stages, "symbols": symbols}
 
     def recommendations(self, symbol: str | None = None) -> list[dict[str, object]]:
         query, args = ("SELECT payload FROM research_recommendations WHERE symbol=? ORDER BY created_at DESC", [symbol]) if symbol else ("SELECT payload FROM research_recommendations ORDER BY created_at DESC", [])

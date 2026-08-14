@@ -11,6 +11,7 @@ import io
 import json
 import logging
 import re
+import sys
 from datetime import date, timezone, timedelta
 import os
 import time
@@ -64,18 +65,59 @@ BEIJING_TIMEZONE = timezone(timedelta(hours=8))
 
 
 class BeijingLogFormatter(logging.Formatter):
-    """Make application and Uvicorn logs directly usable in China operations."""
+    """Plain-text formatter with Beijing time, kept as an opt-out for local debugging."""
     def formatTime(self, record, datefmt=None):  # noqa: N802 - logging API name
         return datetime.fromtimestamp(record.created, BEIJING_TIMEZONE).strftime(datefmt or "%Y-%m-%d %H:%M:%S%z")
 
 
-_log_formatter = BeijingLogFormatter("%(asctime)s [%(levelname)s] %(name)s: %(message)s")
-for _logger_name in ("", "uvicorn", "uvicorn.error", "uvicorn.access"):
-    for _handler in logging.getLogger(_logger_name).handlers:
-        _handler.setFormatter(_log_formatter)
-# Uvicorn configures its own loggers but does not always enable application
-# loggers.  Explicitly set the app namespace so market diagnostics are emitted.
-logging.getLogger("app").setLevel(os.getenv("THIRD_HAND_LOG_LEVEL", "INFO").upper())
+class JsonLogFormatter(logging.Formatter):
+    """One JSON object per line so logs are machine-parseable and Chinese-safe.
+
+    The existing ``key=value`` messages stay inside ``message`` unchanged, so
+    grep-style queries such as ``provider=akshare`` remain valid while the
+    surrounding fields (ts, level, logger, exception) become structured.
+    """
+    def formatTime(self, record, datefmt=None):  # noqa: N802 - logging API name
+        return datetime.fromtimestamp(record.created, BEIJING_TIMEZONE).strftime(datefmt or "%Y-%m-%dT%H:%M:%S%z")
+
+    def format(self, record: logging.LogRecord) -> str:
+        payload = {
+            "ts": self.formatTime(record),
+            "level": record.levelname,
+            "logger": record.name,
+            "message": record.getMessage(),
+        }
+        if record.exc_info:
+            payload["exception"] = self.formatException(record.exc_info)
+        return json.dumps(payload, ensure_ascii=False)
+
+
+def _reconfigure_stdio_utf8() -> None:
+    """Force UTF-8 on stdout/stderr so Chinese text never degrades to GBK on Windows."""
+    for stream_name in ("stdout", "stderr"):
+        stream = getattr(sys, stream_name, None)
+        reconfigure = getattr(stream, "reconfigure", None)
+        if reconfigure is not None:
+            try:
+                reconfigure(encoding="utf-8", errors="replace")
+            except (OSError, ValueError):
+                pass
+
+
+def _install_log_formatter() -> None:
+    """Apply JSON logging by default; THIRD_HAND_LOG_FORMAT=text keeps plain lines."""
+    _reconfigure_stdio_utf8()
+    text_format = os.getenv("THIRD_HAND_LOG_FORMAT", "json").lower() in {"text", "plain", "0", "false"}
+    formatter = BeijingLogFormatter("%(asctime)s [%(levelname)s] %(name)s: %(message)s") if text_format else JsonLogFormatter()
+    for _logger_name in ("", "uvicorn", "uvicorn.error", "uvicorn.access", "uvicorn.asgi"):
+        for _handler in logging.getLogger(_logger_name).handlers:
+            _handler.setFormatter(formatter)
+    # Uvicorn configures its own loggers but does not always enable application
+    # loggers.  Explicitly set the app namespace so market diagnostics are emitted.
+    logging.getLogger("app").setLevel(os.getenv("THIRD_HAND_LOG_LEVEL", "INFO").upper())
+
+
+_install_log_formatter()
 
 
 def positive_environment_integer(name: str, default: int, minimum: int) -> int:
@@ -106,8 +148,8 @@ last_paper_trading_run_at = 0.0
 paper_trading_state_lock = Lock()
 paper_trading_state: dict[str, object] = {
     "running": False, "last_started_at": None, "last_finished_at": None,
-    "last_status": "never_run", "last_message": "尚未执行模拟判断", "last_executed": 0,
-    "last_skipped": 0, "last_symbols": [],
+    "last_status": "never_run", "last_message": "尚未执行交易判断", "last_executed": 0,
+    "last_skipped": 0, "last_symbols": [], "last_run_id": None,
 }
 market_refresh_state: dict[str, object] = {
     "last_attempt_at": None,
@@ -211,7 +253,7 @@ class PaperTradingStatus(BaseModel):
     enabled: bool; interval_seconds: int; running: bool; last_started_at: datetime | None = None
     last_finished_at: datetime | None = None; last_status: str; last_message: str
     last_executed: int = 0; last_skipped: int = 0; last_symbols: list[str] = Field(default_factory=list)
-    seconds_until_next_run: int = 0
+    seconds_until_next_run: int = 0; last_run_id: str | None = None
 
 
 class PaperTradingDashboard(BaseModel):
@@ -710,7 +752,7 @@ GLOSSARY = {
     "波动复核": GlossaryCard(term="波动复核", plain_explanation="当年化波动超过你设置的阈值时，系统提醒你检查仓位是否仍匹配风险承受能力。", watch_for="它不要求立刻卖出，只提示需要重新核对风险预算。"),
     "亏损复核": GlossaryCard(term="亏损复核", plain_explanation="当现价相对你的持仓成本跌幅超过设定阈值时，系统提醒复查原先买入逻辑、仓位和风险承受能力。", watch_for="它不是止损或补仓命令，不能只凭成本价做决定。"),
     "技术面中期偏强": GlossaryCard(term="技术面中期偏强", plain_explanation="通常指价格与 60 日均线等中期趋势指标呈现较强的历史形态。它只描述价格趋势，不证明公司价值或未来收益。", watch_for="结合成交量、基本面、估值和市场环境，避免把技术标签当作结论。"),
-    "研究候选方案": GlossaryCard(term="研究候选方案", plain_explanation="系统基于已保存的交易计划、历史价格和可用资金计算的研究清单：候选价格区间、失效价、数量与模拟复盘。它不会自动交易。", watch_for="交易计划是你的风险边界；AI 可以协助提出假设和解释证据，但建议必须标明来源并由你确认。"),
+    "研究候选方案": GlossaryCard(term="研究候选方案", plain_explanation="系统基于已保存的交易计划、历史价格和可用资金计算的研究清单：候选价格区间、失效价、数量与交易复盘。它不会自动交易。", watch_for="交易计划是你的风险边界；AI 可以协助提出假设和解释证据，但建议必须标明来源并由你确认。"),
     "pe": GlossaryCard(term="PE（市盈率）", plain_explanation="股价相对于每股盈利的倍数。它不是越低越好，要结合行业和盈利质量判断。", watch_for="亏损或一次性收益会使 PE 失真。"),
     "减持": GlossaryCard(term="减持", plain_explanation="股东卖出持有的公司股份。原因可能很多，单则消息不能证明基本面变差。", watch_for="看减持主体、比例、期限与公告全文。"),
     "回购": GlossaryCard(term="回购", plain_explanation="公司用资金买回自身股份，可能用于注销、激励或库存股。", watch_for="区分回购计划和实际完成金额。"),
@@ -954,15 +996,36 @@ def paper_trading_dashboard() -> PaperTradingDashboard:
     )
 
 
+@app.get("/v1/paper-trading/runs")
+def paper_trading_runs(limit: int = Query(default=50, ge=1, le=500)) -> list[dict[str, object]]:
+    """List every auditable simulation pass with its aggregate outcome."""
+    return store.simulation_runs(limit)
+
+
+@app.get("/v1/paper-trading/runs/{run_id}")
+def paper_trading_run_detail(run_id: str) -> dict[str, object]:
+    """Return one run with every persisted stage and per-symbol terminal state."""
+    run = store.simulation_run(run_id)
+    if not run:
+        raise HTTPException(status_code=404, detail="simulation run not found")
+    return run
+
+
+@app.get("/v1/data-quality/daily-history-attempts")
+def daily_history_provider_attempts(symbol: str | None = None, limit: int = Query(default=200, ge=1, le=1000)) -> list[dict[str, object]]:
+    """Return structured provider attempts with timing, counts and failure reasons."""
+    return store.daily_history_attempts(symbol, limit)
+
+
 @app.post("/v1/paper-trading/run")
 def run_paper_trading_now() -> dict[str, object]:
     """Queue a requested paper pass; provider refreshes must never hold HTTP open."""
     with paper_trading_state_lock:
         if paper_trading_state.get("running"):
-            return {"status": "queued", "message": "模拟任务已在运行，请在页面查看进度。", "symbols": list(paper_trading_state.get("last_symbols") or [])}
-        paper_trading_state.update({"running": True, "last_started_at": beijing_now(), "last_status": "queued", "last_message": "模拟任务已提交，正在后台准备行情、日线、风险和决策数据。", "last_executed": 0, "last_skipped": 0})
+            return {"status": "queued", "message": "交易任务已在运行，请在页面查看进度。", "symbols": list(paper_trading_state.get("last_symbols") or [])}
+        paper_trading_state.update({"running": True, "last_started_at": beijing_now(), "last_status": "queued", "last_message": "交易任务已提交，正在后台准备行情、日线、风险和决策数据。", "last_executed": 0, "last_skipped": 0})
     queue_background(_run_paper_trading_now)
-    return {"status": "queued", "message": "模拟任务已提交，页面将自动更新进度与结果。", "symbols": []}
+    return {"status": "queued", "message": "交易任务已提交，页面将自动更新进度与结果。", "symbols": []}
 
 
 def _run_paper_trading_now() -> None:
@@ -972,7 +1035,7 @@ def _run_paper_trading_now() -> None:
     except Exception as error:
         logger.exception("manual paper-trading task failed")
         with paper_trading_state_lock:
-            paper_trading_state.update({"running": False, "last_finished_at": beijing_now(), "last_status": "failed", "last_message": f"模拟任务异常：{type(error).__name__}: {error}"})
+            paper_trading_state.update({"running": False, "last_finished_at": beijing_now(), "last_status": "failed", "last_message": f"交易任务异常：{type(error).__name__}: {error}"})
 
 
 def _run_paper_trading_now_impl() -> None:
@@ -983,19 +1046,25 @@ def _run_paper_trading_now_impl() -> None:
             refresh_universe_opportunity_inputs("paper-trading-manual-bootstrap")
             symbols = paper_trading_symbols()
         except MarketDataUnavailable as error:
+            run_id = _create_simulation_run("manual", [], "候选行情池不可用")
+            _record_simulation_stage(run_id, "candidate_pool", "failed", detail={"error": str(error)})
+            _finish_simulation_run(run_id, "failed", "无法建立全市场行情池；行情源暂不可用，稍后会自动重试。")
             with paper_trading_state_lock:
-                paper_trading_state.update({"last_finished_at": beijing_now(), "last_status": "market_data_unavailable", "last_message": "无法建立全市场行情池；行情源暂不可用，稍后会自动重试。", "last_executed": 0, "last_skipped": 0, "last_symbols": []})
+                paper_trading_state.update({"last_finished_at": beijing_now(), "last_status": "market_data_unavailable", "last_message": "无法建立全市场行情池；行情源暂不可用，稍后会自动重试。", "last_executed": 0, "last_skipped": 0, "last_symbols": [], "last_run_id": run_id})
             return
         active = trading_calendar.open_symbols(symbols, moment=beijing_now())
     if not symbols:
+        run_id = _create_simulation_run("manual", [], "行情池建立中")
+        _record_simulation_stage(run_id, "candidate_pool", "skipped", detail={"reason": "no_candidates"})
+        _finish_simulation_run(run_id, "completed", "全市场行情池正在建立；候选的日线、风险和新闻数据准备完成后会自动决策。")
         with paper_trading_state_lock:
-            paper_trading_state.update({"last_finished_at": beijing_now(), "last_status": "market_scan_pending", "last_message": "全市场行情池正在建立；候选的日线、风险和新闻数据准备完成后会自动决策。", "last_executed": 0, "last_skipped": 0, "last_symbols": []})
+            paper_trading_state.update({"last_finished_at": beijing_now(), "last_status": "market_scan_pending", "last_message": "全市场行情池正在建立；候选的日线、风险和新闻数据准备完成后会自动决策。", "last_executed": 0, "last_skipped": 0, "last_symbols": [], "last_run_id": run_id})
         return
     selected = active or symbols
-    run_paper_trading_cycle(selected, force=True, allow_when_disabled=True)
+    result = run_paper_trading_cycle(selected, force=True, allow_when_disabled=True)
     if not active:
         with paper_trading_state_lock:
-            paper_trading_state.update({"last_status": "completed_closed_market_snapshot", "last_message": "休市期间已按最近保存的决策和价格快照完成手动模拟；这不是实时行情或真实交易。"})
+            paper_trading_state.update({"last_status": "completed_closed_market_snapshot", "last_message": "休市期间已按最近保存的决策和价格快照完成手动交易；这不是实时行情或真实交易。", "last_run_id": result.get("run_id")})
 
 
 @app.get("/v1/feed", response_model=list[NewsItem])
@@ -1051,9 +1120,11 @@ def fetch_and_store_quotes(
     *,
     force_refresh: bool,
     trigger: str,
+    run_id: str | None = None,
 ) -> list[dict[str, object]]:
     attempted_at = beijing_now()
     started_at = time.monotonic()
+    stage_started_at = attempted_at.isoformat()
     logger.info(
         "行情刷新开始 trigger=%s symbols=%s force_refresh=%s",
         trigger, ",".join(symbols), force_refresh,
@@ -1086,6 +1157,11 @@ def fetch_and_store_quotes(
                 logger.warning("全市场快照入库跳过，不影响已获取持仓行情 markets=%s error=%s", ",".join(sorted(markets)), error)
         successful = [quote for quote in quotes if quote.get("price") is not None and not quote.get("error_code")]
         store.save_quotes(successful)
+        _record_simulation_stage(
+            run_id, "market_quotes", "ok",
+            detail={"requested": len(symbols), "success": len(successful), "failed": len(quotes) - len(successful)},
+            started_at=stage_started_at,
+        )
         logger.info(
             "行情刷新结果 trigger=%s quotes=%s",
             trigger,
@@ -1099,6 +1175,11 @@ def fetch_and_store_quotes(
             ],
         )
     except Exception as error:
+        _record_simulation_stage(
+            run_id, "market_quotes", "failed",
+            detail={"error": f"{type(error).__name__}: {error}"},
+            started_at=stage_started_at,
+        )
         with market_refresh_state_lock:
             market_refresh_state["last_error"] = f"{type(error).__name__}: {error}"
             market_refresh_state["result_count"] = 0
@@ -1184,34 +1265,78 @@ def queue_background(target, *args) -> None:
     Thread(target=target, args=args, daemon=True).start()
 
 
-def refresh_derived_cache(symbols: list[str], trigger: str, force_history: bool = False) -> None:
-    """Collect daily bars and compute risk/technical results outside HTTP handlers."""
+def refresh_derived_cache(symbols: list[str], trigger: str, force_history: bool = False, run_id: str | None = None) -> None:
+    """Collect daily bars and compute risk/technical results outside HTTP handlers.
+
+    A usable local history must remain usable when a provider is unavailable.
+    Remote history is therefore a cache-bootstrap mechanism here, rather than a
+    prerequisite for every paper-trading pass.  Risk currently needs 65 closes,
+    so that is the minimum local history that can independently support the
+    downstream decision context.
+    """
     if not symbols or not derived_refresh_lock.acquire(blocking=False):
         return
     try:
         names = {str(item["symbol"]): str(item["name"]) for item in store.list()}
         today = beijing_now().date().isoformat()
         for symbol in symbols:
+            stage_started_at = beijing_now().isoformat()
             try:
-                retry_due = time.monotonic() >= daily_history_retry_after.get(symbol, 0.0)
-                if force_history or (
-                    daily_history_refreshed_for.get(symbol) != today and retry_due
+                bars = store.daily_prices(symbol)
+                local_history_ready = len(bars) >= 65
+                persisted_retry_seconds = _daily_history_retry_seconds_left(symbol)
+                retry_due = time.monotonic() >= daily_history_retry_after.get(symbol, 0.0) and persisted_retry_seconds == 0
+                # Do not turn an optional remote supplement into an analysis
+                # outage.  In particular, a manual paper pass used to force a
+                # provider request even when the local cache already contained
+                # enough bars to calculate risk and generate a decision.
+                history_detail: dict[str, object] = {
+                    "local_bar_count": len(bars),
+                    "local_latest_date": str(bars[-1].get("trading_date")) if bars else None,
+                    "local_ready": local_history_ready,
+                    "remote_refresh": "skipped" if local_history_ready else "attempted" if retry_due else "cooldown",
+                    "retry_after_seconds": persisted_retry_seconds or max(0, round(daily_history_retry_after.get(symbol, time.monotonic()) - time.monotonic())),
+                }
+                if not local_history_ready and retry_due and (
+                    force_history or daily_history_refreshed_for.get(symbol) != today
                 ):
                     daily_history_attempted_for[symbol] = today
-                    price_history_service.refresh(store, symbol)
+                    price_history_service.refresh(store, symbol, trigger=trigger, run_id=run_id)
                     daily_history_refreshed_for[symbol] = today
                     daily_history_retry_after.pop(symbol, None)
-                bars = store.daily_prices(symbol)
-                if not bars:
+                    bars = store.daily_prices(symbol)
+                    history_detail.update({"remote_refresh": "ok", "bar_count_after_refresh": len(bars)})
+                    _record_simulation_stage(run_id, "daily_history", "ok", symbol=symbol, detail=history_detail, started_at=stage_started_at)
+                elif local_history_ready:
+                    logger.info(
+                        "daily history local-cache accepted trigger=%s symbol=%s bar_count=%s remote_refresh=skipped",
+                        trigger, symbol, len(bars),
+                    )
+                    _record_simulation_stage(run_id, "daily_history", "ok", symbol=symbol, detail=history_detail, started_at=stage_started_at)
+                else:
                     logger.info(
                         "派生数据等待历史日线 trigger=%s symbol=%s retry_after_seconds=%s",
                         trigger,
                         symbol,
-                        max(0, round(daily_history_retry_after.get(symbol, time.monotonic()) - time.monotonic())),
+                        history_detail["retry_after_seconds"],
                     )
+                    _record_simulation_stage(run_id, "daily_history", "skipped", symbol=symbol, detail={**history_detail, "reason": "waiting_for_daily_history"}, started_at=stage_started_at)
                     continue
+                if not bars:
+                    logger.info(
+                        "派生数据缺少可用日线 trigger=%s symbol=%s",
+                        trigger, symbol,
+                    )
+                    _record_simulation_stage(run_id, "daily_history", "skipped", symbol=symbol, detail={**history_detail, "reason": "no_daily_bars"}, started_at=stage_started_at)
+                    continue
+                risk_started_at = beijing_now().isoformat()
                 item = risk_service.assess(symbol, names.get(symbol, symbol), [float(bar["close"]) for bar in bars], str(bars[-1]["trading_date"]))
                 store.save_risk(item)
+                _record_simulation_stage(
+                    run_id, "risk", "ok", symbol=symbol,
+                    detail={"bar_count": len(bars), "latest_date": str(bars[-1]["trading_date"]), "risk_as_of": str(item.get("as_of") or "")},
+                    started_at=risk_started_at,
+                )
             except PriceHistoryUnavailable as error:
                 daily_history_retry_after[symbol] = time.monotonic() + DAILY_HISTORY_RETRY_SECONDS
                 logger.warning(
@@ -1221,8 +1346,18 @@ def refresh_derived_cache(symbols: list[str], trigger: str, force_history: bool 
                     error,
                     DAILY_HISTORY_RETRY_SECONDS,
                 )
+                _record_simulation_stage(
+                    run_id, "daily_history", "failed", symbol=symbol,
+                    detail={"error": str(error), "retry_after_seconds": DAILY_HISTORY_RETRY_SECONDS},
+                    started_at=stage_started_at,
+                )
             except RiskDataUnavailable as error:
                 logger.warning("派生数据刷新失败 trigger=%s symbol=%s error=%s", trigger, symbol, error)
+                _record_simulation_stage(
+                    run_id, "risk", "failed", symbol=symbol,
+                    detail={"error": str(error)},
+                    started_at=stage_started_at,
+                )
         holdings = store.list()
         symbols = [str(item["symbol"]) for item in holdings]
         quotes = store.cached_quotes(symbols)
@@ -1408,6 +1543,57 @@ def paper_trading_names(symbols: list[str]) -> dict[str, str]:
     return names
 
 
+def _record_simulation_stage(run_id: str | None, stage: str, status: str, symbol: str | None = None, detail: dict[str, object] | None = None, started_at: str | None = None) -> None:
+    """Append one stage row; audit writes never break the trading pass itself."""
+    if not run_id:
+        return
+    try:
+        store.record_simulation_stage(run_id=run_id, stage=stage, status=status, symbol=symbol, detail=detail, started_at=started_at)
+    except Exception:
+        logger.warning("simulation stage audit write skipped run_id=%s stage=%s status=%s", run_id, stage, status)
+
+
+def _record_simulation_symbol_state(run_id: str | None, symbol: str, terminal_state: str, detail: dict[str, object] | None = None) -> None:
+    if not run_id:
+        return
+    try:
+        store.record_simulation_symbol(run_id=run_id, symbol=symbol, terminal_state=terminal_state, detail=detail)
+    except Exception:
+        logger.warning("simulation symbol audit write skipped run_id=%s symbol=%s state=%s", run_id, symbol, terminal_state)
+
+
+def _create_simulation_run(trigger: str, symbols: list[str], message: str) -> str:
+    run_id = str(uuid4())
+    try:
+        store.create_simulation_run(run_id=run_id, trigger=trigger, symbols=symbols, message=message)
+    except Exception:
+        logger.warning("simulation run audit create skipped trigger=%s symbols=%s", trigger, len(symbols))
+    return run_id
+
+
+def _finish_simulation_run(run_id: str, status: str, message: str, executed: int = 0, skipped: int = 0, generated: int = 0) -> None:
+    try:
+        store.finish_simulation_run(run_id=run_id, status=status, message=message, executed=executed, skipped=skipped, generated=generated)
+    except Exception:
+        logger.warning("simulation run audit finish skipped run_id=%s status=%s", run_id, status)
+
+
+def _daily_history_retry_seconds_left(symbol: str) -> int:
+    """Persisted provider backoff survives restarts; in-memory state stays a fast path."""
+    try:
+        failure = store.latest_daily_history_failure(symbol)
+    except Exception:
+        return 0
+    if not failure:
+        return 0
+    try:
+        failed_at = datetime.fromisoformat(str(failure.get("started_at") or ""))
+    except ValueError:
+        return 0
+    remaining = DAILY_HISTORY_RETRY_SECONDS - (beijing_now() - failed_at).total_seconds()
+    return max(0, round(remaining)) if remaining > 0 else 0
+
+
 def refresh_paper_market_intelligence(symbols: list[str], names: dict[str, str]) -> None:
     """Persist current news for the active market candidates without blocking the cycle."""
     try:
@@ -1418,7 +1604,7 @@ def refresh_paper_market_intelligence(symbols: list[str], names: dict[str, str])
         logger.exception("paper intelligence refresh failed")
 
 
-def refresh_paper_candidate_data(symbols: list[str], *, force_refresh: bool) -> None:
+def refresh_paper_candidate_data(symbols: list[str], *, force_refresh: bool, run_id: str | None = None) -> None:
     """Make cached holdings/watchlist data decision-ready before paper simulation."""
     if not symbols:
         return
@@ -1429,15 +1615,15 @@ def refresh_paper_candidate_data(symbols: list[str], *, force_refresh: bool) -> 
             "last_symbols": symbols,
         })
     try:
-        fetch_and_store_quotes(symbols, force_refresh=force_refresh, trigger="paper-trading-decision")
+        fetch_and_store_quotes(symbols, force_refresh=force_refresh, trigger="paper-trading-decision", run_id=run_id)
     except MarketDataUnavailable as error:
         logger.info("paper candidate quote refresh unavailable: %s", error)
     # The routine persists daily bars and risk data. It deliberately keeps
     # its own lock, so a scheduler refresh cannot duplicate provider calls.
-    refresh_derived_cache(symbols, "paper-trading-decision", force_history=force_refresh)
+    refresh_derived_cache(symbols, "paper-trading-decision", force_history=force_refresh, run_id=run_id)
 
 
-def prepare_paper_decisions(symbols: list[str]) -> int:
+def prepare_paper_decisions(symbols: list[str], run_id: str | None = None) -> int:
     """Create a fresh, auditable decision only for a bounded market slice."""
     generated = 0
     paper_account = store.paper_account()
@@ -1446,13 +1632,33 @@ def prepare_paper_decisions(symbols: list[str]) -> int:
         for item in paper_account.get("positions", [])
     ]
     for symbol in symbols:
+        stage_started_at = beijing_now().isoformat()
         quote = next(iter(store.cached_quotes([symbol])), None)
-        if not quote or quote.get("price") is None or len(store.daily_prices(symbol, 60)) < 60:
+        daily_bars = store.daily_prices(symbol, 60)
+        if not quote or quote.get("price") is None or len(daily_bars) < 60:
+            reason = "missing_quote" if (not quote or quote.get("price") is None) else "insufficient_daily_bars"
+            detail = {
+                "reason": reason,
+                "quote_price": quote.get("price") if quote else None,
+                "daily_bar_count": len(daily_bars),
+            }
+            _record_simulation_symbol_state(run_id, symbol, "skipped_data_unavailable", detail)
+            _record_simulation_stage(run_id, "decision", "skipped", symbol=symbol, detail={"terminal_state": "skipped_data_unavailable", **detail}, started_at=stage_started_at)
             continue
         latest = (store.decision_reports(symbol, 1) or [None])[0]
         if latest:
             try:
                 if (beijing_now() - datetime.fromisoformat(str(latest["generated_at"]))).total_seconds() < PAPER_TRADING_INTERVAL_SECONDS:
+                    _record_simulation_symbol_state(run_id, symbol, "decision_reused", {
+                        "decision_id": str(latest.get("decision_id") or ""),
+                        "generated_at": str(latest.get("generated_at") or ""),
+                        "reason": "within_interval",
+                    })
+                    _record_simulation_stage(run_id, "decision", "ok", symbol=symbol, detail={
+                        "terminal_state": "decision_reused",
+                        "decision_id": str(latest.get("decision_id") or ""),
+                        "reason": "within_interval",
+                    }, started_at=stage_started_at)
                     generated += 1
                     continue
             except ValueError:
@@ -1465,22 +1671,45 @@ def prepare_paper_decisions(symbols: list[str]) -> int:
             available_cash_override=float(paper_account.get("available_cash") or 0),
         )
         store.save_decision_context(context.model_dump(mode="json"))
-        store.save_decision_report(decision_orchestrator.generate(context).model_dump(mode="json"))
+        report = decision_orchestrator.generate(context).model_dump(mode="json")
+        store.save_decision_report(report)
+        terminal_state = "blocked_by_gate" if str(report.get("status") or "").upper() == "BLOCKED" else "decision_generated"
+        decision_detail = {
+            "decision_id": str(report.get("decision_id") or ""),
+            "action": report.get("action"),
+            "status": report.get("status"),
+            "data_quality_status": str((report.get("data_quality") or {}).get("status") or ""),
+        }
+        _record_simulation_symbol_state(run_id, symbol, terminal_state, decision_detail)
+        _record_simulation_stage(run_id, "decision", "ok", symbol=symbol, detail={"terminal_state": terminal_state, **decision_detail}, started_at=stage_started_at)
         generated += 1
     return generated
 
 
-def execute_due_paper_decisions(symbols: list[str], names: dict[str, str]) -> tuple[int, int]:
+def execute_due_paper_decisions(symbols: list[str], names: dict[str, str], run_id: str | None = None) -> tuple[int, int]:
     """Fill only a previous daily decision at a later market-session price."""
     positions = {str(item["symbol"]).strip().upper(): float(item["quantity"]) for item in store.paper_account().get("positions", [])}
     executed = skipped = 0
     for symbol in symbols:
+        stage_started_at = beijing_now().isoformat()
         report = (store.decision_reports(symbol, 1) or [None])[0]
         quote = next(iter(store.cached_quotes([symbol])), None)
         if not report:
+            _record_simulation_symbol_state(run_id, symbol, "not_due", {"reason": "no_decision_report"})
+            _record_simulation_stage(run_id, "execution", "skipped", symbol=symbol, detail={"terminal_state": "not_due", "reason": "no_decision_report"}, started_at=stage_started_at)
             continue
         check = validate_daily_execution(report, quote)
         if not check.allowed:
+            terminal_state = (
+                "not_due" if check.reason == "execution_not_due_next_market_session"
+                else "blocked_by_gate" if check.reason == "execution_action_gate_blocked"
+                else "skipped_execution"
+            )
+            _record_simulation_symbol_state(run_id, symbol, terminal_state, {
+                "decision_id": str(report.get("decision_id") or ""),
+                "reason": check.reason,
+            })
+            _record_simulation_stage(run_id, "execution", "skipped", symbol=symbol, detail={"terminal_state": terminal_state, "reason": check.reason}, started_at=stage_started_at)
             continue
         action = str(report.get("action") or "").upper()
         sizing = report.get("sizing") or {}
@@ -1488,67 +1717,91 @@ def execute_due_paper_decisions(symbols: list[str], names: dict[str, str]) -> tu
         price = float((quote or {}).get("price") or 0)
         side = "BUY" if action in {"OPEN", "ADD"} else "SELL" if action in {"REDUCE", "EXIT"} else None
         if not side or quantity <= 0 or price <= 0:
+            _record_simulation_symbol_state(run_id, symbol, "skipped_execution", {
+                "decision_id": str(report.get("decision_id") or ""),
+                "reason": "invalid_side_or_sizing",
+                "action": action, "quantity": quantity, "price": price,
+            })
+            _record_simulation_stage(run_id, "execution", "skipped", symbol=symbol, detail={"terminal_state": "skipped_execution", "reason": "invalid_side_or_sizing"}, started_at=stage_started_at)
             continue
         if side == "SELL" and positions.get(symbol, 0.0) <= 0:
             store.record_paper_skip(symbol=symbol, name=names.get(symbol, symbol), decision_id=str(report.get("decision_id") or "") or None, reason="paper_sell_blocked_no_position", price=price)
+            _record_simulation_symbol_state(run_id, symbol, "skipped_execution", {"decision_id": str(report.get("decision_id") or ""), "reason": "paper_sell_blocked_no_position"})
+            _record_simulation_stage(run_id, "execution", "skipped", symbol=symbol, detail={"terminal_state": "skipped_execution", "reason": "paper_sell_blocked_no_position"}, started_at=stage_started_at)
             skipped += 1
             continue
         if side == "SELL":
             quantity = min(quantity, positions.get(symbol, 0.0))
         try:
             store.execute_paper_trade(trade_id=str(uuid4()), symbol=symbol, name=names.get(symbol, symbol), side=side, quantity=quantity, price=price, decision_id=str(report.get("decision_id") or "") or None, reason=f"next_market_session:{action}; {str(report.get('summary') or '')[:180]}", execution_quote_at=str((quote or {}).get("as_of") or (quote or {}).get("retrieved_at") or "") or None, execution_quote_source=str((quote or {}).get("source") or "") or None, fill_price_mode="NEXT_ELIGIBLE_OBSERVED_QUOTE")
+            _record_simulation_symbol_state(run_id, symbol, "executed", {
+                "decision_id": str(report.get("decision_id") or ""),
+                "side": side, "quantity": quantity, "price": price,
+            })
+            _record_simulation_stage(run_id, "execution", "ok", symbol=symbol, detail={"terminal_state": "executed", "side": side, "quantity": quantity, "price": price}, started_at=stage_started_at)
             executed += 1
             positions[symbol] = positions.get(symbol, 0.0) + (quantity if side == "BUY" else -quantity)
         except ValueError as error:
             if str(error) != "paper_decision_already_executed":
                 store.record_paper_skip(symbol=symbol, name=names.get(symbol, symbol), decision_id=str(report.get("decision_id") or "") or None, reason=str(error), price=price)
+                _record_simulation_symbol_state(run_id, symbol, "skipped_execution", {"decision_id": str(report.get("decision_id") or ""), "reason": str(error)})
+                _record_simulation_stage(run_id, "execution", "skipped", symbol=symbol, detail={"terminal_state": "skipped_execution", "reason": str(error)}, started_at=stage_started_at)
                 skipped += 1
+            else:
+                _record_simulation_symbol_state(run_id, symbol, "not_due", {"decision_id": str(report.get("decision_id") or ""), "reason": "decision_already_executed"})
+                _record_simulation_stage(run_id, "execution", "skipped", symbol=symbol, detail={"terminal_state": "not_due", "reason": "decision_already_executed"}, started_at=stage_started_at)
     return executed, skipped
 
 
-def run_paper_trading_cycle(symbols: list[str], force: bool = False, allow_when_disabled: bool = False) -> dict[str, int]:
+def run_paper_trading_cycle(symbols: list[str], force: bool = False, allow_when_disabled: bool = False) -> dict[str, object]:
     """Apply the sole persisted DecisionReport output to an isolated paper ledger."""
     global last_paper_trading_run_at
     if not allow_when_disabled and not store.system_settings()["paper_trading_enabled"]:
         with paper_trading_state_lock:
             paper_trading_state.update({"running": False, "last_status": "disabled", "last_message": "自动执行已关闭；可在系统管理中开启。"})
-        return {"executed": 0, "skipped": 0}
+        return {"executed": 0, "skipped": 0, "run_id": None}
     configured_interval = int(store.system_settings().get("paper_trading_interval_seconds", PAPER_TRADING_INTERVAL_SECONDS))
     if not force and time.monotonic() - last_paper_trading_run_at < configured_interval:
         with paper_trading_state_lock:
             paper_trading_state.update({"running": False, "last_status": "waiting_interval", "last_message": "等待已配置的执行间隔；到期后会自动读取最新 AI 决策。"})
-        return {"executed": 0, "skipped": 0}
+        return {"executed": 0, "skipped": 0, "run_id": None}
     with paper_trading_state_lock:
-        paper_trading_state.update({"running": True, "last_started_at": beijing_now(), "last_status": "running", "last_message": "正在读取已保存的统一 AI 决策与模拟账本", "last_symbols": symbols})
+        paper_trading_state.update({"running": True, "last_started_at": beijing_now(), "last_status": "running", "last_message": "正在读取已保存的统一 AI 决策与交易账本", "last_symbols": symbols})
     last_paper_trading_run_at = time.monotonic()
     symbols = list(dict.fromkeys([*symbols, *paper_trading_symbols()]))[:PAPER_TRADING_CANDIDATE_LIMIT]
     names = paper_trading_names(symbols)
+    run_id = _create_simulation_run("manual" if force else "scheduler", symbols, "交易运行开始")
+    _record_simulation_stage(run_id, "candidate_pool", "ok", detail={"symbol_count": len(symbols), "symbols": symbols})
     executed = 0
     skipped = 0
     no_action_reasons: list[str] = []
     try:
-        refresh_paper_candidate_data(symbols, force_refresh=force)
+        refresh_paper_candidate_data(symbols, force_refresh=force, run_id=run_id)
         names = paper_trading_names(symbols)
         with paper_trading_state_lock:
             paper_trading_state.update({"last_status": "researching", "last_message": "行情已同步，正在检索新闻并为可用候选生成 AI 决策。"})
         refresh_paper_market_intelligence(symbols, names)
-        due_executed, due_skipped = execute_due_paper_decisions(symbols, names)
+        _record_simulation_stage(run_id, "news", "ok", detail={"symbol_count": len(symbols)})
+        due_executed, due_skipped = execute_due_paper_decisions(symbols, names, run_id=run_id)
         executed += due_executed
         skipped += due_skipped
-        generated_reports = prepare_paper_decisions(symbols)
+        generated_reports = prepare_paper_decisions(symbols, run_id=run_id)
         if not due_executed:
             no_action_reasons.append("本交易时段没有到期且可执行的历史决策")
         store.record_paper_equity_snapshot()
-        result = {"executed": executed, "skipped": skipped}
+        _record_simulation_stage(run_id, "equity_snapshot", "ok", detail={})
+        result = {"executed": executed, "skipped": skipped, "run_id": run_id}
         with paper_trading_state_lock:
             summary = f"本轮主动检索 {len(symbols)} 只市场候选，生成或复用 {generated_reports} 份 AI 决策，执行 {executed} 笔。"
             if not executed and no_action_reasons:
                 summary += " 暂不交易：" + "；".join(no_action_reasons[:2]) + "。"
-            paper_trading_state.update({"running": False, "last_finished_at": beijing_now(), "last_status": "completed", "last_message": summary, "last_executed": executed, "last_skipped": skipped})
+            paper_trading_state.update({"running": False, "last_finished_at": beijing_now(), "last_status": "completed", "last_message": summary, "last_executed": executed, "last_skipped": skipped, "last_run_id": run_id})
+        _finish_simulation_run(run_id, "completed", summary, executed=executed, skipped=skipped, generated=generated_reports)
         return result
     except Exception as error:
         with paper_trading_state_lock:
-            paper_trading_state.update({"running": False, "last_finished_at": beijing_now(), "last_status": "failed", "last_message": f"模拟判断异常：{type(error).__name__}: {error}"})
+            paper_trading_state.update({"running": False, "last_finished_at": beijing_now(), "last_status": "failed", "last_message": f"交易判断异常：{type(error).__name__}: {error}", "last_run_id": run_id})
+        _finish_simulation_run(run_id, "failed", f"交易判断异常：{type(error).__name__}: {error}", executed=executed, skipped=skipped)
         raise
 
 
@@ -2242,9 +2495,10 @@ def refresh_market_history(symbol: str, payload: MarketHistoryRefreshRequest = M
             price_history_service.refresh(
                 store, normalized_symbol,
                 payload.start_date.isoformat(), payload.end_date.isoformat(),
+                trigger="manual-daily-history-refresh",
             )
             if payload.start_date and payload.end_date
-            else price_history_service.refresh(store, normalized_symbol)
+            else price_history_service.refresh(store, normalized_symbol, trigger="manual-daily-history-refresh")
         )
         daily_history_attempted_for[normalized_symbol] = beijing_now().date().isoformat()
         daily_history_refreshed_for[normalized_symbol] = beijing_now().date().isoformat()
@@ -2263,6 +2517,12 @@ def refresh_market_history(symbol: str, payload: MarketHistoryRefreshRequest = M
             DAILY_HISTORY_RETRY_SECONDS,
         )
         raise HTTPException(status_code=503, detail=str(error)) from error
+    queue_background(refresh_derived_cache, [normalized_symbol], "manual-daily-history-refresh")
+    if payload.start_date and payload.end_date:
+        return [DailyPrice.model_validate(item) for item in store.daily_prices_between(
+            normalized_symbol, payload.start_date.isoformat(), payload.end_date.isoformat(), 2000,
+        )]
+    return [DailyPrice.model_validate(item) for item in store.daily_prices(normalized_symbol, 800)]
 
 
 @app.get("/v1/news/cached", response_model=list[NewsItem])
@@ -2283,12 +2543,6 @@ def cached_news(
     complete = [item for item in items if re.search(r"\d{2}:\d{2}:\d{2}", str(item.get("published_at") or ""))]
     ordered = sorted(complete, key=lambda item: str(item.get("published_at") or ""), reverse=True)
     return [NewsItem.model_validate(item) for item in ordered[offset:offset + limit]]
-    queue_background(refresh_derived_cache, [normalized_symbol], "manual-daily-history-refresh")
-    if payload.start_date and payload.end_date:
-        return [DailyPrice.model_validate(item) for item in store.daily_prices_between(
-            normalized_symbol, payload.start_date.isoformat(), payload.end_date.isoformat(), 2000,
-        )]
-    return [DailyPrice.model_validate(item) for item in store.daily_prices(normalized_symbol, 800)]
 
 
 @app.delete("/v1/market/history/{symbol}", status_code=status.HTTP_204_NO_CONTENT)

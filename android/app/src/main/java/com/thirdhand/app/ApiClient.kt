@@ -255,7 +255,7 @@ data class PaperTradingConfigDto(val available_cash: Double)
 data class PaperTradingCapitalReconciliationDto(val net_contributions: Double)
 data class PaperTradingPositionDto(val symbol: String, val name: String, val quantity: Double, val average_cost: Double, val last_price: Double = 0.0, val market_value: Double = 0.0, val unrealized_pnl: Double = 0.0, val unrealized_return_percent: Double = 0.0, val updated_at: String)
 data class PaperEquitySnapshotDto(val total_equity: Double, val available_cash: Double, val market_value: Double, val total_pnl: Double, val recorded_at: String)
-data class PaperTradingRunDto(val status: String, val message: String, val symbols: List<String> = emptyList(), val executed: Int = 0, val skipped: Int = 0)
+data class PaperTradingRunDto(val status: String, val message: String, val symbols: List<String> = emptyList(), val executed: Int = 0, val skipped: Int = 0, val run_id: String? = null)
 data class PaperTradingStatusDto(
     val enabled: Boolean,
     val interval_seconds: Int,
@@ -268,6 +268,7 @@ data class PaperTradingStatusDto(
     val last_skipped: Int = 0,
     val last_symbols: List<String> = emptyList(),
     val seconds_until_next_run: Int = 0,
+    val last_run_id: String? = null,
 )
 data class PaperTradingDashboardDto(
     val account: PaperTradingAccountDto,
@@ -276,6 +277,48 @@ data class PaperTradingDashboardDto(
     val status: PaperTradingStatusDto,
 )
 data class PaperTradingDecisionAuditDto(val report: DecisionReportDto, val context: Map<String, Any> = emptyMap())
+data class SimulationRunDto(
+    val run_id: String,
+    val trigger: String,
+    val started_at: String,
+    val finished_at: String? = null,
+    val status: String,
+    val symbol_count: Int = 0,
+    val generated: Int = 0,
+    val executed: Int = 0,
+    val skipped: Int = 0,
+    val message: String = "",
+)
+data class SimulationRunStageDto(
+    val id: Long = 0,
+    val stage: String,
+    val symbol: String? = null,
+    val status: String,
+    val detail: Map<String, Any> = emptyMap(),
+    val started_at: String,
+    val finished_at: String? = null,
+    val elapsed_ms: Int = 0,
+)
+data class SimulationRunSymbolDto(
+    val symbol: String,
+    val terminal_state: String,
+    val detail: Map<String, Any> = emptyMap(),
+    val updated_at: String,
+)
+data class SimulationRunDetailDto(
+    val run_id: String,
+    val trigger: String,
+    val started_at: String,
+    val finished_at: String? = null,
+    val status: String,
+    val symbol_count: Int = 0,
+    val generated: Int = 0,
+    val executed: Int = 0,
+    val skipped: Int = 0,
+    val message: String = "",
+    val stages: List<SimulationRunStageDto> = emptyList(),
+    val symbols: List<SimulationRunSymbolDto> = emptyList(),
+)
 data class DecisionFeatureValueDto(val feature_key: String, val feature_version: String, val value: Any? = null, val available_at: String, val quality_status: String)
 data class DecisionLineageDto(val decision_id: String, val context_id: String, val features: List<DecisionFeatureValueDto> = emptyList(), val snapshots: List<Map<String, Any>> = emptyList())
 data class PaperTradingLogDto(val id: String, val symbol: String, val name: String, val side: String, val quantity: Double, val price: Double, val fee: Double = 0.0, val cash_before: Double, val cash_after: Double, val decision_id: String? = null, val reason: String, val status: String = "executed", val execution_quote_at: String? = null, val execution_quote_source: String? = null, val fill_price_mode: String? = null, val executed_at: String)
@@ -485,6 +528,10 @@ interface ThirdHandApi {
     suspend fun paperTradingDashboard(): PaperTradingDashboardDto
     @POST("v1/paper-trading/run")
     suspend fun runPaperTradingNow(): PaperTradingRunDto
+    @GET("v1/paper-trading/runs")
+    suspend fun paperTradingRuns(@Query("limit") limit: Int = 50): List<SimulationRunDto>
+    @GET("v1/paper-trading/runs/{runId}")
+    suspend fun paperTradingRunDetail(@Path("runId") runId: String): SimulationRunDetailDto
     @GET("v1/paper-trading/decision-audit/{decisionId}")
     suspend fun paperTradingDecisionAudit(@Path("decisionId") decisionId: String): PaperTradingDecisionAuditDto
     @GET("v1/decisions/{decisionId}/lineage")

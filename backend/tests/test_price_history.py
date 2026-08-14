@@ -129,6 +129,28 @@ def test_daily_history_failure_logs_akshare_and_tushare_status(monkeypatch, tmp_
     assert "reason=tushare_token_missing" in caplog.text
 
 
+def test_daily_history_failure_records_structured_provider_attempts(monkeypatch, tmp_path):
+    monkeypatch.setitem(sys.modules, "akshare", SimpleNamespace(
+        stock_zh_a_hist=lambda **_: (_ for _ in ()).throw(ConnectionError("upstream timed out")),
+    ))
+    monkeypatch.delenv("TUSHARE_TOKEN", raising=False)
+    store = PortfolioStore(tmp_path / "history.db")
+
+    with pytest.raises(PriceHistoryUnavailable, match="AKShare、Tencent"):
+        PriceHistoryService().refresh(store, "600519", trigger="unit-test")
+
+    attempts = store.daily_history_attempts("600519")
+    by_provider = {item["provider"]: item for item in attempts}
+    assert by_provider["akshare"]["status"] == "error"
+    assert by_provider["akshare"]["error_type"] == "ConnectionError"
+    assert by_provider["akshare"]["elapsed_ms"] >= 0
+    assert by_provider["tencent"]["status"] == "error"
+    assert by_provider["tushare"]["status"] == "skipped"
+    assert by_provider["tushare"]["detail"] == {"reason": "tushare_token_missing"}
+    assert by_provider["overall"]["status"] == "error"
+    assert store.latest_daily_history_failure("600519") is not None
+
+
 def test_tencent_daily_fallback_replaces_failed_eastmoney_history(monkeypatch, tmp_path):
     tencent_frame = _Frame([{
         "date": "2026-08-03", "open": "94", "close": "95", "high": "96", "low": "93",

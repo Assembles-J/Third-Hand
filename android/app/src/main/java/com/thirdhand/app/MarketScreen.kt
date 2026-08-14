@@ -97,7 +97,7 @@ fun MarketScreen(onOpenDetail: (ResearchTargetDto) -> Unit) {
         sectorLoading = false
     }
     LazyColumn(Modifier.fillMaxSize(), contentPadding = PaddingValues(bottom = 24.dp)) {
-        item { TradingPageHeader("行情", "全市场快照、资金流与模拟持仓") { IconButton(onClick = ::refresh, enabled = !loading) { if (loading) CircularProgressIndicator(Modifier.size(20.dp), strokeWidth = 2.dp) else Icon(Icons.Filled.Refresh, "刷新行情") } } }
+        item { TradingPageHeader("行情", "全市场快照、资金流与持仓") { IconButton(onClick = ::refresh, enabled = !loading) { if (loading) CircularProgressIndicator(Modifier.size(20.dp), strokeWidth = 2.dp) else Icon(Icons.Filled.Refresh, "刷新行情") } } }
         if (loading) item { LinearProgressIndicator(Modifier.fillMaxWidth().padding(horizontal = 20.dp)) }
         error?.let { item { Text(it, Modifier.padding(horizontal = 20.dp, vertical = 12.dp), color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.bodySmall) } }
         item { TabRow(selectedTabIndex = selectedTab) { listOf("大盘", "板块", "个股").forEachIndexed { index, label -> Tab(selected = selectedTab == index, onClick = { selectedTab = index }, text = { Text(label) }) } } }
@@ -105,9 +105,9 @@ fun MarketScreen(onOpenDetail: (ResearchTargetDto) -> Unit) {
             0 -> item { MarketOverview(pulse) }
             1 -> item { MarketSectorRanking(pulse, onOpenSector = { selectedSector = it; sectorDetail = null }) }
             else -> {
-                item { TradingSection("全部股票", if (quotes.isEmpty()) "等待本地数据" else "模拟持仓置顶 · 共 ${quotes.size} 只 · 点击查看详情与 K 线") }
+                item { TradingSection("全部股票", if (quotes.isEmpty()) "等待本地数据" else "持仓置顶 · 共 ${quotes.size} 只 · 点击查看详情与 K 线") }
                 item { StockRankingFilters(stockRanking) { stockRanking = it } }
-                if (!loading && quotes.isEmpty()) item { Text("数据库还没有股票行情。完成一次市场扫描或模拟分析后，数据会显示在这里。", Modifier.padding(horizontal = 20.dp, vertical = 14.dp), style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant) }
+                if (!loading && quotes.isEmpty()) item { Text("数据库还没有股票行情。完成一次市场扫描或分析后，数据会显示在这里。", Modifier.padding(horizontal = 20.dp, vertical = 14.dp), style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant) }
                 val rankKey = mapOf("涨幅" to "gainers", "跌幅" to "losers", "成交额" to "amount", "主力流入" to "main_inflow", "主力流出" to "main_outflow")[stockRanking]
                 if (rankKey == null) {
                     items(quotes, key = { it.symbol }) { quote -> MarketQuoteRow(quote, quote.symbol in paperSymbols, onOpenDetail) }
@@ -272,7 +272,7 @@ private fun MarketSessionCard(pulse: MarketIntelligenceDto?) {
     Column(Modifier.fillMaxWidth().clickable { onOpenDetail(ResearchTargetDto(quote.symbol, quote.name, "market", quote.as_of ?: "")) }.padding(horizontal = 20.dp, vertical = 12.dp)) {
         Row(verticalAlignment = Alignment.CenterVertically) {
             Column(Modifier.weight(1f)) {
-                Row(verticalAlignment = Alignment.CenterVertically) { Text(quote.name.ifBlank { quote.symbol }, maxLines = 1, overflow = TextOverflow.Ellipsis, fontWeight = FontWeight.SemiBold); if (isPaperPosition) Text("模拟持仓", Modifier.padding(start = 6.dp), color = MaterialTheme.colorScheme.primary, style = MaterialTheme.typography.labelSmall) }
+                Row(verticalAlignment = Alignment.CenterVertically) { Text(quote.name.ifBlank { quote.symbol }, maxLines = 1, overflow = TextOverflow.Ellipsis, fontWeight = FontWeight.SemiBold); if (isPaperPosition) Text("持仓", Modifier.padding(start = 6.dp), color = MaterialTheme.colorScheme.primary, style = MaterialTheme.typography.labelSmall) }
                 Text("${quote.symbol} · ${quote.as_of?.replace('T', ' ')?.substringBefore('+')?.takeLast(11) ?: "时间未知"}", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
             }
             Column(horizontalAlignment = Alignment.End) { Text(quote.price?.let { "%.2f".format(it) } ?: "--", fontWeight = FontWeight.SemiBold); Row(verticalAlignment = Alignment.CenterVertically) { Icon(when { change > 0 -> Icons.Filled.TrendingUp; change < 0 -> Icons.Filled.TrendingDown; else -> Icons.Filled.TrendingFlat }, if (change > 0) "上涨" else if (change < 0) "下跌" else "平盘", tint = color, modifier = Modifier.size(16.dp)); Text("${if (change > 0) "+" else ""}${"%.2f".format(change)}%", color = color, style = MaterialTheme.typography.labelMedium) } }

@@ -26,7 +26,7 @@ class ToolExecutor:
    if quantity<=0 or price<=0:raise ValueError("paper_trade_quote_or_quantity_invalid")
    names={str(item.get("symbol")):str(item.get("name")) for item in [*self.store.list(),*self.store.watchlist()]}
    from uuid import uuid4
-   return self.store.execute_paper_trade(trade_id=str(uuid4()),symbol=symbol,name=names.get(symbol,symbol),side="BUY" if name=="paper_add_position" else "SELL",quantity=quantity,price=price,decision_id=None,reason="MCP 显式模拟操作")
+   return self.store.execute_paper_trade(trade_id=str(uuid4()),symbol=symbol,name=names.get(symbol,symbol),side="BUY" if name=="paper_add_position" else "SELL",quantity=quantity,price=price,decision_id=None,reason="MCP 显式交易操作")
   content=self.store.cached_content([symbol],limit=30)
   announcements=[item for item in content if str(item.get("id", "")).startswith("announcement-")]
   news=[item for item in content if str(item.get("id", "")).startswith("news-")]

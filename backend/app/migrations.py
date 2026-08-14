@@ -146,6 +146,68 @@ def _create_research_theses(connection: sqlite3.Connection) -> None:
     connection.execute("CREATE INDEX IF NOT EXISTS idx_research_theses_symbol_time ON research_thesis_versions(symbol, created_at DESC)")
 
 
+def _create_simulation_run_audit(connection: sqlite3.Connection) -> None:
+    """Persist one run_id per paper-trading pass plus every observable stage.
+
+    A simulation run covers candidate selection, market quotes, daily history,
+    risk, news, decision, execution and the final equity snapshot.  Each symbol
+    additionally gets a terminal state so a pass that does not trade still has
+    an explicit, queryable reason.
+    """
+    connection.executescript("""
+    CREATE TABLE IF NOT EXISTS simulation_runs (
+      run_id TEXT PRIMARY KEY,
+      trigger TEXT NOT NULL,
+      started_at TEXT NOT NULL,
+      finished_at TEXT,
+      status TEXT NOT NULL,
+      symbol_count INTEGER NOT NULL DEFAULT 0,
+      generated INTEGER NOT NULL DEFAULT 0,
+      executed INTEGER NOT NULL DEFAULT 0,
+      skipped INTEGER NOT NULL DEFAULT 0,
+      message TEXT NOT NULL DEFAULT ''
+    );
+    CREATE INDEX IF NOT EXISTS idx_simulation_runs_started ON simulation_runs(started_at DESC);
+    CREATE TABLE IF NOT EXISTS simulation_run_stages (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      run_id TEXT NOT NULL,
+      stage TEXT NOT NULL,
+      symbol TEXT,
+      status TEXT NOT NULL,
+      detail TEXT NOT NULL DEFAULT '{}',
+      started_at TEXT NOT NULL,
+      finished_at TEXT,
+      elapsed_ms INTEGER NOT NULL DEFAULT 0
+    );
+    CREATE INDEX IF NOT EXISTS idx_simulation_run_stages_run ON simulation_run_stages(run_id, stage, symbol);
+    CREATE TABLE IF NOT EXISTS simulation_run_symbols (
+      run_id TEXT NOT NULL,
+      symbol TEXT NOT NULL,
+      terminal_state TEXT NOT NULL,
+      detail TEXT NOT NULL DEFAULT '{}',
+      updated_at TEXT NOT NULL,
+      PRIMARY KEY (run_id, symbol)
+    );
+    CREATE INDEX IF NOT EXISTS idx_simulation_run_symbols_symbol ON simulation_run_symbols(symbol, updated_at DESC);
+    CREATE TABLE IF NOT EXISTS daily_history_provider_attempts (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      run_id TEXT,
+      trigger TEXT,
+      symbol TEXT NOT NULL,
+      provider TEXT NOT NULL,
+      status TEXT NOT NULL,
+      started_at TEXT NOT NULL,
+      elapsed_ms INTEGER NOT NULL DEFAULT 0,
+      bar_count INTEGER NOT NULL DEFAULT 0,
+      error_type TEXT,
+      error_message TEXT,
+      detail TEXT NOT NULL DEFAULT '{}'
+    );
+    CREATE INDEX IF NOT EXISTS idx_daily_history_attempts_symbol_time ON daily_history_provider_attempts(symbol, started_at DESC);
+    CREATE INDEX IF NOT EXISTS idx_daily_history_attempts_run ON daily_history_provider_attempts(run_id);
+    """)
+
+
 MIGRATIONS = (
     Migration("0001_legacy_schema_baseline", _record_legacy_schema_baseline),
     Migration("0002_decision_contexts", _create_decision_contexts),
@@ -159,6 +221,7 @@ MIGRATIONS = (
     Migration("0010_p1_data_lineage", _create_p1_data_lineage),
     Migration("0011_research_reports", _create_research_reports),
     Migration("0012_research_theses", _create_research_theses),
+    Migration("0013_simulation_run_audit", _create_simulation_run_audit),
 )
 
 

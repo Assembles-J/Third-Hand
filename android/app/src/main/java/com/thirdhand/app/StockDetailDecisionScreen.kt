@@ -103,7 +103,7 @@ fun StockDetailDecisionRoute(
         paperDecisionLoading = true; paperDecisionError = null; paperDecision = null; paperDecisionContext = emptyMap()
         runCatching { api.paperTradingDecisionAudit(decisionId) }
             .onSuccess { paperDecision = it.report; paperDecisionContext = it.context }
-            .onFailure { paperDecisionError = "无法读取这笔模拟操作的分析记录：${it.message ?: "记录可能已过期"}" }
+            .onFailure { paperDecisionError = "无法读取这笔交易操作的分析记录：${it.message ?: "记录可能已过期"}" }
         paperDecisionLoading = false
     }
     LazyColumn(
@@ -127,7 +127,7 @@ fun StockDetailDecisionRoute(
                     Text("${if (rise) "↑" else "↓"} ${(it.change ?: 0.0).signedMoney()}  ${(it.change_percent ?: 0.0).signedPercent()}", color = if (rise) MaterialTheme.marketColors.rise else MaterialTheme.marketColors.fall, fontWeight = FontWeight.SemiBold)
                 }
                 holding?.let { Text("持仓 ${it.quantity.formatQuantity()} · 成本 ${it.average_cost.money()}", style = MaterialTheme.typography.bodyMedium) }
-                paperPosition?.let { Text("模拟持仓 ${it.quantity.formatQuantity()} 股 · 成本 ${it.average_cost.money()} · 浮盈 ${it.unrealized_return_percent.signedPercent()}", style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.primary) }
+                paperPosition?.let { Text("持仓 ${it.quantity.formatQuantity()} 股 · 成本 ${it.average_cost.money()} · 浮盈 ${it.unrealized_return_percent.signedPercent()}", style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.primary) }
                 Text("行情来源 ${quote?.source ?: "—"} · ${quote?.freshness_note ?: "等待行情"}", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
             }
         }
@@ -138,9 +138,9 @@ fun StockDetailDecisionRoute(
         item { DenseDivider() }
         item {
             Column(Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 10.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
-                Text("模拟操作记录", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
-                Text("B / S 为模拟成交；点击任一记录查看结构化操作分析。", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                if (paperLogs.isEmpty()) Text("暂无该股票的模拟操作记录。", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                Text("交易操作记录", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
+                Text("B / S 为交易账套成交；点击任一记录查看结构化操作分析。", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                if (paperLogs.isEmpty()) Text("暂无该股票的交易操作记录。", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
             }
         }
         items(paperLogs.take(20), key = { it.id }) { log -> StockDetailPaperLogRow(log, onOpenAnalysis = { selectedPaperDecisionId = log.decision_id }) }
@@ -162,7 +162,7 @@ fun StockDetailDecisionRoute(
                 }
             }
         }
-        item { Text("模拟操作请在“模拟”页执行。", modifier = Modifier.padding(horizontal = 12.dp, vertical = 10.dp), style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant) }
+        item { Text("交易操作请在“交易”页执行。", modifier = Modifier.padding(horizontal = 12.dp, vertical = 10.dp), style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant) }
     }
     if (selectedPaperDecisionId != null) PaperDecisionAuditDialog(paperDecision, paperDecisionContext, paperDecisionLoading, paperDecisionError, onDismiss = { selectedPaperDecisionId = null })
 }
@@ -185,8 +185,8 @@ private fun StockDetailPaperLogRow(log: PaperTradingLogDto, onOpenAnalysis: () -
 
 private fun stockDetailSkipReason(reason: String): String = when {
     reason.contains("paper_t1_unsellable") -> "A 股 T+1 限制：今日买入仓位不可卖出"
-    reason.contains("no_position") -> "模拟账套无持仓，卖出信号已拦截"
-    reason.contains("insufficient_paper_cash") -> "模拟可用资金不足"
+    reason.contains("no_position") -> "交易账套无持仓，卖出信号已拦截"
+    reason.contains("insufficient_paper_cash") -> "可用资金不足"
     else -> "本轮未成交：$reason"
 }
 
@@ -330,9 +330,9 @@ private fun LegacyStockDetailDecisionRoute(
         AlertDialog(
             onDismissRequest = { if (!recordingExecution) executionDialogOpen = false },
             title = { Text("记录建议是否执行") },
-            text = { Text("“已执行”会记录建议数量 ${suggestedQuantity?.formatQuantity() ?: "—"} 与当前行情；“未执行”只用于后续模拟收益，不会被视为真实盈亏。") },
+            text = { Text("“已执行”会记录建议数量 ${suggestedQuantity?.formatQuantity() ?: "—"} 与当前行情；“未执行”只用于后续交易收益，不会被视为真实盈亏。") },
             confirmButton = { Button(onClick = { recordExecution(true) }, enabled = !recordingExecution && suggestedQuantity != null && state.quote?.price != null) { Text(if (recordingExecution) "保存中…" else "已执行") } },
-            dismissButton = { TextButton(onClick = { recordExecution(false) }, enabled = !recordingExecution) { Text("未执行（模拟）") } },
+            dismissButton = { TextButton(onClick = { recordExecution(false) }, enabled = !recordingExecution) { Text("未执行（对照）") } },
         )
     }
 }
@@ -551,7 +551,7 @@ private fun StockDetailDecisionScreen(
     if (items.isEmpty()) Text("暂无", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
     else {
         items.take(5).forEach { item -> Text("${item.title}：${item.description}（${item.source}）", style = MaterialTheme.typography.bodySmall) }
-        if (items.size > 5) Text("当前仅展示 5 / ${items.size} 条；完整证据请在模拟操作分析记录中查看。", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+        if (items.size > 5) Text("当前仅展示 5 / ${items.size} 条；完整证据请在交易操作分析记录中查看。", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
     }
 }
 
@@ -570,13 +570,13 @@ private fun StockDetailDecisionScreen(
 @Composable private fun AdvicePerformanceCard(review: DailyReviewDto?, symbol: String, recording: Boolean, onEvaluate: () -> Unit) = Column(Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 10.dp), verticalArrangement = Arrangement.spacedBy(5.dp)) {
     val item = review?.items?.firstOrNull { it.symbol == symbol }
         Text("执行与收益复盘", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
-        if (item == null) Text("尚未记录此建议是否执行。记录后会区分真实成交收益和未执行建议的模拟收益。", style = MaterialTheme.typography.bodySmall)
+        if (item == null) Text("尚未记录此建议是否执行。记录后会区分真实成交收益和未执行建议的对照收益。", style = MaterialTheme.typography.bodySmall)
         else {
             Text("执行状态：${item.execution_status.executionLabel()} · 建议数量 ${item.suggested_quantity?.formatQuantity() ?: "—"}")
             Text("实际收益：${item.actual_pnl?.signedMoney() ?: "待后续行情评估"}（仅有真实成交时计算）", style = MaterialTheme.typography.bodySmall)
-            Text("模拟收益：${item.theoretical_pnl?.signedMoney() ?: "待后续行情评估"}（未执行/对照，不是已实现收益）", style = MaterialTheme.typography.bodySmall)
+            Text("对照收益：${item.theoretical_pnl?.signedMoney() ?: "待后续行情评估"}（未执行/对照，不是已实现收益）", style = MaterialTheme.typography.bodySmall)
             if (review.status == "evaluated") Text("评估时间：${review.evaluated_at ?: "—"}", style = MaterialTheme.typography.labelSmall)
-            OutlinedButton(onClick = onEvaluate, enabled = !recording, modifier = Modifier.fillMaxWidth()) { Text("用后续行情计算实际 / 模拟收益") }
+            OutlinedButton(onClick = onEvaluate, enabled = !recording, modifier = Modifier.fillMaxWidth()) { Text("用后续行情计算实际 / 对照收益") }
         }
         if (recording) CircularProgressIndicator(modifier = Modifier.width(18.dp))
 }
