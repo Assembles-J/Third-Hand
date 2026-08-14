@@ -65,6 +65,7 @@ def test_first_migrated_routes_are_registered_once_per_method() -> None:
         ("/v1/admin/config", "PUT"),
         ("/v1/data-quality/daily-history-attempts", "GET"),
         ("/v1/data-quality/provider-health", "GET"),
+        ("/v1/data-quality/events", "GET"),
         ("/v1/paper-trading/account", "GET"),
         ("/v1/paper-trading/account", "PUT"),
         ("/v1/paper-trading/net-contributions", "PUT"),
@@ -76,6 +77,15 @@ def test_first_migrated_routes_are_registered_once_per_method() -> None:
         ("/v1/paper-trading/runs/{run_id}", "GET"),
         ("/v1/paper-trading/run", "POST"),
         ("/v1/paper-trading/decision-audit/{decision_id}", "GET"),
+        ("/v1/decisions/context/{symbol}", "GET"),
+        ("/v1/decisions/generate", "POST"),
+        ("/v1/decisions/latest", "GET"),
+        ("/v1/decisions/jobs/{job_id}", "GET"),
+        ("/v1/decisions", "GET"),
+        ("/v1/decisions/{decision_id}", "GET"),
+        ("/v1/decisions/{decision_id}/lineage", "GET"),
+        ("/v1/decisions/evidence/{symbol}", "GET"),
+        ("/v1/decisions/shadow/{symbol}", "GET"),
     }
     for path, method in expected:
         matching = [
