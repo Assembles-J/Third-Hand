@@ -1,6 +1,6 @@
 """Candidate-management use cases.
 
-This service schedules research effort only.  It never calls ActionPolicy,
+This service schedules research effort only. It never calls ActionPolicy,
 PositionSizing or execution and every activation rule is RESEARCH_ONLY.
 """
 from __future__ import annotations
@@ -9,12 +9,19 @@ from datetime import datetime
 
 from app.domain.candidate.activation import validate_rule
 from app.domain.candidate.lifecycle import (
+    ACTIVE,
+    ANALYZING,
+    ARCHIVED,
     NEW,
+    OPEN_READY_RESEARCH,
+    REACTIVATED,
+    WAITING_TRIGGER,
     transition_decision,
     validate_priority,
     validate_source_type,
     validate_status,
 )
+from app.time_utils import beijing_now
 
 
 class CandidateService:
@@ -27,6 +34,15 @@ class CandidateService:
         if not symbol:
             raise ValueError("candidate symbol must not be blank")
         return symbol
+
+    @staticmethod
+    def _parse_timestamp(value: str | None) -> datetime | None:
+        if not value:
+            return None
+        parsed = datetime.fromisoformat(str(value))
+        if parsed.tzinfo is None:
+            raise ValueError("candidate timestamp must include timezone offset")
+        return parsed
 
     def add_manual_candidate(
         self,
@@ -41,7 +57,7 @@ class CandidateService:
         source_type = validate_source_type("USER_ADDED")
         existing = self.repository.get(symbol)
         status = str(existing.get("lifecycle_status")) if existing else NEW
-        if status == "ARCHIVED":
+        if status == ARCHIVED:
             status = NEW
         result = self.repository.upsert_entry(
             symbol=symbol,
@@ -79,8 +95,7 @@ class CandidateService:
         decision = transition_decision(str(current["lifecycle_status"]), target)
         if not decision.allowed:
             raise ValueError(decision.reason)
-        if cooldown_until:
-            datetime.fromisoformat(cooldown_until)
+        self._parse_timestamp(cooldown_until)
         updated = self.repository.update_lifecycle(
             symbol=symbol,
             lifecycle_status=target,
@@ -95,6 +110,52 @@ class CandidateService:
             detail={"reason": reason or decision.reason, "cooldown_until": cooldown_until},
         )
         return updated
+
+    def analysis_readiness(self, symbol: str) -> dict[str, object]:
+        """Return the mandatory guard that future AI workers must check first."""
+        candidate = self.get(symbol)
+        status = str(candidate["lifecycle_status"])
+        now = beijing_now()
+        cooldown = self._parse_timestamp(candidate.get("cooldown_until"))
+
+        if status == ANALYZING:
+            allowed, reason = False, "analysis_already_running"
+        elif status == WAITING_TRIGGER:
+            allowed, reason = False, "waiting_for_structured_reactivation_trigger"
+        elif status == ARCHIVED:
+            allowed, reason = False, "candidate_archived"
+        elif status == OPEN_READY_RESEARCH:
+            allowed, reason = False, "research_already_open_ready"
+        elif cooldown and cooldown > now:
+            allowed, reason = False, "deep_analysis_cooldown_active"
+        else:
+            allowed, reason = status in {NEW, ACTIVE, REACTIVATED}, "ready" if status in {NEW, ACTIVE, REACTIVATED} else "lifecycle_not_analysis_ready"
+
+        priority = str(candidate["research_priority"])
+        depth = "deep_company" if priority in {"L3", "L4"} else "focused" if priority == "L2" else "basic"
+        return {
+            "symbol": candidate["symbol"],
+            "name": candidate["name"],
+            "allowed": allowed,
+            "reason": reason,
+            "lifecycle_status": status,
+            "research_priority": priority,
+            "recommended_analysis_depth": depth,
+            "cooldown_until": candidate.get("cooldown_until"),
+            "last_deep_analysis_at": candidate.get("last_deep_analysis_at"),
+            "formal_trade_authority": False,
+        }
+
+    def start_analysis(self, symbol: str, *, reason: str = "research_scheduler") -> dict[str, object]:
+        readiness = self.analysis_readiness(symbol)
+        if not readiness["allowed"]:
+            raise ValueError(f"analysis_not_ready:{readiness['reason']}")
+        return self.transition(
+            symbol,
+            lifecycle_status=ANALYZING,
+            reason=reason,
+            cooldown_until=None,
+        )
 
     def change_priority(self, symbol: str, *, research_priority: str) -> dict[str, object]:
         symbol = self._symbol(symbol)
@@ -176,13 +237,14 @@ class CandidateService:
         current = self.repository.get(symbol)
         if not current:
             raise KeyError(symbol)
-        decision = transition_decision(str(current["lifecycle_status"]), target)
+        if str(current["lifecycle_status"]) != ANALYZING:
+            raise ValueError("analysis_result_requires_ANALYZING_state")
+        decision = transition_decision(ANALYZING, target)
         if not decision.allowed:
             raise ValueError(decision.reason)
         if not str(analysis_version or "").strip():
             raise ValueError("analysis_version must not be blank")
-        if cooldown_until:
-            datetime.fromisoformat(cooldown_until)
+        self._parse_timestamp(cooldown_until)
         return self.repository.record_analysis_result(
             symbol=symbol,
             analysis_version=str(analysis_version).strip(),
