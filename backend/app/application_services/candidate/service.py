@@ -10,7 +10,6 @@ from datetime import datetime
 from app.domain.candidate.activation import validate_rule
 from app.domain.candidate.lifecycle import (
     NEW,
-    USER_ADDED if False else NEW,
     transition_decision,
     validate_priority,
     validate_source_type,
