@@ -94,3 +94,11 @@ def test_first_migrated_routes_are_registered_once_per_method() -> None:
             if route.path == path and method in (route.methods or set())
         ]
         assert len(matching) == 1, (path, method, [route.name for route in matching])
+
+
+def test_every_public_api_route_has_a_v2_domain_owner() -> None:
+    import app.main as runtime
+
+    routes = [route for route in runtime.app.routes if isinstance(route, APIRoute)]
+    unclassified = sorted({route.path for route in routes if owner_for_path(route.path) == "unclassified"})
+    assert unclassified == [], f"unclassified API routes: {unclassified}"
