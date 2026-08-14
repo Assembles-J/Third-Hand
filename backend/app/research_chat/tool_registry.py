@@ -1,103 +1,70 @@
-"""Explicit, read-only tool definitions exposed to the research model."""
+"""Allowlisted Research Chat tools.
+
+Research tools are read-only or confirmation proposals. They cannot execute a
+paper trade, alter ActionPolicy, change formal sizing, or bypass the historical
+DecisionReport -> next eligible quote execution boundary.
+"""
 from __future__ import annotations
 
-ALLOWED_TOOLS = {
-    "get_decision_context",
-    "get_current_decision_report",
-    "get_holding",
-    "get_account_summary",
-    "get_market_quote",
-    "get_daily_price_summary",
-    "request_daily_history_refresh",
-    "get_technical_snapshot",
-    "get_risk_snapshot",
-    "get_event_evidence",
-    "get_company_announcements",
-    "get_company_news",
-    "get_business_evidence",
-    "get_trade_plan",
-    "get_personal_rule",
-    "get_market_regime",
-    "get_relative_strength",
-    "get_previous_decisions",
-    "get_recommendation_evaluations",
-    "request_user_input",
-    "propose_data_change",
-    "paper_add_position",
-    "paper_reduce_position",
+ALLOWED_TOOLS: dict[str, str] = {
+    "get_current_quote": "读取当前缓存行情",
+    "get_daily_history": "读取本地历史日线",
+    "request_daily_history_refresh": "申请刷新历史日线；需要确认，不由模型直接执行",
+    "get_position_snapshot": "读取当前持仓快照",
+    "get_risk_snapshot": "读取当前风险快照",
+    "get_company_fundamentals": "读取本地公司/工具元数据",
+    "get_announcement_timeline": "读取本地公告时间线",
+    "get_company_news": "读取本地公司新闻",
+    "get_research_evidence": "读取本地研究证据",
+    "get_research_thesis": "读取本地 Research Thesis",
+    "get_decision_report": "读取已保存的正式决策报告",
+    "propose_data_change": "提出数据修改建议，需要用户确认",
+    "request_user_input": "请求用户补充输入",
 }
 
-_DESCRIPTIONS = {
-    "get_decision_context": "Read the normalized decision context and data-quality state for the current symbol.",
-    "get_current_decision_report": "Read the newest saved decision report for a symbol.",
-    "get_holding": "Read the user's saved holdings. Use this to verify quantity and cost basis.",
-    "get_account_summary": "Read available account cash used by deterministic position sizing.",
-    "get_market_quote": "Read the latest cached quote for a symbol.",
-    "get_daily_price_summary": "Read up to 60 recent daily price records for a symbol.",
-    "request_daily_history_refresh": "Offer the user a confirmation action to fetch daily history when fewer than 60 records are available. Never fetch automatically.",
-    "get_technical_snapshot": "Read the normalized technical-analysis snapshot already present in the context.",
-    "get_risk_snapshot": "Read the cached risk-analysis snapshot for a symbol.",
-    "get_event_evidence": "Read normalized news and announcement evidence already present in the context.",
-    "get_company_announcements": "Read source-linked formal company announcements, including disclosure time and the original announcement URL. Use for earnings, guidance, dividends, reductions, buybacks, and other disclosures.",
-    "get_company_news": "Read source-linked company news with publication times. Treat it as context, and prefer formal announcements when sources conflict.",
-    "get_business_evidence": "Read the combined business-evidence bundle: formal announcements, news, publication timing, the user's thesis and market expectation, and relative market context. Use before saying business, industry, event, or time information is missing.",
-    "get_trade_plan": "Read the user's saved trade plan for a symbol.",
-    "get_personal_rule": "Read the user's saved personal risk rules.",
-    "get_market_regime": "Read the current market-regime snapshot from the context.",
-    "get_relative_strength": "Read the symbol's relative-strength snapshot from the context.",
-    "get_previous_decisions": "Read previous saved decision reports for a symbol.",
-    "get_recommendation_evaluations": "Read historical recommendation evaluations for a symbol.",
-    "request_user_input": "Ask one to three concise questions only when missing user information materially changes the conclusion.",
-    "propose_data_change": "Propose a create, update, or delete of a holding, trade plan, or personal rule. This never writes data: it creates a user-confirmation step.",
-    "paper_add_position": "Execute an explicit simulated add/buy using the latest cached quote. It only affects the isolated paper ledger and rejects insufficient simulated cash.",
-    "paper_reduce_position": "Execute an explicit simulated reduce/sell using the latest cached quote. It only affects the isolated paper ledger and returns proceeds to simulated cash.",
-}
 
-_NO_ARGUMENT_TOOLS = {"get_account_summary", "get_personal_rule"}
+def _schema(properties: dict, required: list[str]) -> dict:
+    return {"type": "object", "properties": properties, "required": required, "additionalProperties": False}
 
 
-def _parameters(name: str) -> dict[str, object]:
-    if name in {"paper_add_position", "paper_reduce_position"}:
-        return {"type":"object","properties":{"symbol":{"type":"string"},"quantity":{"type":"number","exclusiveMinimum":0}},"required":["symbol","quantity"],"additionalProperties":False}
-    if name == "request_user_input":
-        return {
-            "type": "object",
-            "properties": {
-                "questions": {
-                    "type": "array",
-                    "items": {"type": "string"},
-                    "minItems": 1,
-                    "maxItems": 3,
-                }
-            },
-            "required": ["questions"],
-            "additionalProperties": False,
-        }
-    if name == "propose_data_change":
-        return {"type":"object","properties":{"entity":{"type":"string","enum":["holding","trade_plan","personal_rule"]},"operation":{"type":"string","enum":["create","update","delete"]},"summary":{"type":"string","maxLength":500}},"required":["entity","operation","summary"],"additionalProperties":False}
-    if name in _NO_ARGUMENT_TOOLS:
-        return {"type": "object", "properties": {}, "additionalProperties": False}
-    return {
-        "type": "object",
-        "properties": {
-            "symbol": {
-                "type": "string",
-                "description": "Stock symbol. Omit to use the symbol in the active research context.",
-            }
-        },
-        "additionalProperties": False,
-    }
-
-
-def definitions() -> list[dict[str, object]]:
-    return [
-        {
-            "type": "function",
-            "function": {
-                "name": name,
-                "description": _DESCRIPTIONS[name],
-                "parameters": _parameters(name),
-            },
-        }
-        for name in sorted(ALLOWED_TOOLS)
-    ]
+def definitions() -> list[dict]:
+    result = []
+    for name, description in ALLOWED_TOOLS.items():
+        if name in {
+            "get_current_quote", "get_daily_history", "get_position_snapshot",
+            "get_risk_snapshot", "get_company_fundamentals", "get_research_evidence",
+            "get_research_thesis", "get_decision_report",
+        }:
+            props = {"symbol": {"type": "string"}}
+            if name == "get_daily_history":
+                props["limit"] = {"type": "integer", "minimum": 1, "maximum": 240}
+            params = _schema(props, ["symbol"])
+        elif name == "request_daily_history_refresh":
+            params = _schema(
+                {
+                    "symbol": {"type": "string"},
+                    "required_days": {"type": "integer", "minimum": 30, "maximum": 240},
+                },
+                ["symbol"],
+            )
+        elif name in {"get_announcement_timeline", "get_company_news"}:
+            params = _schema(
+                {"symbol": {"type": "string"}, "limit": {"type": "integer", "minimum": 1, "maximum": 50}},
+                ["symbol"],
+            )
+        elif name == "propose_data_change":
+            params = _schema(
+                {
+                    "target": {"type": "string", "enum": ["holding", "watchlist", "trade_plan"]},
+                    "operation": {"type": "string", "enum": ["create", "update", "delete"]},
+                    "payload": {"type": "object"},
+                },
+                ["target", "operation", "payload"],
+            )
+        else:
+            params = _schema(
+                {"questions": {"type": "array", "items": {"type": "string"}, "minItems": 1, "maxItems": 3}},
+                ["questions"],
+            )
+        result.append({"type": "function", "function": {"name": name, "description": description, "parameters": params}})
+    return result
