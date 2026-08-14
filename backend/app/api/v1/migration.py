@@ -1,0 +1,44 @@
+"""Incremental transport migration from the legacy FastAPI assembly.
+
+PR-A2 starts by moving low-risk route *ownership* without changing endpoint
+implementations.  The legacy decorators are removed from the live router table,
+then the same endpoint callables are registered by domain packages.  This makes
+the migration behavior-preserving while avoiding duplicate paths.
+"""
+from __future__ import annotations
+
+from types import ModuleType
+
+from app.api.v1.admin.router import build_router as build_admin_router
+from app.api.v1.app_update.router import build_router as build_app_update_router
+from app.api.v1.data_quality.router import build_router as build_data_quality_router
+from app.api.v1.health.router import build_router as build_health_router
+
+
+_MIGRATED_PATHS = {
+    "/health",
+    "/v1/app-update",
+    "/v1/app-update/apk",
+    "/v1/admin/overview",
+    "/v1/admin/config",
+    "/v1/data-quality/daily-history-attempts",
+    "/v1/data-quality/provider-health",
+}
+
+
+def _remove_legacy_routes(legacy: ModuleType) -> None:
+    routes = legacy.app.router.routes
+    routes[:] = [route for route in routes if getattr(route, "path", None) not in _MIGRATED_PATHS]
+
+
+def install_migrated_routers(legacy: ModuleType) -> None:
+    """Replace selected legacy routes with domain-owned registrations once."""
+    if getattr(legacy, "_V2_API_MIGRATION_INSTALLED", False):
+        return
+
+    _remove_legacy_routes(legacy)
+    legacy.app.include_router(build_health_router(legacy))
+    legacy.app.include_router(build_app_update_router(legacy))
+    legacy.app.include_router(build_admin_router(legacy))
+    legacy.app.include_router(build_data_quality_router(legacy))
+    legacy._V2_API_MIGRATION_INSTALLED = True
