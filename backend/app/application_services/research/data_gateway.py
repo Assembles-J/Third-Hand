@@ -1,7 +1,7 @@
 """Local-First orchestration for AI / Research data.
 
 Provider fetchers are called only when local data is stale/incompatible or lacks
-required coverage.  A provider result is persisted and reread before it is
+required coverage. A provider result is persisted and reread before it is
 returned to callers, so raw remote objects never become AI context directly.
 """
 from __future__ import annotations
@@ -47,19 +47,70 @@ class ResearchDataGateway:
         if snapshot.schema_version != request.schema_version:
             return False
         if snapshot.usage_scope != "RESEARCH_ONLY":
-            # This gateway never silently consumes or emits promoted POLICY data.
             return False
         if self._missing_coverage(request, snapshot):
             return False
-        # expires_at is the persisted TTL boundary.  max_age_seconds also lets a
-        # caller demand a stricter freshness budget than the snapshot's original
-        # consumer without changing query identity.
         if self._parse(snapshot.expires_at) <= now:
             return False
         fetched_at = self._parse(snapshot.fetched_at)
         if request.max_age_seconds == 0:
             return False
         return (now - fetched_at).total_seconds() <= request.max_age_seconds
+
+    def get_local(
+        self,
+        request: ResearchDataRequest,
+        *,
+        allow_stale: bool = True,
+    ) -> ResearchDataResult | None:
+        """Read only the persisted snapshot plane; never invoke a provider.
+
+        Company/context assembly uses this when no adapter is configured.  The
+        result explicitly distinguishes fresh, stale and incomplete local data,
+        while ``remote_call_count`` remains zero by construction.
+        """
+        started = beijing_now()
+        existing = self.repository.latest(
+            data_type=request.data_type,
+            symbol=request.symbol,
+            query_hash=request.query_hash,
+            schema_version=request.schema_version,
+        )
+        if existing is None:
+            return None
+        missing = self._missing_coverage(request, existing)
+        fresh = self._fresh(request, existing, now=started)
+        if fresh:
+            cache_status = "LOCAL_FRESH_HIT"
+            snapshot = existing
+        elif allow_stale:
+            cache_status = "LOCAL_STALE_OR_INCOMPLETE"
+            snapshot = replace(existing, freshness_status="stale")
+        else:
+            return None
+        finished = beijing_now()
+        self.repository.record_attempt(
+            data_type=request.data_type,
+            symbol=request.symbol,
+            query_hash=request.query_hash,
+            schema_version=request.schema_version,
+            provider=existing.provider,
+            status="ok" if fresh else "degraded",
+            cache_status=cache_status,
+            remote_call_count=0,
+            missing_coverage=missing,
+            snapshot_id=existing.snapshot_id,
+            error=None,
+            detail={"local_only": True, "remote_skipped": True},
+            started_at=started.isoformat(),
+            finished_at=finished.isoformat(),
+        )
+        return ResearchDataResult(
+            snapshot=snapshot,
+            cache_status=cache_status,
+            remote_call_count=0,
+            missing_coverage_keys=missing,
+        )
 
     def get_or_fetch(
         self,
@@ -102,10 +153,6 @@ class ResearchDataGateway:
 
         cache_status = "LOCAL_MISS" if existing is None else "LOCAL_STALE_OR_INCOMPLETE"
         try:
-            # Fetcher receives only the coverage delta plus the previous persisted
-            # snapshot. It must normalize/merge the fetched subset before returning
-            # ProviderFetchResult. No raw DataFrame/response object may cross this
-            # boundary because ProviderFetchResult validates JSON serializability.
             fetched = fetcher(request, missing, existing)
             fetched_at = beijing_now()
             expires_at = fetched_at + timedelta(seconds=max(0, request.max_age_seconds))
@@ -125,8 +172,6 @@ class ResearchDataGateway:
                 coverage_keys=coverage,
                 freshness_status="fresh",
             )
-            # Critical Local-First invariant: AI callers receive the persisted
-            # representation, never the transient provider object.
             persisted = self.repository.get_snapshot(snapshot_id)
             if persisted is None:
                 raise RuntimeError("research snapshot persistence failed")
