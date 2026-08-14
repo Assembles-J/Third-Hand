@@ -28,6 +28,27 @@ def current_candidate_selection(store, *, limit: int, rotation_key: str) -> Cand
     )
 
 
+def _is_current_formal_report(report: dict[str, object], *, policy_version: str) -> bool:
+    return bool(
+        report.get("policy_version") == policy_version
+        and report.get("candidate_selection_version") == config.CANDIDATE_SELECTION_VERSION
+    )
+
+
+def latest_current_version_decision_report(
+    store,
+    symbol: str,
+    *,
+    policy_version: str,
+    limit: int = 20,
+) -> dict[str, object] | None:
+    """Return the latest formal paper report, ignoring newer manual/research reports."""
+    for report in store.decision_reports(symbol, limit):
+        if _is_current_formal_report(report, policy_version=policy_version):
+            return report
+    return None
+
+
 def pending_current_version_decision_symbols(
     store,
     *,
@@ -39,19 +60,18 @@ def pending_current_version_decision_symbols(
     A due historical DecisionReport must not disappear merely because a new day's
     deterministic rotation chose a different research cohort. Conversely, legacy
     reports from an older policy/candidate regime must never leak into the frozen
-    observation ledger.
+    observation ledger. Newer manual/research DecisionReports without candidate
+    lineage are ignored rather than masking the latest formal paper report.
 
     ``PortfolioStore`` does not yet expose a global latest-report query, so this
     governance adapter uses its package-private connection boundary read-only.
     Moving this query into the repository class later is an implementation cleanup,
     not a strategy change.
     """
-    current_candidate_version = config.CANDIDATE_SELECTION_VERSION
-    rows = []
     with store._connect() as connection:  # package-internal read-only adapter
         rows = connection.execute(
             "SELECT decision_id,symbol,payload,created_at FROM decision_reports ORDER BY created_at DESC LIMIT ?",
-            (max(1, limit * 10),),
+            (max(1, limit * 20),),
         ).fetchall()
         executed = {
             str(row["decision_id"])
@@ -60,24 +80,22 @@ def pending_current_version_decision_symbols(
             ).fetchall()
         }
 
-    latest_by_symbol: dict[str, tuple[str, dict[str, object]]] = {}
+    latest_formal_by_symbol: dict[str, tuple[str, dict[str, object]]] = {}
     for row in rows:
         symbol = str(row["symbol"]).strip().upper()
-        if symbol in latest_by_symbol:
+        if symbol in latest_formal_by_symbol:
             continue
         try:
             report = json.loads(str(row["payload"]))
         except (TypeError, ValueError, json.JSONDecodeError):
             continue
-        latest_by_symbol[symbol] = (str(row["decision_id"]), report)
+        if not _is_current_formal_report(report, policy_version=policy_version):
+            continue
+        latest_formal_by_symbol[symbol] = (str(row["decision_id"]), report)
 
     pending: list[tuple[str, str]] = []
-    for symbol, (decision_id, report) in latest_by_symbol.items():
+    for symbol, (decision_id, report) in latest_formal_by_symbol.items():
         if decision_id in executed:
-            continue
-        if report.get("policy_version") != policy_version:
-            continue
-        if report.get("candidate_selection_version") != current_candidate_version:
             continue
         generated_at = str(report.get("generated_at") or "")
         pending.append((generated_at, symbol))
@@ -94,7 +112,7 @@ def report_matches_current_selection(
 ) -> bool:
     """Allow same-interval reuse only when policy and candidate lineage match."""
     return bool(
-        report.get("policy_version") == policy_version
+        _is_current_formal_report(report, policy_version=policy_version)
         and report.get("candidate_selection_version") == selection.selection_version
         and report.get("candidate_pool_hash") == selection.candidate_pool_hash
         and report.get("candidate_rotation_key") == selection.rotation_key
