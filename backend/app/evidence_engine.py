@@ -5,8 +5,8 @@ from app import decision_config as config
 from app.decision_models import DecisionContext, EvidenceItem
 
 
-def _item(evidence_id: str, category: str, direction: str, strength: float, title: str, description: str, *, value=None, threshold=None, source: str, as_of=None, fresh: bool = True, rule_id=None, source_reference=None) -> EvidenceItem:
-    return EvidenceItem(evidence_id=evidence_id, category=category, direction=direction, strength=strength, title=title, description=description, value=value, threshold=threshold, source=source, as_of=as_of, fresh=fresh, rule_id=rule_id, source_reference=source_reference)
+def _item(evidence_id: str, category: str, direction: str, strength: float, title: str, description: str, *, value=None, threshold=None, source: str, as_of=None, fresh: bool = True, usage_scope: str = "POLICY", rule_id=None, source_reference=None) -> EvidenceItem:
+    return EvidenceItem(evidence_id=evidence_id, category=category, direction=direction, strength=strength, title=title, description=description, value=value, threshold=threshold, source=source, as_of=as_of, fresh=fresh, usage_scope=usage_scope, rule_id=rule_id, source_reference=source_reference)
 
 
 class EvidenceEngine:
@@ -15,8 +15,6 @@ class EvidenceEngine:
     version = config.EVIDENCE_VERSION
 
     def build(self, context: DecisionContext) -> tuple[EvidenceItem, ...]:
-        # Evidence is normalized before policy evaluation.  The stable IDs are
-        # also the only citations that downstream AI output may reference.
         evidence: list[EvidenceItem] = [self._data_quality(context)]
         evidence.extend(self._position(context))
         evidence.extend(self._technical(context))
@@ -24,8 +22,6 @@ class EvidenceEngine:
         evidence.extend(self._market(context))
         evidence.extend(self._relative(context))
         evidence.extend(self._events(context))
-        # A decision must stand on current market, position, risk and event data.
-        # Editable trade-plan templates are deliberately excluded from the signal path.
         result = tuple(sorted(evidence, key=lambda item: item.evidence_id))
         if len({item.evidence_id for item in result}) != len(result):
             raise ValueError("evidence IDs must be unique")
@@ -106,7 +102,7 @@ class EvidenceEngine:
                 "market.main_fund_flow", "market", direction, .35,
                 "大盘主力资金", f"主力净流入 {flow.main_net_amount:.0f}",
                 value=flow.main_net_amount, threshold=0, source=flow.source,
-                as_of=flow.retrieved_at, fresh=True,
+                as_of=flow.retrieved_at, fresh=True, usage_scope="RESEARCH_ONLY",
             ))
         market = context.market_regime
         if not market or market.status != "ready" or market.regime not in {"supportive", "mixed", "defensive"}:
@@ -125,4 +121,4 @@ class EvidenceEngine:
 
     @staticmethod
     def _events(context: DecisionContext) -> list[EvidenceItem]:
-        return [_item(f"event.{event.impact}.{event.event_id}", "event", event.impact, .7 if event.impact in {"positive", "negative"} else .4, event.title, event.summary or event.title, value=event.impact, source=event.source, as_of=event.published_at, fresh=True, source_reference=event.source_reference) for event in context.events]
+        return [_item(f"event.{event.impact}.{event.event_id}", "event", event.impact, .7 if event.impact in {"positive", "negative"} else .4, event.title, event.summary or event.title, value=event.impact, source=event.source, as_of=event.published_at, fresh=True, usage_scope="RESEARCH_ONLY", source_reference=event.source_reference) for event in context.events]
