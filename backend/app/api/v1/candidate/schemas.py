@@ -36,6 +36,10 @@ class CandidateActivationRuleEnabledRequest(BaseModel):
     enabled: bool
 
 
+class CandidateAnalysisStartRequest(BaseModel):
+    reason: str = Field(default="research_scheduler", max_length=2000)
+
+
 class CandidateAnalysisResultRequest(BaseModel):
     analysis_version: str = Field(min_length=1, max_length=200)
     thesis_hash: str | None = Field(default=None, max_length=200)
