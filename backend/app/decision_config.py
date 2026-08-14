@@ -4,7 +4,11 @@ import json
 import os
 
 EVIDENCE_VERSION = "evidence-v2-usage-scope"
-ACTION_POLICY_VERSION = "swing-policy-v2-research-isolation"
+# v3 is a Day-0 correctness break: REDUCE now requires an existing position.
+# Bumping the version prevents historical v2 empty-position REDUCE reports from
+# remaining eligible for next-session execution after deployment.
+ACTION_POLICY_VERSION = "swing-policy-v3-position-action-semantics"
+OPEN_GATE_AUDIT_VERSION = "open-gate-audit-v1"
 FRESHNESS_POLICY_VERSION = "freshness-v1"
 CANDIDATE_SELECTION_VERSION = "candidate-rotation-v1"
 OPPORTUNITY_SCORING_VERSION = "research-priority-v1"
@@ -31,6 +35,7 @@ def audit_version_snapshot() -> dict[str, str]:
         "context_schema_version": "context-v1",
         "evidence_version": EVIDENCE_VERSION,
         "action_policy_version": ACTION_POLICY_VERSION,
+        "open_gate_audit_version": OPEN_GATE_AUDIT_VERSION,
         "sizing_version": SIZING_VERSION,
         "freshness_policy_version": FRESHNESS_POLICY_VERSION,
         "decision_prompt_version": DECISION_RESEARCH_PROMPT_VERSION,
