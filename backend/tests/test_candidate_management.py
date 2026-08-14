@@ -117,6 +117,8 @@ def test_candidate_http_api_does_not_expose_trade_action_endpoint(tmp_path):
     assert listed.status_code == 200
     assert [item["symbol"] for item in listed.json()] == ["1810.HK"]
 
-    paths = {route.path for route in app.routes}
+    # FastAPI 0.141 may expose included-router bookkeeping objects alongside
+    # concrete routes. Only concrete path-owning entries belong in this contract.
+    paths = {path for route in app.routes if (path := getattr(route, "path", None))}
     assert "/v1/candidates/{symbol}/open" not in paths
     assert "/v1/candidates/{symbol}/trade" not in paths
