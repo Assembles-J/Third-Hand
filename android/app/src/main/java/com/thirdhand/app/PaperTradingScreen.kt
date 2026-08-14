@@ -99,7 +99,7 @@ fun PaperTradingScreen(onOpenDetail: (ResearchTargetDto) -> Unit) {
         contentPadding = PaddingValues(bottom = 28.dp),
     ) {
         item {
-            TradingPageHeader("模拟", "独立账套 · 不连接券商 · 所有成交均可追溯") {
+            TradingPageHeader("交易", "模拟账套 · 不连接券商 · 所有成交均可追溯") {
                 IconButton(onClick = ::refresh, enabled = !refreshing) {
                     if (refreshing) CircularProgressIndicator(Modifier.size(20.dp), strokeWidth = 2.dp)
                     else Icon(Icons.Filled.Refresh, "刷新模拟账套")

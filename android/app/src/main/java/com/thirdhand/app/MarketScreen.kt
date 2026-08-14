@@ -135,8 +135,13 @@ fun MarketScreen(onOpenDetail: (ResearchTargetDto) -> Unit) {
 @Composable private fun MarketOverview(pulse: MarketIntelligenceDto?) {
     val colors = LocalMarketColors.current
     val breadth = pulse?.breadth.orEmpty()
+    MarketSessionCard(pulse)
     TradingSection("市场概览", marketFreshnessLabel(pulse))
-    Row(Modifier.fillMaxWidth().padding(horizontal = 20.dp)) {
+    androidx.compose.material3.Card(
+        modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp),
+        colors = androidx.compose.material3.CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
+    ) {
+    Row(Modifier.fillMaxWidth().padding(12.dp)) {
         pulse?.indices?.take(3)?.forEach { index ->
             val change = index.change_percent ?: 0.0
             Column(Modifier.weight(1f).padding(end = 8.dp)) {
@@ -145,6 +150,7 @@ fun MarketScreen(onOpenDetail: (ResearchTargetDto) -> Unit) {
                 Text("${if (change > 0) "+" else ""}${"%.2f".format(change)}%", color = if (change >= 0) colors.rise else colors.fall, style = MaterialTheme.typography.labelSmall)
             }
         }
+    }
     }
     Text("涨 ${breadth["rise_count"]?.toInt() ?: "--"} · 平 ${breadth["flat_count"]?.toInt() ?: "--"} · 跌 ${breadth["fall_count"]?.toInt() ?: "--"}", Modifier.padding(horizontal = 20.dp, vertical = 12.dp), style = MaterialTheme.typography.bodyMedium)
     val mainNet = pulse?.fund_flow?.get("主力")?.get("net_amount")
@@ -170,6 +176,42 @@ private fun marketFreshnessLabel(pulse: MarketIntelligenceDto?): String = when (
     "stale_fallback" -> "使用最近缓存 · 数据延迟"
     "pending" -> "正在后台采集"
     else -> "数据部分可用"
+}
+
+@Composable
+private fun MarketSessionCard(pulse: MarketIntelligenceDto?) {
+    val colors = LocalMarketColors.current
+    val mainNet = pulse?.fund_flow?.get("主力")?.get("net_amount")
+    androidx.compose.material3.Card(
+        modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 12.dp),
+        colors = androidx.compose.material3.CardDefaults.cardColors(
+            containerColor = MaterialTheme.colorScheme.primaryContainer,
+            contentColor = MaterialTheme.colorScheme.onPrimaryContainer,
+        ),
+    ) {
+        Column(Modifier.padding(16.dp)) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Column(Modifier.weight(1f)) {
+                    Text("开盘中", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold)
+                    Text(marketFreshnessLabel(pulse), style = MaterialTheme.typography.labelSmall)
+                }
+                Column(horizontalAlignment = Alignment.End) {
+                    Text("主力净流入", style = MaterialTheme.typography.labelSmall)
+                    Text(
+                        mainNet?.let { "%.2f 亿".format(it / 100000000) } ?: "--",
+                        style = MaterialTheme.typography.titleLarge,
+                        fontWeight = FontWeight.Bold,
+                        color = if ((mainNet ?: 0.0) >= 0) colors.rise else colors.fall,
+                    )
+                }
+            }
+            Text(
+                "数据按市场快照刷新；涨跌颜色同时以数值与正负号表达。",
+                modifier = Modifier.padding(top = 8.dp),
+                style = MaterialTheme.typography.labelSmall,
+            )
+        }
+    }
 }
 
 @Composable private fun MarketRankingPreview(title: String, rows: List<MarketRankingDto>, color: androidx.compose.ui.graphics.Color, modifier: Modifier = Modifier, showNetAmount: Boolean = false) {

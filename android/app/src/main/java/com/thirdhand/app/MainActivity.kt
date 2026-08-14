@@ -43,6 +43,7 @@ import androidx.compose.animation.togetherWith
 import androidx.compose.animation.core.tween
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.AccountCircle
+import androidx.compose.material.icons.filled.AccountBalanceWallet
 import androidx.compose.material.icons.filled.ArrowBack
 import androidx.compose.material.icons.filled.AdminPanelSettings
 import androidx.compose.material.icons.filled.Add
@@ -232,7 +233,7 @@ private fun ThirdHandApp(resumeSignal: Int) {
                         listOf(
                             Triple("新闻", Icons.AutoMirrored.Filled.Article, 0),
                             Triple("行情", Icons.Filled.AutoGraph, 1),
-                            Triple("模拟", Icons.Filled.AutoGraph, 3),
+                            Triple("交易", Icons.Filled.AccountBalanceWallet, 3),
                             Triple("管理", Icons.Filled.AdminPanelSettings, 2),
                         ).forEach { (label, icon, targetTab) ->
                             NavigationBarItem(
