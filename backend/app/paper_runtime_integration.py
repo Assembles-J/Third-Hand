@@ -128,13 +128,13 @@ def install(m) -> None:
             raise
 
     def refresh_paper_candidate_data(symbols: list[str], *, force_refresh: bool, run_id: str | None = None) -> None:
-        """Make governed runtime symbols decision-ready before paper simulation."""
+        """Make governed runtime/data-prewarm symbols decision-ready."""
         if not symbols:
             return
         with m.paper_trading_state_lock:
             m.paper_trading_state.update({
                 "last_status": "preparing_data",
-                "last_message": f"正在补齐 {len(symbols)} 只持仓、确定性轮转候选及到期决策的行情、日线和风险数据。",
+                "last_message": f"正在补齐 {len(symbols)} 只持仓、确定性候选、到期决策或显式预热请求的数据。",
                 "last_symbols": symbols,
             })
         try:
@@ -180,51 +180,18 @@ def install(m) -> None:
                     "quote_price": quote.get("price") if quote else None,
                     "daily_bar_count": len(daily_bars),
                 }
-                m._record_simulation_symbol_state(
-                    run_id, symbol, "skipped_data_unavailable", detail,
-                    name=names.get(symbol.strip().upper(), symbol),
-                )
-                m._record_simulation_stage(
-                    run_id, "decision", "skipped", symbol=symbol,
-                    detail={"terminal_state": "skipped_data_unavailable", **detail},
-                    started_at=stage_started_at,
-                )
+                m._record_simulation_symbol_state(run_id, symbol, "skipped_data_unavailable", detail, name=names.get(symbol.strip().upper(), symbol))
+                m._record_simulation_stage(run_id, "decision", "skipped", symbol=symbol, detail={"terminal_state": "skipped_data_unavailable", **detail}, started_at=stage_started_at)
                 continue
 
-            latest = latest_current_version_decision_report(
-                m.store,
-                symbol,
-                policy_version=m.action_policy_engine.version,
-            )
+            latest = latest_current_version_decision_report(m.store, symbol, policy_version=m.action_policy_engine.version)
             if latest and selection is not None:
                 try:
-                    recent = (
-                        m.beijing_now() - datetime.fromisoformat(str(latest["generated_at"]))
-                    ).total_seconds() < reuse_seconds
-                    lineage_matches = report_matches_current_selection(
-                        latest,
-                        selection,
-                        policy_version=m.action_policy_engine.version,
-                    )
+                    recent = (m.beijing_now() - datetime.fromisoformat(str(latest["generated_at"]))).total_seconds() < reuse_seconds
+                    lineage_matches = report_matches_current_selection(latest, selection, policy_version=m.action_policy_engine.version)
                     if recent and lineage_matches:
-                        m._record_simulation_symbol_state(
-                            run_id, symbol, "decision_reused",
-                            {
-                                "decision_id": str(latest.get("decision_id") or ""),
-                                "generated_at": str(latest.get("generated_at") or ""),
-                                "reason": "within_interval_same_governance_version",
-                            },
-                            name=names.get(symbol.strip().upper(), symbol),
-                        )
-                        m._record_simulation_stage(
-                            run_id, "decision", "ok", symbol=symbol,
-                            detail={
-                                "terminal_state": "decision_reused",
-                                "decision_id": str(latest.get("decision_id") or ""),
-                                "reason": "within_interval_same_governance_version",
-                            },
-                            started_at=stage_started_at,
-                        )
+                        m._record_simulation_symbol_state(run_id, symbol, "decision_reused", {"decision_id": str(latest.get("decision_id") or ""), "generated_at": str(latest.get("generated_at") or ""), "reason": "within_interval_same_governance_version"}, name=names.get(symbol.strip().upper(), symbol))
+                        m._record_simulation_stage(run_id, "decision", "ok", symbol=symbol, detail={"terminal_state": "decision_reused", "decision_id": str(latest.get("decision_id") or ""), "reason": "within_interval_same_governance_version"}, started_at=stage_started_at)
                         generated += 1
                         continue
                 except ValueError:
@@ -240,23 +207,12 @@ def install(m) -> None:
                     "source": "paper_market_default",
                     "as_of": str(quote.get("as_of") or m.beijing_now().isoformat()),
                 })
-            context = m.decision_context_builder.build(
-                symbol,
-                holdings_override=paper_holdings,
-                available_cash_override=float(paper_account.get("available_cash") or 0),
-            )
+            context = m.decision_context_builder.build(symbol, holdings_override=paper_holdings, available_cash_override=float(paper_account.get("available_cash") or 0))
             m.store.save_decision_context(context.model_dump(mode="json"))
             candidate_audit = selection.audit_for(symbol) if selection and symbol in selection.symbols else None
-            report = m.decision_orchestrator.generate(
-                context,
-                candidate_audit=candidate_audit,
-            ).model_dump(mode="json")
+            report = m.decision_orchestrator.generate(context, candidate_audit=candidate_audit).model_dump(mode="json")
             m.store.save_decision_report(report)
-            terminal_state = (
-                "blocked_by_gate"
-                if str(report.get("status") or "").upper() == "BLOCKED"
-                else "decision_generated"
-            )
+            terminal_state = "blocked_by_gate" if str(report.get("status") or "").upper() == "BLOCKED" else "decision_generated"
             decision_detail = {
                 "decision_id": str(report.get("decision_id") or ""),
                 "action": report.get("action"),
@@ -270,46 +226,25 @@ def install(m) -> None:
                 "ai_shadow_action": report.get("ai_shadow_action"),
                 "ai_shadow_agreement": report.get("ai_shadow_agreement"),
             }
-            m._record_simulation_symbol_state(
-                run_id, symbol, terminal_state, decision_detail,
-                name=names.get(symbol.strip().upper(), symbol),
-            )
-            m._record_simulation_stage(
-                run_id, "decision", "ok", symbol=symbol,
-                detail={"terminal_state": terminal_state, **decision_detail},
-                started_at=stage_started_at,
-            )
+            m._record_simulation_symbol_state(run_id, symbol, terminal_state, decision_detail, name=names.get(symbol.strip().upper(), symbol))
+            m._record_simulation_stage(run_id, "decision", "ok", symbol=symbol, detail={"terminal_state": terminal_state, **decision_detail}, started_at=stage_started_at)
             generated += 1
         return generated
 
-    def execute_due_paper_decisions(
-        symbols: list[str],
-        names: dict[str, str],
-        run_id: str | None = None,
-    ) -> tuple[int, int]:
+    def execute_due_paper_decisions(symbols: list[str], names: dict[str, str], run_id: str | None = None) -> tuple[int, int]:
         """Fill current-version historical decisions at a later eligible quote."""
-        positions = {
-            str(item["symbol"]).strip().upper(): float(item["quantity"])
-            for item in m.store.paper_account().get("positions", [])
-        }
+        positions = {str(item["symbol"]).strip().upper(): float(item["quantity"]) for item in m.store.paper_account().get("positions", [])}
         executed = skipped = 0
         for symbol in symbols:
             stage_started_at = m.beijing_now().isoformat()
             symbol_name = names.get(symbol.strip().upper(), symbol)
-            report = latest_current_version_decision_report(
-                m.store,
-                symbol,
-                policy_version=m.action_policy_engine.version,
-            )
+            report = latest_current_version_decision_report(m.store, symbol, policy_version=m.action_policy_engine.version)
             quote = next(iter(m.store.cached_quotes([symbol])), None)
             if not report:
                 m._record_simulation_symbol_state(run_id, symbol, "not_due", {"reason": "no_current_formal_decision_report"}, name=symbol_name)
                 m._record_simulation_stage(run_id, "execution", "skipped", symbol=symbol, detail={"terminal_state": "not_due", "reason": "no_current_formal_decision_report"}, started_at=stage_started_at)
                 continue
-            if (
-                report.get("policy_version") != m.action_policy_engine.version
-                or report.get("candidate_selection_version") != config.CANDIDATE_SELECTION_VERSION
-            ):
+            if report.get("policy_version") != m.action_policy_engine.version or report.get("candidate_selection_version") != config.CANDIDATE_SELECTION_VERSION:
                 reason = "decision_governance_version_not_current"
                 m._record_simulation_symbol_state(run_id, symbol, "skipped_execution", {"decision_id": str(report.get("decision_id") or ""), "reason": reason}, name=symbol_name)
                 m._record_simulation_stage(run_id, "execution", "skipped", symbol=symbol, detail={"terminal_state": "skipped_execution", "reason": reason}, started_at=stage_started_at)
@@ -317,11 +252,7 @@ def install(m) -> None:
                 continue
             check = m.validate_daily_execution(report, quote)
             if not check.allowed:
-                terminal_state = (
-                    "not_due" if check.reason == "execution_not_due_next_market_session"
-                    else "blocked_by_gate" if check.reason == "execution_action_gate_blocked"
-                    else "skipped_execution"
-                )
+                terminal_state = "not_due" if check.reason == "execution_not_due_next_market_session" else "blocked_by_gate" if check.reason == "execution_action_gate_blocked" else "skipped_execution"
                 m._record_simulation_symbol_state(run_id, symbol, terminal_state, {"decision_id": str(report.get("decision_id") or ""), "reason": check.reason}, name=symbol_name)
                 m._record_simulation_stage(run_id, "execution", "skipped", symbol=symbol, detail={"terminal_state": terminal_state, "reason": check.reason}, started_at=stage_started_at)
                 continue
@@ -344,9 +275,8 @@ def install(m) -> None:
                 quantity = min(quantity, positions.get(symbol, 0.0))
             try:
                 m.store.execute_paper_trade(
-                    trade_id=str(uuid4()), symbol=symbol, name=names.get(symbol, symbol),
-                    side=side, quantity=quantity, price=price,
-                    decision_id=str(report.get("decision_id") or "") or None,
+                    trade_id=str(uuid4()), symbol=symbol, name=names.get(symbol, symbol), side=side,
+                    quantity=quantity, price=price, decision_id=str(report.get("decision_id") or "") or None,
                     reason=f"next_market_session:{action}; {str(report.get('summary') or '')[:180]}",
                     execution_quote_at=str((quote or {}).get("as_of") or (quote or {}).get("retrieved_at") or "") or None,
                     execution_quote_source=str((quote or {}).get("source") or "") or None,
@@ -367,11 +297,7 @@ def install(m) -> None:
                     m._record_simulation_stage(run_id, "execution", "skipped", symbol=symbol, detail={"terminal_state": "not_due", "reason": "decision_already_executed"}, started_at=stage_started_at)
         return executed, skipped
 
-    def run_paper_trading_cycle(
-        requested_symbols: list[str],
-        force: bool = False,
-        allow_when_disabled: bool = False,
-    ) -> dict[str, object]:
+    def run_paper_trading_cycle(requested_symbols: list[str], force: bool = False, allow_when_disabled: bool = False) -> dict[str, object]:
         """Run deterministic new decisions plus separately tracked due executions."""
         if not allow_when_disabled and not m.store.system_settings()["paper_trading_enabled"]:
             with m.paper_trading_state_lock:
@@ -385,20 +311,10 @@ def install(m) -> None:
 
         rotation_key = m.beijing_now().date().isoformat()
         selection = paper_candidate_selection(rotation_key)
-        pending = pending_current_version_decision_symbols(
-            m.store,
-            policy_version=m.action_policy_engine.version,
-        )
-        decision_symbols, due_symbols, symbols = runtime_scope(
-            selection,
-            requested_symbols=requested_symbols,
-            pending_symbols=pending,
-        )
-        excluded = excluded_requested_symbols(
-            selection,
-            requested_symbols=requested_symbols,
-            pending_symbols=pending,
-        )
+        pending = pending_current_version_decision_symbols(m.store, policy_version=m.action_policy_engine.version)
+        decision_symbols, due_symbols, symbols = runtime_scope(selection, requested_symbols=requested_symbols, pending_symbols=pending)
+        excluded = excluded_requested_symbols(selection, requested_symbols=requested_symbols, pending_symbols=pending)
+        data_refresh_symbols = tuple(dict.fromkeys((*symbols, *excluded)))
         with m.paper_trading_state_lock:
             m.paper_trading_state.update({
                 "running": True,
@@ -408,53 +324,29 @@ def install(m) -> None:
                 "last_symbols": list(symbols),
             })
         m.last_paper_trading_run_at = m.time.monotonic()
-        names = m.paper_trading_names(list(dict.fromkeys((*symbols, *excluded))))
+        names = m.paper_trading_names(list(data_refresh_symbols))
         run_id = m._create_simulation_run("manual" if force else "scheduler", list(symbols), "交易运行开始")
-        m._record_simulation_stage(
-            run_id,
-            "candidate_pool",
-            "ok",
-            detail={
-                **candidate_pool_audit(
-                    selection,
-                    requested_symbols=requested_symbols,
-                    decision_symbols=decision_symbols,
-                    due_symbols=due_symbols,
-                ),
-                "runtime_symbols": list(symbols),
-                "excluded_requested_symbols": list(excluded),
-            },
-        )
+        m._record_simulation_stage(run_id, "candidate_pool", "ok", detail={
+            **candidate_pool_audit(selection, requested_symbols=requested_symbols, decision_symbols=decision_symbols, due_symbols=due_symbols),
+            "runtime_symbols": list(symbols),
+            "data_refresh_symbols": list(data_refresh_symbols),
+            "excluded_requested_symbols": list(excluded),
+        })
         for symbol in excluded:
             bar_count = len(m.store.daily_prices(symbol, 60))
             terminal_state = "skipped_data_unavailable" if bar_count < 60 else "not_due"
             reason = "insufficient_daily_bars" if bar_count < 60 else "not_selected_by_deterministic_scheduler"
-            detail = {
-                "reason": reason,
-                "daily_bar_count": bar_count,
-                "candidate_selection_version": selection.selection_version,
-                "candidate_pool_hash": selection.candidate_pool_hash,
-            }
-            m._record_simulation_symbol_state(
-                run_id,
-                symbol,
-                terminal_state,
-                detail,
-                name=names.get(symbol.strip().upper(), symbol),
-            )
-            m._record_simulation_stage(
-                run_id,
-                "decision",
-                "skipped",
-                symbol=symbol,
-                detail={"terminal_state": terminal_state, **detail},
-            )
+            detail = {"reason": reason, "daily_bar_count": bar_count, "candidate_selection_version": selection.selection_version, "candidate_pool_hash": selection.candidate_pool_hash}
+            m._record_simulation_symbol_state(run_id, symbol, terminal_state, detail, name=names.get(symbol.strip().upper(), symbol))
+            m._record_simulation_stage(run_id, "decision", "skipped", symbol=symbol, detail={"terminal_state": terminal_state, **detail})
         executed = 0
         skipped = 0
         no_action_reasons: list[str] = []
         try:
-            refresh_paper_candidate_data(list(symbols), force_refresh=force, run_id=run_id)
-            names = m.paper_trading_names(list(dict.fromkeys((*symbols, *excluded))))
+            # Explicit requests that are outside the formal cohort may prewarm
+            # data, but they remain absent from decision_symbols for this run.
+            refresh_paper_candidate_data(list(data_refresh_symbols), force_refresh=force, run_id=run_id)
+            names = m.paper_trading_names(list(data_refresh_symbols))
             with m.paper_trading_state_lock:
                 m.paper_trading_state.update({"last_status": "researching", "last_message": "行情已同步；新闻仅做研究补充，正式动作继续由确定性策略生成。"})
             m.refresh_paper_market_intelligence(list(symbols), names)
@@ -462,35 +354,19 @@ def install(m) -> None:
             due_executed, due_skipped = execute_due_paper_decisions(list(due_symbols), names, run_id=run_id)
             executed += due_executed
             skipped += due_skipped
-            generated_reports = prepare_paper_decisions(
-                list(decision_symbols),
-                run_id=run_id,
-                names=names,
-                selection=selection,
-            )
+            generated_reports = prepare_paper_decisions(list(decision_symbols), run_id=run_id, names=names, selection=selection)
             if not due_executed:
                 no_action_reasons.append("本交易时段没有到期且可执行的当前版本历史决策")
             if excluded:
-                no_action_reasons.append(f"{len(excluded)} 个显式请求不属于当前 formal cohort，已仅记录审计状态")
+                no_action_reasons.append(f"{len(excluded)} 个显式请求不属于当前 formal cohort，仅完成数据预热与审计")
             m.store.record_paper_equity_snapshot()
             m._record_simulation_stage(run_id, "equity_snapshot", "ok", detail={})
             result = {"executed": executed, "skipped": skipped, "run_id": run_id}
             with m.paper_trading_state_lock:
-                summary = (
-                    f"本轮确定性候选 {len(decision_symbols)} 只，到期历史决策 {len(due_symbols)} 只，"
-                    f"生成或复用 {generated_reports} 份统一决策，执行 {executed} 笔。"
-                )
+                summary = f"本轮确定性候选 {len(decision_symbols)} 只，到期历史决策 {len(due_symbols)} 只，生成或复用 {generated_reports} 份统一决策，执行 {executed} 笔。"
                 if not executed and no_action_reasons:
                     summary += " 暂不交易：" + "；".join(no_action_reasons[:2]) + "。"
-                m.paper_trading_state.update({
-                    "running": False,
-                    "last_finished_at": m.beijing_now(),
-                    "last_status": "completed",
-                    "last_message": summary,
-                    "last_executed": executed,
-                    "last_skipped": skipped,
-                    "last_run_id": run_id,
-                })
+                m.paper_trading_state.update({"running": False, "last_finished_at": m.beijing_now(), "last_status": "completed", "last_message": summary, "last_executed": executed, "last_skipped": skipped, "last_run_id": run_id})
             m._finish_simulation_run(run_id, "completed", summary, executed=executed, skipped=skipped, generated=generated_reports)
             return result
         except Exception as error:
