@@ -1,6 +1,6 @@
 # Third-Hand 候选池、AI 与策略权限治理补充规范
 
-**版本：1.0（2026-08-14）**  
+**版本：1.1（2026-08-14）**  
 **适用阶段：PRE_OBSERVATION / DAY_0_AUDIT**  
 **上位规范：`Third-Hand_Unified_Governance_and_Observation_Spec.md`**
 
@@ -29,9 +29,11 @@
 | ResearchReport / Thesis | 否 | 否 | RESEARCH_ONLY |
 | DeepSeek Decision AI | 否 | 否 | 解释、冲突、shadow preference |
 | Research Chat | 否 | 否 | 对话研究 |
+| Candidate Scheduler | 是（决定被分析对象） | 否 | 确定性 cohort |
+| Pending Decision Queue | 否（不生成新动作） | 否 | 保留历史执行义务 |
 | ActionPolicyEngine | 是 | 间接 | 唯一正式动作基线 |
 | PositionSizingEngine | 否 | 是 | 唯一正式数量基线 |
-| Paper Execution | 否 | 否 | 仅执行已保存 DecisionReport |
+| Paper Execution | 否 | 否 | 仅执行已保存且版本匹配的 DecisionReport |
 
 任何代码改动若改变上表任一“可影响”关系，必须视为策略版本变更，重新执行 Day 0，不得混入既有 Observation 样本。
 
@@ -105,18 +107,19 @@ Market Universe
 - 新闻热度；
 - LLM 评分或结论。
 
-已有 paper position 是例外：必须优先保留风险监控资格，但不能因此改变该标的的特征、阈值或策略规则。
+已有 paper position 是安全例外：**全部持仓必须保留风险监控资格，即使其日线尚未达到 eligibility、即使持仓数量超过普通 candidate limit。** 数据不足可以让 ActionGate 阻断，但不能让持仓从风险监控集合中消失。
 
 ### 4.2 Deterministic Rotation
 
 Observation 的正式候选调度采用确定性轮转：
 
-1. 输入为满足固定 eligibility 条件的全量 symbol 集合；
-2. position symbols 优先保留；
-3. 剩余槽位按 `candidate_selection_version + rotation_key + symbol` 的稳定 hash 排序；
-4. `rotation_key` 使用稳定交易日或 Observation cycle key；
-5. 保存 eligible universe 的 `candidate_pool_hash`；
-6. 相同 universe、positions、rotation_key、version 必须得到完全相同结果。
+1. 输入为满足固定 eligibility 条件的全量本地 symbol 集合；
+2. 所有 paper position 无条件优先保留；
+3. 若 position 数量超过普通 candidate limit，运行集合为风险监控自动扩容，不丢持仓；
+4. 剩余槽位按 `candidate_selection_version + rotation_key + symbol` 的稳定 hash 排序；
+5. `rotation_key` 使用稳定交易日或 Observation cycle key；
+6. 保存 eligible universe 的 `candidate_pool_hash`；
+7. 相同 universe、positions、rotation_key、version 必须得到完全相同结果。
 
 最低审计字段：
 
@@ -128,11 +131,80 @@ selection_reason
 candidate_rank
 ```
 
-### 4.3 当前代码迁移要求
+### 4.3 当前运行接线
 
-`backend/app/candidate_selection.py` 是正式 deterministic scheduler 实现入口。Observation Day 1 前，paper-trading 主循环必须只从该 scheduler 获取正式非持仓 cohort；旧的 hot-sector / top-gainer / watchlist 优先选择只能保留为 Research/UI 路径。
+`backend/app/candidate_selection.py` 是 deterministic scheduler；`backend/app/paper_runtime.py` 负责候选、历史待执行报告与版本复用规则；`backend/app/paper_runtime_integration.py` 在 FastAPI 启动前把治理后的实现接入原应用模块。
 
-在完成主循环接线前，Day 0 不得标记候选池治理项为通过。
+正式 paper decision cohort 当前只读取：
+
+```text
+store.opportunity_symbols(minimum_daily_bars=60, limit=10000)
+paper positions
+candidate_selection_version
+rotation_key
+```
+
+明确不读取 watchlist、hot sector、top gainer、fund flow、news 或 LLM。
+
+原有大体量 API 组装未手工重写，原始 Git blob 原样移动为 `backend/app/application.py`；`backend/app/main.py` 仅作为小型入口，在 startup 之前安装 runtime governance，并把 `app.main` 别名到 application 模块以保留既有 monkeypatch / import 兼容性。
+
+### 4.4 数据预热也不得形成隐式候选偏差
+
+热门板块和涨幅榜仍可生成 Opportunity/Research 元数据，但**正式历史日线预热队列不再从热点列表中选择**。
+
+A 股全市场快照保存后，history prewarm 从完整有报价 symbol 集合执行独立 deterministic rotation：
+
+```text
+rotation_key = YYYY-MM-DD:history-prewarm
+limit = 24
+```
+
+因此热点只影响 Research/UI，不再通过“谁先拥有 60 根日线”间接改变正式候选资格。
+
+### 4.5 新决策候选与历史执行义务必须分离
+
+新交易日轮转 cohort 后，上一交易日已经生成且尚未成交的 DecisionReport 不能因为“今天未被轮转选中”而消失。
+
+运行集合分为：
+
+```text
+new_decision_symbols = 当前 deterministic cohort ∩ 当前市场执行 scope
+pending_due_symbols   = 当前治理版本的未执行历史 DecisionReport ∩ 当前市场执行 scope
+runtime_symbols       = union(new_decision_symbols, pending_due_symbols)
+```
+
+`requested_symbols` / 市场开闭状态只能**缩小**上述集合，不能注入 scheduler 和 pending queue 都未授权的 symbol。
+
+Pending queue 仅接受：
+
+- 当前 `policy_version`；
+- 当前 `candidate_selection_version`；
+- 尚无 executed paper log 的最新 DecisionReport。
+
+因此部署治理版本后，旧版本历史报告不会被新 Observation 账本成交。
+
+### 4.6 DecisionReport 候选血缘
+
+由 paper runtime 生成的每份新 DecisionReport 必须保存：
+
+```text
+candidate_selection_version
+candidate_pool_hash
+candidate_rotation_key
+candidate_rank
+candidate_selection_reason
+```
+
+短间隔内复用旧报告时，除时间窗口外还必须同时满足：
+
+```text
+policy_version 相同
+candidate_selection_version 相同
+candidate_pool_hash 相同
+candidate_rotation_key 相同
+```
+
+任一不一致都重新生成报告，不得跨治理版本复用。
 
 ## 5. Opportunity Scan 语义
 
@@ -176,12 +248,12 @@ ai_shadow_action = guarded preferred_action
 - 不得修改 baseline action；
 - disagreement 只用于之后的复盘和 P2 研究。
 
-建议长期保存：
+DecisionReport 当前直接保存：
 
 ```text
-baseline_action
+baseline_action = action
 ai_shadow_action
-agreement
+ai_shadow_agreement
 context_id
 input_hash
 prompt_version
@@ -212,9 +284,16 @@ Observation 的目标是先验证基线可审计、可重复和不越权，不�
 - [ ] fund flow 不能改变 ActionPolicy；
 - [ ] Opportunity 不输出真实方向概率；
 - [ ] 正式 candidate scheduler 不消费 watchlist/hot sector/top gainer/fund flow/LLM；
+- [ ] 正式 history prewarm 不消费 hot sector/top gainer 作为选样依据；
+- [ ] 所有 paper positions 始终进入风险监控集合，且数量超过普通 limit 时不会被截断；
 - [ ] 相同 universe + rotation key 的 candidate cohort 可重复；
-- [ ] candidate pool hash 与 selection version 可回查；
-- [ ] AI shadow action 与 baseline action 分栏保存且 execution 只消费 baseline。
+- [ ] requested execution scope 只能缩小、不能注入 formal cohort；
+- [ ] 换日轮转不会丢失当前版本未执行历史 DecisionReport；
+- [ ] 旧 policy/candidate 版本 DecisionReport 不得进入新 execution；
+- [ ] candidate pool hash、rank、reason 与 selection version 可从 run/DecisionReport 回查；
+- [ ] AI shadow action 与 baseline action 分栏保存且 execution 只消费 baseline；
+- [ ] `app.main` 启动入口、FastAPI routes 与 startup worker 在 integration 安装后正常运行；
+- [ ] CI `compileall + pytest + docker build` 全部通过。
 
 任一项失败：Day 0 不通过。
 
@@ -239,10 +318,15 @@ research-priority-v1
 2. fund flow 无论正负均保持 `RESEARCH_ONLY`；
 3. Opportunity 的旧 `upside_likelihood` 不再携带方向信息；
 4. candidate scheduler 对输入顺序不敏感；
-5. position symbol 优先保留；
-6. 同日相同 pool 结果完全一致；
-7. 不同 rotation key 可轮转 cohort，但 pool hash 不变。
+5. position symbol 即使不在 eligible pool 中也必须保留；
+6. position 数量大于普通 limit 时不能被截断；
+7. 同日相同 pool 结果完全一致；
+8. 不同 rotation key 可轮转 cohort，但 pool hash 不变；
+9. requested scope 无法注入 scheduler/pending queue 之外的 symbol；
+10. 历史 due decision 可独立于新 rotation cohort 保留；
+11. DecisionReport 复用要求 policy + candidate lineage 完全一致；
+12. `app.main` 与 `app.application` 在治理安装后保持同一运行模块对象。
 
 ---
 
-**执行口径：**本规范是统一治理规范的补充，不授权新增因子或收益优化。完成 candidate scheduler 主循环接线及本节 Day 0 检查后，方可开始 Observation Day 1。
+**执行口径：**代码层候选治理接线已完成；但 Observation Day 1 仍必须等待本 PR CI 全绿，并在真实部署环境完成统一规范与本规范的全部 Day 0 实测（包括真实 commit、迁移、数据库路径、运行日志与成交时序）。代码合并本身不等于 Day 0 已通过。
