@@ -1,7 +1,7 @@
 """Exchange calendar helpers for market refresh and quote dates."""
 from __future__ import annotations
 
-from datetime import datetime
+from datetime import datetime, timedelta
 
 import exchange_calendars as xcals
 import pandas as pd
@@ -148,6 +148,63 @@ class TradingCalendarService:
         except ValueError:
             return None
 
+    def latest_completed_session_date(
+        self,
+        market: str,
+        moment: datetime | None = None,
+    ) -> str | None:
+        """Return the latest session whose official close is already observable.
+
+        Daily bars and derived risk must use completed-session semantics rather
+        than wall-clock age. During a live session the previous trading day is
+        still the latest complete daily bar; after the close the current session
+        becomes required. Weekends and exchange holidays resolve to the prior
+        completed session.
+        """
+        calendar = self._calendars.get(market)
+        if calendar is None:
+            return None
+
+        local_time = self.normalize_moment(moment)
+        utc_time = pd.Timestamp(local_time).tz_convert("UTC")
+        local_date = pd.Timestamp(local_time.date())
+
+        try:
+            if calendar.is_session(local_date):
+                session_close = calendar.session_close(local_date)
+                if utc_time < session_close:
+                    return calendar.previous_session(local_date).date().isoformat()
+                return local_date.date().isoformat()
+
+            previous = calendar.date_to_session(local_date, direction="previous")
+            return previous.date().isoformat()
+        except ValueError:
+            return None
+
+    def is_post_close_maintenance_window(
+        self,
+        market: str,
+        moment: datetime | None = None,
+        *,
+        minutes: int = 90,
+    ) -> bool:
+        """Whether now is inside the bounded post-close daily-data window."""
+        calendar = self._calendars.get(market)
+        if calendar is None:
+            return False
+
+        local_time = self.normalize_moment(moment)
+        utc_time = pd.Timestamp(local_time).tz_convert("UTC")
+        local_date = pd.Timestamp(local_time.date())
+        try:
+            if not calendar.is_session(local_date):
+                return False
+            close_time = calendar.session_close(local_date)
+            end_time = close_time + pd.Timedelta(timedelta(minutes=max(1, minutes)))
+            return bool(close_time <= utc_time <= end_time)
+        except ValueError:
+            return False
+
     def latest_symbol_session_date(
         self,
         symbol: str,
@@ -158,6 +215,16 @@ class TradingCalendarService:
             return None
 
         return self.latest_session_date(market, moment)
+
+    def latest_completed_symbol_session_date(
+        self,
+        symbol: str,
+        moment: datetime | None = None,
+    ) -> str | None:
+        market = self.market_for_symbol(symbol)
+        if market is None:
+            return None
+        return self.latest_completed_session_date(market, moment)
 
     def session_dates(self, market: str, start: str, end: str) -> list[str]:
         """Return exchange session dates in an inclusive ISO date range."""
