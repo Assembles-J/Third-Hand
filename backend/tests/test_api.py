@@ -1,9 +1,9 @@
 """API regression-suite entrypoint.
 
 The pre-governance suite is preserved byte-for-byte in ``api_suite.py`` so the
-connector does not have to rewrite a large test file for one intentional policy
-version bump. All existing tests are re-exported except the version assertion
-below, which now follows the canonical version constant.
+connector does not have to rewrite a large historical test file for intentional
+governance/runtime contract changes. Selected assertions are re-expressed here
+against the current canonical contracts.
 """
 from __future__ import annotations
 
@@ -23,9 +23,12 @@ _spec.loader.exec_module(_suite)
 
 setup_function = _suite.setup_function
 
-_REPLACED = "test_decision_shadow_endpoint_persists_policy_candidates_without_replacing_recommendations"
+_REPLACED = {
+    "test_decision_shadow_endpoint_persists_policy_candidates_without_replacing_recommendations",
+    "test_paper_run_persists_run_stages_and_symbol_terminal_state",
+}
 for _name, _value in vars(_suite).items():
-    if _name.startswith("test_") and callable(_value) and _name != _REPLACED:
+    if _name.startswith("test_") and callable(_value) and _name not in _REPLACED:
         globals()[_name] = _value
 
 
@@ -55,3 +58,76 @@ def test_decision_shadow_endpoint_persists_policy_candidates_without_replacing_r
     assert response.json()["policy_version"] == config.ACTION_POLICY_VERSION
     assert _suite.store.shadow_reports("600519")[0]["shadow_id"] == response.json()["shadow_id"]
     assert _suite.client.get("/v1/research-recommendations").json() == []
+
+
+def test_paper_run_persists_run_stages_and_symbol_terminal_state(monkeypatch):
+    """A closed-market force run must consume the persisted quote, not fetch one."""
+
+    class MarketRegimeFixture:
+        def assess(self):
+            return {"status": "unavailable"}
+
+    symbol = "600519"
+    _suite.store.save_paper_account(100_000)
+    start = _suite.date(2026, 4, 1)
+    _suite.store.save_daily_prices(symbol, [{
+        "trading_date": (start + _suite.timedelta(days=index)).isoformat(),
+        "open": 10 + index,
+        "close": 10.5 + index,
+        "high": 11 + index,
+        "low": 9 + index,
+        "source": "local-test",
+    } for index in range(65)])
+    quote = {
+        "symbol": symbol,
+        "name": "test",
+        "price": 1500.0,
+        "as_of": "2026-08-14T10:00:00+08:00",
+        "retrieved_at": "2026-08-14T10:00:00+08:00",
+        "source": "test",
+        "change_percent": 1.2,
+        "refresh_status": "stored",
+    }
+    _suite.store.save_quotes([quote])
+
+    remote_quote_calls = []
+    monkeypatch.setattr(
+        _suite.main.market_data,
+        "quotes",
+        lambda symbols, force_refresh=False: remote_quote_calls.append(tuple(symbols)) or [dict(quote)],
+    )
+    monkeypatch.setattr(_suite.main.market_data, "latest_market_snapshot", lambda markets: [])
+    monkeypatch.setattr(_suite.main.news_service, "fetch", lambda symbols, names: [])
+    monkeypatch.setattr(_suite.main, "market_regime_service", MarketRegimeFixture())
+
+    result = _suite.main.run_paper_trading_cycle([symbol], force=True, allow_when_disabled=True)
+
+    assert remote_quote_calls == []
+    assert result["run_id"]
+    runs = _suite.store.simulation_runs()
+    assert len(runs) == 1
+    assert runs[0]["status"] == "completed"
+    detail = _suite.store.simulation_run(result["run_id"])
+    stages = {stage["stage"] for stage in detail["stages"]}
+    # Refresh-detail stages are conditional: if the local snapshot is already
+    # sufficient (or another refresh owns the derived-data lock), a successful
+    # closed-market run need not manufacture daily/risk refresh rows. The stable
+    # audit contract is the candidate lineage, explicit local quote decision,
+    # Research-only news stage, formal decision, and final equity snapshot.
+    assert {
+        "candidate_pool",
+        "market_quotes",
+        "news",
+        "decision",
+        "equity_snapshot",
+    }.issubset(stages)
+    assert detail["symbols"][0]["terminal_state"] == "decision_generated"
+
+    market_quote_stage = next(stage for stage in detail["stages"] if stage["stage"] == "market_quotes")
+    assert market_quote_stage["status"] == "skipped"
+    assert market_quote_stage["detail"]["reason"] == "closed_market_local_snapshot"
+    assert market_quote_stage["detail"]["remote_requested"] == 0
+
+    response = _suite.client.get(f"/v1/paper-trading/runs/{result['run_id']}")
+    assert response.status_code == 200
+    assert response.json()["status"] == "completed"

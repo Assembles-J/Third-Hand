@@ -80,6 +80,12 @@ class ToolExecutor:
         if name == "get_current_quote":
             return self._json_safe(self.store.cached_quotes([symbol]))
 
+        if name == "get_intraday_history":
+            # Research Chat is a consumer of the scheduler-owned local data
+            # plane. This tool deliberately has no provider/refresh branch.
+            limit = max(20, min(int(args.get("limit") or 240), 1000))
+            return self._json_safe(self.store.intraday_prices(symbol, limit))
+
         if name == "get_daily_history":
             limit = max(1, min(int(args.get("limit") or 60), 240))
             return self._json_safe(self.store.daily_prices(symbol, limit))

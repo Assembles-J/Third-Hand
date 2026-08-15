@@ -15,6 +15,45 @@ def test_research_tool_registry_has_no_direct_paper_trade_tools():
     assert "paper_reduce_position" not in ALLOWED_TOOLS
 
 
+def test_research_tool_registry_exposes_bounded_local_intraday_reader():
+    definition = next(
+        item["function"]
+        for item in definitions()
+        if item["function"]["name"] == "get_intraday_history"
+    )
+    limit = definition["parameters"]["properties"]["limit"]
+
+    assert "本地" in definition["description"]
+    assert limit["minimum"] == 20
+    assert limit["maximum"] == 1000
+
+
+def test_intraday_research_tool_reads_local_store_only_and_bounds_limit():
+    calls = []
+
+    class LocalStore:
+        def intraday_prices(self, symbol, limit):
+            calls.append((symbol, limit))
+            return [{
+                "bar_time": "2026-08-14T10:00:00+08:00",
+                "open": 10.0,
+                "close": 10.1,
+                "high": 10.2,
+                "low": 9.9,
+                "source": "local-test",
+            }]
+
+    executor = ToolExecutor(LocalStore())
+    result = executor.execute(
+        "get_intraday_history",
+        {"symbol": "600519", "limit": 5000},
+        SimpleNamespace(symbol="600519"),
+    )
+
+    assert calls == [("600519", 1000)]
+    assert result[0]["close"] == 10.1
+
+
 def test_removed_paper_trade_tool_cannot_mutate_paper_ledger(tmp_path):
     store = PortfolioStore(tmp_path / "research-tool-governance.db")
     executor = ToolExecutor(store)
