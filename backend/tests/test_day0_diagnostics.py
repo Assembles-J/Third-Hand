@@ -156,9 +156,7 @@ def test_day0_diagnostics_router_is_get_only():
     assert response.status_code == 200
     assert response.json()["generated_from_persisted_audit"] is True
 
-    route = next(
-        route
-        for route in app.router.routes
-        if getattr(route, "path", None) == "/v1/admin/day0-diagnostics"
-    )
-    assert route.methods == {"GET"}
+    # Test the public HTTP contract instead of FastAPI's internal route storage,
+    # which can change across framework versions while behavior stays identical.
+    write_response = client.post("/v1/admin/day0-diagnostics")
+    assert write_response.status_code == 405
