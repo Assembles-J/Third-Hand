@@ -9,7 +9,10 @@ EVIDENCE_VERSION = "evidence-v2-usage-scope"
 # remaining eligible for next-session execution after deployment.
 ACTION_POLICY_VERSION = "swing-policy-v3-position-action-semantics"
 OPEN_GATE_AUDIT_VERSION = "open-gate-audit-v1"
-FRESHNESS_POLICY_VERSION = "freshness-v1"
+# v2 records the Day-0 shift from wall-clock TTL checks for daily data to
+# latest-completed-exchange-session semantics.  Thresholds are unchanged; the
+# version bump makes the already-deployed behavior auditable in DecisionReport.
+FRESHNESS_POLICY_VERSION = "freshness-v2-session-aware"
 CANDIDATE_SELECTION_VERSION = "candidate-rotation-v1"
 OPPORTUNITY_SCORING_VERSION = "research-priority-v1"
 # P0 deliberately applies one conservative, documented age budget across the

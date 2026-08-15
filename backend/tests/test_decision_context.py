@@ -1,6 +1,9 @@
+from app import decision_config as config
 from app.data_quality import summarize_data_quality
 from app.decision_context import DecisionContextBuilder
 from app.storage import PortfolioStore
+from app.time_utils import beijing_now
+from app.trading_calendar import TradingCalendarService
 
 
 def _bars():
@@ -17,6 +20,10 @@ def _plan():
         "add_condition": "add", "reduce_condition": "reduce", "exit_condition": "exit",
         "max_position_percent": 15, "risk_budget_percent": 3, "enabled": True, "version": 1,
     }
+
+
+def _open_gate(result):
+    return next(gate for gate in result.action_gates if gate.action == "OPEN")
 
 
 def test_context_builder_has_stable_input_hash_and_does_not_need_an_action(tmp_path):
@@ -50,6 +57,68 @@ def test_data_quality_blocks_only_missing_price_and_degrades_non_execution_input
     assert result.missing_fields == ("quote.price",)
     assert "trade_plan.auto_draft unavailable" in result.warnings
     assert "risk unavailable" in result.warnings
+
+
+def test_open_gate_uses_formal_market_regime_name_without_duplicate_unknown_blocker():
+    now = beijing_now()
+    completed = TradingCalendarService().latest_completed_session_date("CN", now)
+    assert completed is not None
+
+    result = summarize_data_quality(
+        has_quote=True,
+        daily_bar_count=60,
+        total_assets_available=True,
+        plan_enabled=False,
+        has_risk=True,
+        has_market_regime=False,
+        has_relative_strength=False,
+        has_events=False,
+        has_instrument=True,
+        quote_as_of=now.isoformat(),
+        quote_retrieved_at=now.isoformat(),
+        daily_bar_as_of=completed,
+        risk_as_of=completed,
+        market_as_of=None,
+        market="CN",
+    )
+
+    gate = _open_gate(result)
+    assert gate.permission == "blocked"
+    assert gate.unavailable_fields == ("market_regime",)
+    assert all("market_intelligence" not in item for item in gate.unavailable_fields)
+
+
+def test_existing_but_stale_market_regime_remains_a_hard_open_blocker():
+    now = beijing_now()
+    completed = TradingCalendarService().latest_completed_session_date("CN", now)
+    assert completed is not None
+
+    result = summarize_data_quality(
+        has_quote=True,
+        daily_bar_count=60,
+        total_assets_available=True,
+        plan_enabled=False,
+        has_risk=True,
+        has_market_regime=True,
+        has_relative_strength=False,
+        has_events=False,
+        has_instrument=True,
+        quote_as_of=now.isoformat(),
+        quote_retrieved_at=now.isoformat(),
+        daily_bar_as_of=completed,
+        risk_as_of=completed,
+        market_as_of="2000-01-03",
+        market="CN",
+    )
+
+    gate = _open_gate(result)
+    assert gate.permission == "blocked"
+    assert gate.unavailable_fields == ("market_regime.stale",)
+    assert all("market_intelligence" not in item for item in gate.unavailable_fields)
+
+
+def test_session_aware_freshness_has_a_distinct_audit_version():
+    assert config.FRESHNESS_POLICY_VERSION == "freshness-v2-session-aware"
 
 
 def test_missing_trade_plan_is_exposed_as_a_non_enabled_editable_draft(tmp_path):
