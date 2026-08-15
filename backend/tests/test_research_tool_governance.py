@@ -25,7 +25,12 @@ def test_removed_paper_trade_tool_cannot_mutate_paper_ledger(tmp_path):
         executor.execute("paper_add_position", {"symbol": "600519", "quantity": 100}, context)
 
     after = store.paper_account()
-    assert after == before
+    # ``paper_account`` computes an observation timestamp on every read. The
+    # mutation invariant is the ledger state, not equality of that volatile
+    # read timestamp.
+    before_state = {key: value for key, value in before.items() if key != "updated_at"}
+    after_state = {key: value for key, value in after.items() if key != "updated_at"}
+    assert after_state == before_state
 
 
 def test_data_change_tool_remains_confirmation_only(tmp_path):
