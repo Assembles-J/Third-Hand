@@ -71,7 +71,7 @@ def test_decision_context_can_read_global_persisted_market_regime():
 
 def test_closed_market_startup_and_backfill_do_not_call_remote_providers():
     now = datetime(2026, 8, 15, 12, 0, tzinfo=BJ)  # Saturday
-    calls = {"quote": 0, "derived": 0, "regime": 0, "market_intelligence": 0}
+    calls = {"quote": 0, "derived": 0, "regime": 0, "market_intelligence": 0, "paper_news": 0}
 
     class Store:
         def __init__(self):
@@ -125,6 +125,9 @@ def test_closed_market_startup_and_backfill_do_not_call_remote_providers():
     def refresh_market_intelligence():
         calls["market_intelligence"] += 1
 
+    def refresh_paper_market_intelligence(symbols, names):
+        calls["paper_news"] += 1
+
     def assess_regime():
         calls["regime"] += 1
         return {"status": "ready", "regime": "mixed", "source": "remote"}
@@ -136,6 +139,7 @@ def test_closed_market_startup_and_backfill_do_not_call_remote_providers():
         refresh_quote_cache=refresh_quote_cache,
         refresh_derived_cache=refresh_derived_cache,
         refresh_market_intelligence=refresh_market_intelligence,
+        refresh_paper_market_intelligence=refresh_paper_market_intelligence,
         resume_background_work=resume_background_work,
         market_regime_service=SimpleNamespace(assess=assess_regime),
         trading_calendar=Calendar(),
@@ -146,6 +150,7 @@ def test_closed_market_startup_and_backfill_do_not_call_remote_providers():
         daily_history_retry_after={},
         daily_history_refreshed_for={},
         DAILY_HISTORY_RETRY_SECONDS=300,
+        MARKET_UNIVERSE_SCAN_INTERVAL_SECONDS=300,
         _daily_history_retry_seconds_left=lambda symbol: 0,
         price_history_service=SimpleNamespace(refresh=lambda *args, **kwargs: None),
         PriceHistoryUnavailable=RuntimeError,
@@ -155,6 +160,7 @@ def test_closed_market_startup_and_backfill_do_not_call_remote_providers():
 
     cached = module.refresh_quote_cache(["600519"], True, "startup-prewarm")
     module.refresh_derived_cache(["600519"], "history-backfill")
+    module.refresh_paper_market_intelligence(["600519"], {"600519": "贵州茅台"})
     regime = module.market_regime_service.assess()
 
     assert cached[0]["symbol"] == "600519"
@@ -162,6 +168,8 @@ def test_closed_market_startup_and_backfill_do_not_call_remote_providers():
     assert calls["derived"] == 0
     assert calls["regime"] == 0
     assert calls["market_intelligence"] == 0
+    assert calls["paper_news"] == 0
+    assert module.MARKET_UNIVERSE_SCAN_INTERVAL_SECONDS == 1800
     assert regime["status"] == "unavailable"
 
 
@@ -221,6 +229,7 @@ def test_market_regime_remote_refresh_is_persisted_once_per_completed_session():
         refresh_quote_cache=lambda *args, **kwargs: [],
         refresh_derived_cache=lambda *args, **kwargs: None,
         refresh_market_intelligence=lambda: None,
+        refresh_paper_market_intelligence=lambda *args, **kwargs: None,
         resume_background_work=resume_background_work,
         market_regime_service=SimpleNamespace(assess=assess_regime),
         trading_calendar=Calendar(),
@@ -231,6 +240,7 @@ def test_market_regime_remote_refresh_is_persisted_once_per_completed_session():
         daily_history_retry_after={},
         daily_history_refreshed_for={},
         DAILY_HISTORY_RETRY_SECONDS=300,
+        MARKET_UNIVERSE_SCAN_INTERVAL_SECONDS=300,
         _daily_history_retry_seconds_left=lambda symbol: 0,
         price_history_service=SimpleNamespace(refresh=lambda *args, **kwargs: None),
         PriceHistoryUnavailable=RuntimeError,
