@@ -8,6 +8,7 @@ from __future__ import annotations
 
 ALLOWED_TOOLS: dict[str, str] = {
     "get_current_quote": "读取当前缓存行情",
+    "get_intraday_history": "读取本地已持久化的分钟/分时行情；不会触发远端 Provider",
     "get_daily_history": "读取本地历史日线",
     "request_daily_history_refresh": "申请刷新历史日线；需要确认，不由模型直接执行",
     "get_position_snapshot": "读取当前持仓快照",
@@ -31,13 +32,15 @@ def definitions() -> list[dict]:
     result = []
     for name, description in ALLOWED_TOOLS.items():
         if name in {
-            "get_current_quote", "get_daily_history", "get_position_snapshot",
+            "get_current_quote", "get_intraday_history", "get_daily_history", "get_position_snapshot",
             "get_risk_snapshot", "get_company_fundamentals", "get_research_evidence",
             "get_research_thesis", "get_decision_report",
         }:
             props = {"symbol": {"type": "string"}}
             if name == "get_daily_history":
                 props["limit"] = {"type": "integer", "minimum": 1, "maximum": 240}
+            if name == "get_intraday_history":
+                props["limit"] = {"type": "integer", "minimum": 20, "maximum": 1000}
             params = _schema(props, ["symbol"])
         elif name == "request_daily_history_refresh":
             params = _schema(
