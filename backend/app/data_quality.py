@@ -38,12 +38,14 @@ def summarize_data_quality(*, has_quote: bool, daily_bar_count: int, total_asset
     # Quote freshness is intraday wall-clock data. Daily bars, locally derived
     # risk and the broad-market regime are daily/session data, so weekends,
     # holidays and pre-close hours must not manufacture a stale result merely
-    # because 48 wall-clock hours elapsed.
+    # because wall-clock time elapsed.  Market regime is a formal POLICY input;
+    # research-only fund-flow/market-intelligence data is deliberately absent
+    # from this formal freshness gate.
     freshness = (
         evaluate_freshness("quote", as_of=quote_as_of, retrieved_at=quote_retrieved_at, max_age_seconds=config.QUOTE_MAX_AGE_SECONDS),
         evaluate_session_freshness("daily_bars", as_of=daily_bar_as_of, market=market, max_age_seconds=config.DAILY_BAR_MAX_AGE_DAYS * 86_400),
         evaluate_session_freshness("risk", as_of=risk_as_of, market=market, max_age_seconds=config.RISK_MAX_AGE_DAYS * 86_400),
-        evaluate_session_freshness("market_intelligence", as_of=market_as_of, market=market, max_age_seconds=config.MARKET_INTELLIGENCE_MAX_AGE_SECONDS),
+        evaluate_session_freshness("market_regime", as_of=market_as_of, market=market, max_age_seconds=config.MARKET_INTELLIGENCE_MAX_AGE_SECONDS),
     )
     stale = tuple(item.source_key for item in freshness if item.status in {"stale", "unknown"})
     status = "blocked" if missing else "degraded" if degraded or stale else "ready"
@@ -54,8 +56,25 @@ def summarize_data_quality(*, has_quote: bool, daily_bar_count: int, total_asset
         open_unavailable.append("quote.price")
     if not has_instrument:
         open_unavailable.append("instrument")
-    if any(item.source_key in {"quote", "daily_bars", "risk", "market_intelligence"} and item.status != "fresh" for item in freshness):
-        open_unavailable.extend(f"{item.source_key}.{item.status}" for item in freshness if item.source_key in {"quote", "daily_bars", "risk", "market_intelligence"} and item.status != "fresh")
+
+    # Presence and freshness are two different failure modes.  When a required
+    # source is absent, the required-field blocker above is sufficient; adding
+    # an extra ``*.unknown`` blocker only duplicates the same problem and made
+    # the old market-regime failure look like RESEARCH_ONLY market intelligence
+    # was influencing OPEN.  Once the source exists, stale/unknown timestamps
+    # remain a hard OPEN blocker exactly as before.
+    freshness_by_key = {item.source_key: item for item in freshness}
+    present_for_open = {
+        "quote": has_quote,
+        "daily_bars": daily_bar_count >= 60,
+        "risk": has_risk,
+        "market_regime": has_market_regime,
+    }
+    for source_key, present in present_for_open.items():
+        item = freshness_by_key[source_key]
+        if present and item.status != "fresh":
+            open_unavailable.append(f"{source_key}.{item.status}")
+
     open_gate = ActionGate(action="OPEN", permission="blocked" if open_unavailable else "allowed", required_fields=open_required, unavailable_fields=tuple(open_unavailable), reasons=tuple(f"data_quality.{item}" for item in open_unavailable))
     add_required = (*open_required, "position", "personal_rule")
     add_unavailable = [*open_unavailable]
