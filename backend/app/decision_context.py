@@ -14,6 +14,7 @@ from app.decision_models import (
     TechnicalSnapshot, TradePlanSnapshot,
 )
 from app.time_utils import beijing_now
+from app.trading_calendar import TradingCalendarService
 
 
 CONTEXT_SCHEMA_VERSION = "context-v1"
@@ -94,6 +95,7 @@ class DecisionContextBuilder:
         market_regime = self._market_regime(portfolio_item)
         market_flow = self._market_flow()
         relative_strength = self._relative_strength(portfolio_item)
+        market = TradingCalendarService.market_for_symbol(symbol)
         quality = summarize_data_quality(
             has_quote=price is not None, daily_bar_count=len(bars), total_assets_available=total_assets is not None,
             plan_enabled=bool(plan and plan.get("enabled")), has_risk=risk is not None,
@@ -105,6 +107,7 @@ class DecisionContextBuilder:
             risk_as_of=str((risk or {}).get("as_of") or "") or None,
             market_as_of=market_regime.as_of if market_regime else None,
             market_retrieved_at=market_flow.retrieved_at if market_flow else None,
+            market=market,
         )
         account = AccountSnapshot(
             available_cash=cash, total_market_value=total_market_value, total_assets=total_assets,
@@ -198,12 +201,18 @@ class DecisionContextBuilder:
         values = {key: item.get(key) for key in RiskSnapshot.model_fields if key != "source"}
         return RiskSnapshot(**values)
 
-    @staticmethod
-    def _market_regime(item):
-        value = (item or {}).get("decision_snapshot", {}).get("market_regime")
-        if not value:
+    def _market_regime(self, item):
+        persisted = self.store.cached_market_intelligence("market_regime") or {}
+        embedded = (item or {}).get("decision_snapshot", {}).get("market_regime") or {}
+        value = persisted if persisted.get("status") == "ready" else embedded
+        if value.get("status") != "ready" or value.get("regime") in {None, "unknown"}:
             return None
-        return MarketRegimeSnapshot(status=str(value.get("status", "unknown")), regime=value.get("regime"), source=value.get("source"), as_of=value.get("as_of"))
+        return MarketRegimeSnapshot(
+            status="ready",
+            regime=value.get("regime"),
+            source=value.get("source"),
+            as_of=value.get("as_of"),
+        )
 
     def _market_flow(self) -> MarketFlowSnapshot | None:
         payload = self.store.cached_market_intelligence("overview")
@@ -260,4 +269,4 @@ class DecisionContextBuilder:
 
     @staticmethod
     def _source_versions() -> dict[str, str]:
-        return {"context_schema": CONTEXT_SCHEMA_VERSION, "quote": "market_quote_cache-v1", "daily_bars": "daily_price_cache-v1", "risk": "risk_cache-v1", "events": "content_cache-v1", "market_flow": "market_intelligence_cache-v1", "trade_plan": "trade_plans-v1"}
+        return {"context_schema": CONTEXT_SCHEMA_VERSION, "quote": "market_quote_cache-v1", "daily_bars": "daily_price_cache-v1", "risk": "risk_cache-v1", "events": "content_cache-v1", "market_regime": "market_intelligence_cache-v1", "market_flow": "market_intelligence_cache-v1", "trade_plan": "trade_plans-v1"}
