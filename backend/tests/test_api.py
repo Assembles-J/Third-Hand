@@ -109,16 +109,24 @@ def test_paper_run_persists_run_stages_and_symbol_terminal_state(monkeypatch):
     assert runs[0]["status"] == "completed"
     detail = _suite.store.simulation_run(result["run_id"])
     stages = {stage["stage"] for stage in detail["stages"]}
+    # Refresh-detail stages are conditional: if the local snapshot is already
+    # sufficient (or another refresh owns the derived-data lock), a successful
+    # closed-market run need not manufacture daily/risk refresh rows. The stable
+    # audit contract is the candidate lineage, explicit local quote decision,
+    # Research-only news stage, formal decision, and final equity snapshot.
     assert {
         "candidate_pool",
         "market_quotes",
-        "daily_history",
-        "risk",
         "news",
         "decision",
         "equity_snapshot",
     }.issubset(stages)
     assert detail["symbols"][0]["terminal_state"] == "decision_generated"
+
+    market_quote_stage = next(stage for stage in detail["stages"] if stage["stage"] == "market_quotes")
+    assert market_quote_stage["status"] == "skipped"
+    assert market_quote_stage["detail"]["reason"] == "closed_market_local_snapshot"
+    assert market_quote_stage["detail"]["remote_requested"] == 0
 
     response = _suite.client.get(f"/v1/paper-trading/runs/{result['run_id']}")
     assert response.status_code == 200
