@@ -98,13 +98,20 @@
 - glossary endpoint family
 - Research Chat router（当前由 `app.research_chat.routes` 注册）
 
+## V2-native / 运维诊断 API
+
+以下接口不是 Android 既有依赖，而是 Architecture Refactor v2 后新增的独立 package endpoint：
+
+- `GET /v1/candidates*`：人工研究候选、生命周期与激活条件；`RESEARCH_ONLY`，无正式交易权限。
+- `GET /v1/admin/day0-diagnostics`：只读汇总最新 simulation audit、OPEN Gate、候选血缘、执行原因、Provider health 与部署版本；不返回现金、持仓数量、密钥或 AI 原始推理。
+
 ## Domain migration ledger
 
 | Domain | Status | Target owner | Notes |
 |---|---|---|---|
 | health | ACTIVE / MIGRATING | `api.v1.health` | 容器 healthcheck 依赖 |
 | app_update | ACTIVE / MIGRATING | `api.v1.app_update` | Android 更新链依赖 |
-| admin | ACTIVE / MIGRATING | `api.v1.admin` | 系统配置与运维概览 |
+| admin | ACTIVE / MIGRATING | `api.v1.admin` | 系统配置、运维概览、Day0 GET-only diagnostics |
 | paper | ACTIVE / MIGRATING | `api.v1.paper` | Day0 纸面账户、run、执行审计核心 |
 | data_quality | ACTIVE / MIGRATING | `api.v1.data_quality` | provider lineage / health/backfill |
 | market | ACTIVE / MIGRATING | `api.v1.market` | quote/history/intraday/intelligence/instrument |
@@ -112,8 +119,8 @@
 | decision | ACTIVE / MIGRATING | `api.v1.decision` | 不改变 ActionPolicy |
 | research | ACTIVE / MIGRATING | `api.v1.research` | news/announcement/report/learning/glossary |
 | ai | ACTIVE / MIGRATING | `api.v1.ai` | AI jobs + Research Chat/SSE |
-| candidate | ACTIVE / PLANNED | `api.v1.candidate` + `domain.candidate` | deterministic rotation 保留；人工候选/生命周期后续实现 |
-| company | PLANNED | `api.v1.research` + `domain.company` | Company Intelligence 后续实现 |
+| candidate | ACTIVE | `api.v1.candidate` + `domain.candidate` | deterministic formal rotation 不变；人工候选为 RESEARCH_ONLY |
+| company | FOUNDATION / NOT_REGISTERED | `api.v1.research` + `domain.company` | Company Intelligence 基础层已存在；正式生产 route 接线仍需独立审查 |
 
 ## 特别兼容项
 
@@ -126,7 +133,8 @@
 - `DEPRECATED`：保留兼容，不允许新客户端依赖；
 - `REMOVE_READY`：全仓/Android/生产依赖检查完成，可删除；
 - `REMOVED`：已删除；
-- `PLANNED`：尚未上线的新 API。
+- `PLANNED`：尚未上线的新 API；
+- `FOUNDATION / NOT_REGISTERED`：领域/服务基础代码已存在，但尚未注册为生产 HTTP 能力。
 
 ## 删除前检查
 
