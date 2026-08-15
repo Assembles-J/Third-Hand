@@ -9,6 +9,9 @@ services:
     restart: unless-stopped
     environment:
       TZ: Asia/Shanghai
+      # GitHub deploy passes DEPLOY_SHA into the remote compose process. Manual
+      # starts remain explicitly unknown instead of inventing artifact identity.
+      GIT_COMMIT: ${DEPLOY_SHA:-unknown}
       THIRD_HAND_DB_PATH: /app/data/third_hand.db
       THIRD_HAND_MARKET_PROVIDER: ${THIRD_HAND_MARKET_PROVIDER:-auto}
       MARKET_REFRESH_ENABLED: ${MARKET_REFRESH_ENABLED:-true}
