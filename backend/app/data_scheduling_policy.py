@@ -7,11 +7,14 @@ semantics.
 
 Goals:
 - no automatic startup provider calls while exchanges are closed;
-- quote collection stays trading-session oriented;
+- quote/intraday collection stays trading-session oriented;
 - daily-history catch-up fetches only when a completed session is actually
   missing, with a conservative retry budget;
 - the 24h history-backfill loop becomes a cheap no-op outside a bounded
   post-close maintenance window;
+- research-only news is not fetched by every paper cycle;
+- broad whole-market research scans are low-frequency rather than every few
+  minutes;
 - broad-market regime is persisted once per completed CN session and reused by
   every DecisionContext.
 """
@@ -23,6 +26,7 @@ from typing import Iterable
 
 MARKET_REGIME_CACHE_KEY = "market_regime"
 MIN_HISTORY_RETRY_SECONDS = 30 * 60
+MIN_UNIVERSE_SCAN_INTERVAL_SECONDS = 30 * 60
 POST_CLOSE_MAINTENANCE_MINUTES = 90
 
 
@@ -52,7 +56,7 @@ def _latest_completed_session(m, symbol: str, now) -> str | None:
 
 def _latest_local_bar_date(m, symbol: str) -> str | None:
     bars = m.store.daily_prices(symbol)
-    return str(bars[-1].get("trading_date") or "") or None if bars else None
+    return (str(bars[-1].get("trading_date") or "") or None) if bars else None
 
 
 def _history_refresh_allowed(m, symbol: str, trigger: str, now) -> bool:
@@ -118,8 +122,17 @@ def install(m) -> None:
     original_refresh_quote_cache = m.refresh_quote_cache
     original_refresh_derived_cache = m.refresh_derived_cache
     original_refresh_market_intelligence = m.refresh_market_intelligence
+    original_refresh_paper_market_intelligence = m.refresh_paper_market_intelligence
     original_resume_background_work = m.resume_background_work
     original_regime_assess = m.market_regime_service.assess
+
+    # Whole-market sectors/top movers are RESEARCH_ONLY and are explicitly
+    # excluded from deterministic formal candidate selection. Keep them useful
+    # for UI/research, but do not download them every five minutes.
+    m.MARKET_UNIVERSE_SCAN_INTERVAL_SECONDS = max(
+        int(m.MARKET_UNIVERSE_SCAN_INTERVAL_SECONDS),
+        MIN_UNIVERSE_SCAN_INTERVAL_SECONDS,
+    )
 
     def refresh_quote_cache(symbols, force_refresh=False, trigger="scheduled", *args, **kwargs):
         requested = _normalized(symbols)
@@ -154,7 +167,32 @@ def install(m) -> None:
                 m.logger.info("history backfill skipped outside post-close maintenance window")
                 return None
 
-        return original_refresh_derived_cache(requested, trigger, force_history=force_history, run_id=run_id)
+        result = original_refresh_derived_cache(requested, trigger, force_history=force_history, run_id=run_id)
+
+        # Deterministic research prewarm is allowed to bootstrap a bounded local
+        # history set, but an unhealthy provider must not be retried every five
+        # minutes. Extend legacy failures to the same conservative 30-minute
+        # retry floor used by completed-session catch-up.
+        if "history-prewarm" in str(trigger):
+            current = time.monotonic()
+            for symbol in requested:
+                retry_at = float(m.daily_history_retry_after.get(symbol, 0.0) or 0.0)
+                if retry_at > current:
+                    m.daily_history_retry_after[symbol] = max(
+                        retry_at,
+                        current + MIN_HISTORY_RETRY_SECONDS,
+                    )
+        return result
+
+    def refresh_paper_market_intelligence(symbols, names) -> None:
+        # News/event inputs are RESEARCH_ONLY and do not participate in formal
+        # ActionPolicy. Paper cycles therefore consume the persisted content
+        # cache and never create an automatic remote-news request every interval.
+        m.logger.info(
+            "paper research intelligence remote refresh skipped local_first=true symbols=%s",
+            ",".join(_normalized(symbols)) or "none",
+        )
+        return None
 
     def assess_market_regime():
         """Persist/reuse one broad-market regime snapshot per completed CN session."""
@@ -218,6 +256,7 @@ def install(m) -> None:
 
     m.refresh_quote_cache = refresh_quote_cache
     m.refresh_derived_cache = refresh_derived_cache
+    m.refresh_paper_market_intelligence = refresh_paper_market_intelligence
     m.market_regime_service.assess = assess_market_regime
     m.resume_background_work = resume_background_work
 
