@@ -1,6 +1,11 @@
 from __future__ import annotations
 
-from app.daily_history_policy import MIGRATION_ID, _migrate_daily_price_cache, install
+from app.daily_history_policy import (
+    MIGRATION_ID,
+    _migrate_daily_price_cache,
+    _refresh_range_local_first,
+    install,
+)
 from app.price_history import PriceHistoryService
 from app.storage import PortfolioStore
 
@@ -74,6 +79,7 @@ def test_cleanup_normalizes_compact_qfq_when_no_iso_duplicate_exists(tmp_path):
 
 
 def test_a_share_missing_range_prefers_tencent(monkeypatch):
+    """Verify the strict policy itself without depending on compat/provider imports."""
     service = PriceHistoryService()
     calls: list[str] = []
 
@@ -105,7 +111,7 @@ def test_a_share_missing_range_prefers_tencent(monkeypatch):
             self.saved = (symbol, bars)
 
     store = Store()
-    count = service._refresh_range(store, "600519", "20260814", "20260814")
+    count = _refresh_range_local_first(service, store, "600519", "20260814", "20260814")
 
     assert count == 1
     assert calls == ["tencent"]
