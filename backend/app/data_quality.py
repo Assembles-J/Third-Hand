@@ -3,7 +3,7 @@ from __future__ import annotations
 
 from app import decision_config as config
 from app.decision_models import ActionGate, DecisionQualitySummary
-from app.freshness import evaluate_freshness
+from app.freshness import evaluate_freshness, evaluate_session_freshness
 
 
 def summarize_data_quality(*, has_quote: bool, daily_bar_count: int, total_assets_available: bool,
@@ -12,7 +12,8 @@ def summarize_data_quality(*, has_quote: bool, daily_bar_count: int, total_asset
                            has_position: bool = False, has_personal_rule: bool = False,
                            quote_as_of: str | None = None, quote_retrieved_at: str | None = None,
                            daily_bar_as_of: str | None = None, risk_as_of: str | None = None,
-                           market_as_of: str | None = None, market_retrieved_at: str | None = None) -> DecisionQualitySummary:
+                           market_as_of: str | None = None, market_retrieved_at: str | None = None,
+                           market: str | None = None) -> DecisionQualitySummary:
     missing: list[str] = []
     degraded: list[str] = []
     if not has_quote:
@@ -34,11 +35,15 @@ def summarize_data_quality(*, has_quote: bool, daily_bar_count: int, total_asset
     if not has_events:
         degraded.append("events")
 
+    # Quote freshness is intraday wall-clock data. Daily bars, locally derived
+    # risk and the broad-market regime are daily/session data, so weekends,
+    # holidays and pre-close hours must not manufacture a stale result merely
+    # because 48 wall-clock hours elapsed.
     freshness = (
         evaluate_freshness("quote", as_of=quote_as_of, retrieved_at=quote_retrieved_at, max_age_seconds=config.QUOTE_MAX_AGE_SECONDS),
-        evaluate_freshness("daily_bars", as_of=daily_bar_as_of, retrieved_at=None, max_age_seconds=config.DAILY_BAR_MAX_AGE_DAYS * 86_400),
-        evaluate_freshness("risk", as_of=risk_as_of, retrieved_at=None, max_age_seconds=config.RISK_MAX_AGE_DAYS * 86_400),
-        evaluate_freshness("market_intelligence", as_of=market_as_of, retrieved_at=market_retrieved_at, max_age_seconds=config.MARKET_INTELLIGENCE_MAX_AGE_SECONDS),
+        evaluate_session_freshness("daily_bars", as_of=daily_bar_as_of, market=market, max_age_seconds=config.DAILY_BAR_MAX_AGE_DAYS * 86_400),
+        evaluate_session_freshness("risk", as_of=risk_as_of, market=market, max_age_seconds=config.RISK_MAX_AGE_DAYS * 86_400),
+        evaluate_session_freshness("market_intelligence", as_of=market_as_of, market=market, max_age_seconds=config.MARKET_INTELLIGENCE_MAX_AGE_SECONDS),
     )
     stale = tuple(item.source_key for item in freshness if item.status in {"stale", "unknown"})
     status = "blocked" if missing else "degraded" if degraded or stale else "ready"
