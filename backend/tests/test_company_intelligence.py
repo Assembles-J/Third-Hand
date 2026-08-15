@@ -79,7 +79,7 @@ def test_l3_company_context_is_deep_local_first_and_reuses_persisted_snapshots(t
     assert first["analysis_depth"] == "deep_company"
     assert first["research_ready"] is True
     assert first["formal_trade_authority"] is False
-    assert first["missing_datasets"] == []
+    assert not first["missing_datasets"]
     assert set(first["datasets"]) == {spec.key for spec in required_dataset_specs("L3")}
     assert first["datasets"]["identity_business_model"]["products"][-1] == "smart_ev"
     assert "internet_services" in first["datasets"]["products_segments"]["segments"]
