@@ -6,7 +6,7 @@ allowed without changing ActionPolicy, candidate selection, sizing, or execution
 semantics.
 
 Goals:
-- no automatic startup provider calls while exchanges are closed;
+- no automatic startup/provider quote calls while exchanges are closed;
 - quote/intraday collection stays trading-session oriented;
 - daily-history catch-up fetches only when a completed session is actually
   missing, with a conservative retry budget;
@@ -29,6 +29,17 @@ MIN_HISTORY_RETRY_SECONDS = 30 * 60
 MIN_UNIVERSE_SCAN_INTERVAL_SECONDS = 30 * 60
 POST_CLOSE_MAINTENANCE_MINUTES = 90
 
+# These triggers are automatic/cache-refresh paths. Closed-market requests must
+# consume the persisted quote/intraday snapshot rather than calling a provider.
+_SESSION_ONLY_QUOTE_TRIGGERS = frozenset({
+    "startup-prewarm",
+    "request-forced",
+    "holding-created",
+    "holding-updated",
+    "scheduler-trading-session",
+    "paper-trading-decision",
+})
+
 
 def _normalized(symbols: Iterable[str]) -> list[str]:
     return list(dict.fromkeys(str(symbol).strip().upper() for symbol in symbols if str(symbol).strip()))
@@ -48,6 +59,18 @@ def _post_close_maintenance(m, symbol: str, now) -> bool:
             minutes=POST_CLOSE_MAINTENANCE_MINUTES,
         )
     )
+
+
+def _quote_refresh_symbols(m, symbols: Iterable[str], trigger: str, now) -> list[str]:
+    """Return symbols for which a provider quote call is currently justified."""
+    requested = _normalized(symbols)
+    if trigger == "scheduler-close-snapshot":
+        return [symbol for symbol in requested if _post_close_maintenance(m, symbol, now)]
+    if trigger in _SESSION_ONLY_QUOTE_TRIGGERS:
+        return [symbol for symbol in requested if _market_open(m, symbol, now)]
+    # Unknown/manual maintenance triggers retain their historical explicit
+    # behavior. Public read endpoints do not use those trigger names.
+    return requested
 
 
 def _latest_completed_session(m, symbol: str, now) -> str | None:
@@ -119,10 +142,11 @@ def install(m) -> None:
         return
     m._data_scheduling_policy_installed = True
 
+    original_fetch_and_store_quotes = m.fetch_and_store_quotes
     original_refresh_quote_cache = m.refresh_quote_cache
+    original_refresh_intraday_cache = m.refresh_intraday_cache
     original_refresh_derived_cache = m.refresh_derived_cache
     original_refresh_market_intelligence = m.refresh_market_intelligence
-    original_refresh_paper_market_intelligence = m.refresh_paper_market_intelligence
     original_resume_background_work = m.resume_background_work
     original_regime_assess = m.market_regime_service.assess
 
@@ -134,15 +158,66 @@ def install(m) -> None:
         MIN_UNIVERSE_SCAN_INTERVAL_SECONDS,
     )
 
+    def fetch_and_store_quotes(
+        symbols,
+        *,
+        force_refresh,
+        trigger,
+        run_id=None,
+    ):
+        requested = _normalized(symbols)
+        now = m.beijing_now()
+        refreshable = _quote_refresh_symbols(m, requested, str(trigger), now)
+        if not refreshable:
+            m.logger.info(
+                "quote provider refresh skipped local_first=true trigger=%s market_open=false symbols=%s",
+                trigger,
+                ",".join(requested) or "none",
+            )
+            if run_id:
+                m._record_simulation_stage(
+                    run_id,
+                    "market_quotes",
+                    "skipped",
+                    detail={
+                        "reason": "closed_market_local_snapshot",
+                        "requested": len(requested),
+                        "remote_requested": 0,
+                    },
+                )
+            return m.store.cached_quotes(requested)
+        return original_fetch_and_store_quotes(
+            refreshable,
+            force_refresh=force_refresh,
+            trigger=trigger,
+            run_id=run_id,
+        )
+
     def refresh_quote_cache(symbols, force_refresh=False, trigger="scheduled", *args, **kwargs):
         requested = _normalized(symbols)
-        if trigger == "startup-prewarm":
-            now = m.beijing_now()
-            requested = [symbol for symbol in requested if _market_open(m, symbol, now)]
-            if not requested:
-                m.logger.info("startup quote prewarm skipped: all requested exchanges are closed")
-                return m.store.cached_quotes(_normalized(symbols))
-        return original_refresh_quote_cache(requested, force_refresh, trigger, *args, **kwargs)
+        now = m.beijing_now()
+        refreshable = _quote_refresh_symbols(m, requested, str(trigger), now)
+        if not refreshable:
+            m.logger.info(
+                "quote/intraday cache refresh skipped local_first=true trigger=%s market_open=false symbols=%s",
+                trigger,
+                ",".join(requested) or "none",
+            )
+            return m.store.cached_quotes(requested)
+        return original_refresh_quote_cache(refreshable, force_refresh, trigger, *args, **kwargs)
+
+    def refresh_intraday_cache(symbols, trigger):
+        requested = _normalized(symbols)
+        now = m.beijing_now()
+        refreshable = [symbol for symbol in requested if _market_open(m, symbol, now)]
+        if not refreshable:
+            m.logger.info(
+                "intraday provider refresh skipped local_first=true trigger=%s market_open=false symbols=%s",
+                trigger,
+                ",".join(requested) or "none",
+            )
+            return None
+        return original_refresh_intraday_cache(refreshable, trigger)
 
     def refresh_derived_cache(symbols, trigger, force_history=False, run_id=None):
         requested = _normalized(symbols)
@@ -254,7 +329,9 @@ def install(m) -> None:
         finally:
             m.refresh_market_intelligence = saved
 
+    m.fetch_and_store_quotes = fetch_and_store_quotes
     m.refresh_quote_cache = refresh_quote_cache
+    m.refresh_intraday_cache = refresh_intraday_cache
     m.refresh_derived_cache = refresh_derived_cache
     m.refresh_paper_market_intelligence = refresh_paper_market_intelligence
     m.market_regime_service.assess = assess_market_regime
