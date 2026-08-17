@@ -8,6 +8,7 @@ from __future__ import annotations
 
 from dataclasses import replace
 from datetime import datetime
+import logging
 
 from app.domain.company.context import (
     CompanyContext,
@@ -17,6 +18,9 @@ from app.domain.company.context import (
 )
 from app.domain.research.data_gateway import ResearchDataRequest, ResearchDataResult
 from app.time_utils import beijing_now
+
+
+logger = logging.getLogger(__name__)
 
 
 class CompanyIntelligenceService:
@@ -149,11 +153,23 @@ class CompanyIntelligenceService:
                 allow_stale_on_error=True,
             )
             fetcher = self.provider_registry.get(spec.data_type) if self.provider_registry else None
-            result = (
-                self.gateway.get_or_fetch(request, fetcher=fetcher)
-                if allow_remote and fetcher is not None
-                else self._local_only(request)
-            )
+            try:
+                result = (
+                    self.gateway.get_or_fetch(request, fetcher=fetcher)
+                    if allow_remote and fetcher is not None
+                    else self._local_only(request)
+                )
+            except Exception as error:
+                # Company datasets are independent research enrichments. One
+                # missing provider/market-specific endpoint must not discard the
+                # datasets that are available for the same company.
+                logger.warning(
+                    "company dataset unavailable symbol=%s dataset=%s error_type=%s",
+                    symbol,
+                    spec.key,
+                    type(error).__name__,
+                )
+                result = self._local_only(request)
             if result is None:
                 missing.append(spec.key)
                 continue
