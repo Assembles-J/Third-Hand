@@ -12,6 +12,7 @@ from uuid import uuid4
 
 from app import decision_config as config
 from app.candidate_selection import CandidateSelection, select_candidates
+from app.execution_precheck import execution_quote_observed_at
 from app.paper_runtime import (
     candidate_pool_audit,
     current_candidate_selection,
@@ -306,7 +307,7 @@ def install(m) -> None:
                     trade_id=str(uuid4()), symbol=symbol, name=symbol_name, side=side,
                     quantity=quantity, price=price, decision_id=str(report.get("decision_id") or "") or None,
                     reason=f"next_eligible_observed_quote:{action}; {str(report.get('summary') or '')[:180]}",
-                    execution_quote_at=str((quote or {}).get("as_of") or (quote or {}).get("retrieved_at") or "") or None,
+                    execution_quote_at=execution_quote_observed_at(quote),
                     execution_quote_source=str((quote or {}).get("source") or "") or None,
                     fill_price_mode="NEXT_ELIGIBLE_OBSERVED_QUOTE",
                 )
