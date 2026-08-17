@@ -236,7 +236,7 @@ private fun CompanyIntelligenceBody(company: CompanyContextDto) {
 
     competition?.let {
         val peers = it.listOfMaps("growth_peer_comparison").ifEmpty { it.listOfMaps("valuation_peer_comparison") }
-        if (peers.isNotEmpty()) CompanyDatasetSection("行业与同业", peers.take(3).joinToString("；") { researchRowSummary(it, it.keys.take(4).map(String::valueOf)) })
+        if (peers.isNotEmpty()) CompanyDatasetSection("行业与同业", peers.take(3).joinToString("；") { row -> researchRowSummary(row, row.keys.take(4).map { key -> key.toString() }) })
     }
 
     if (company.missing_datasets.isNotEmpty()) {
@@ -301,7 +301,8 @@ private fun researchRowSummary(row: Map<String, Any?>, preferredKeys: List<Strin
         .joinToString(" · ") { (key, value) -> "${companyFieldLabel(key)} ${formatResearchValue(value)}" }
 }
 
-private fun formatResearchValue(value: Any, percentHint: Boolean = false): String {
+private fun formatResearchValue(value: Any?, percentHint: Boolean = false): String {
+    if (value == null) return ""
     val number = (value as? Number)?.toDouble() ?: value.toString().replace(",", "").removeSuffix("%").toDoubleOrNull()
     if (number == null) return value.toString()
     if (percentHint) {
