@@ -19,8 +19,8 @@ FRESHNESS_POLICY_VERSION = "freshness-v2-session-aware"
 EXECUTION_POLICY_VERSION = "execution-v2-t1-sell-only"
 CANDIDATE_SELECTION_VERSION = "candidate-rotation-v1"
 OPPORTUNITY_SCORING_VERSION = "research-priority-v1"
-# P0 deliberately applies one conservative, documented age budget across the
-# daily decision flow. Intraday execution is not supported by this policy.
+# Decision-input freshness stays conservative. Execution is a separate boundary:
+# it may consume a strictly later observed intraday quote under EXECUTION_POLICY_VERSION.
 QUOTE_MAX_AGE_SECONDS = 86_400
 MARKET_INTELLIGENCE_MAX_AGE_SECONDS = 86_400
 DAILY_BAR_MAX_AGE_DAYS = 2
