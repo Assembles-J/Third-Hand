@@ -54,6 +54,14 @@ class CompanyIntelligenceService:
             raise ValueError(f"unsupported research priority: {priority}")
         return priority
 
+    def _provider_supported(self, data_type: str, symbol: str) -> bool:
+        if self.provider_registry is None:
+            return False
+        supports = getattr(self.provider_registry, "supports", None)
+        if callable(supports):
+            return bool(supports(data_type, symbol))
+        return self.provider_registry.get(data_type) is not None
+
     def _local_only(self, request: ResearchDataRequest) -> ResearchDataResult | None:
         """Read persisted research data without ever invoking a provider."""
         now = beijing_now()
@@ -98,7 +106,6 @@ class CompanyIntelligenceService:
         symbol = self._symbol(symbol)
         priority = self._priority(symbol, research_priority)
         candidate = self._candidate(symbol)
-        registered = set(self.provider_registry.registered_data_types()) if self.provider_registry else set()
         items = []
         for spec in required_dataset_specs(priority):
             request = ResearchDataRequest(
@@ -116,7 +123,7 @@ class CompanyIntelligenceService:
                 "local_status": local.cache_status if local else "LOCAL_MISS",
                 "snapshot_id": local.snapshot.snapshot_id if local else None,
                 "freshness_status": local.snapshot.freshness_status if local else "missing",
-                "provider_registered": spec.data_type in registered,
+                "provider_registered": self._provider_supported(spec.data_type, symbol),
             })
         return {
             "symbol": symbol,
@@ -152,7 +159,8 @@ class CompanyIntelligenceService:
                 max_age_seconds=spec.max_age_seconds,
                 allow_stale_on_error=True,
             )
-            fetcher = self.provider_registry.get(spec.data_type) if self.provider_registry else None
+            supported = self._provider_supported(spec.data_type, symbol)
+            fetcher = self.provider_registry.get(spec.data_type) if supported else None
             try:
                 result = (
                     self.gateway.get_or_fetch(request, fetcher=fetcher)
@@ -161,8 +169,8 @@ class CompanyIntelligenceService:
                 )
             except Exception as error:
                 # Company datasets are independent research enrichments. One
-                # missing provider/market-specific endpoint must not discard the
-                # datasets that are available for the same company.
+                # unavailable endpoint must not discard the datasets that are
+                # available for the same company.
                 logger.warning(
                     "company dataset unavailable symbol=%s dataset=%s error_type=%s",
                     symbol,
