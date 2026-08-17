@@ -1,8 +1,11 @@
-"""Guard paper execution so a daily decision cannot fill on its own input bar."""
+"""Guard paper execution so a decision never fills on its own input quote."""
 from __future__ import annotations
 
 from dataclasses import dataclass
-from datetime import date, datetime
+from datetime import datetime, timedelta, timezone
+
+
+BEIJING_TZ = timezone(timedelta(hours=8))
 
 
 @dataclass(frozen=True)
@@ -11,28 +14,50 @@ class ExecutionCheck:
     reason: str | None = None
 
 
-def _date(value: object) -> date | None:
+def _has_clock(value: object) -> bool:
+    text = str(value or "").strip()
+    return "T" in text or " " in text
+
+
+def _datetime(value: object) -> datetime | None:
     if not value:
         return None
     try:
-        return datetime.fromisoformat(str(value).replace("Z", "+00:00")).date()
+        parsed = datetime.fromisoformat(str(value).replace("Z", "+00:00"))
     except ValueError:
-        try:
-            return date.fromisoformat(str(value)[:10])
-        except ValueError:
-            return None
+        return None
+    if parsed.tzinfo is None:
+        parsed = parsed.replace(tzinfo=BEIJING_TZ)
+    return parsed.astimezone(BEIJING_TZ)
+
+
+def _observed_at(primary: object, fallback: object) -> datetime | None:
+    """Prefer an exchange/provider timestamp; avoid treating a date-only value as midnight."""
+    if _has_clock(primary):
+        parsed = _datetime(primary)
+        if parsed is not None:
+            return parsed
+    return _datetime(fallback) or _datetime(primary)
 
 
 def validate_daily_execution(report: dict[str, object], quote: dict[str, object] | None) -> ExecutionCheck:
-    """Allow a report only when a later market date supplies the fill price."""
+    """Allow execution only on a strictly later independently observed quote.
+
+    A-share T+1 constrains SELL availability, not BUY timing.  The paper ledger
+    enforces that same-day BUY quantities are not sellable.  This precheck only
+    prevents same-cycle fills by requiring a quote observed after the decision
+    input quote, including when both observations occur on the same trading day.
+    """
     if not quote or quote.get("price") is None:
         return ExecutionCheck(False, "execution_quote_missing")
-    decision_date = _date(report.get("market_as_of") or report.get("generated_at"))
-    fill_date = _date(quote.get("as_of") or quote.get("retrieved_at"))
-    if not decision_date or not fill_date:
+
+    decision_at = _observed_at(report.get("market_as_of"), report.get("generated_at"))
+    fill_at = _observed_at(quote.get("as_of"), quote.get("retrieved_at"))
+    if not decision_at or not fill_at:
         return ExecutionCheck(False, "execution_time_unknown")
-    if fill_date <= decision_date:
-        return ExecutionCheck(False, "execution_not_due_next_market_session")
+    if fill_at <= decision_at:
+        return ExecutionCheck(False, "execution_not_due_later_quote")
+
     gates = ((report.get("data_quality") or {}).get("action_gates") or [])
     action = str(report.get("action") or "").upper()
     gate = next((item for item in gates if str(item.get("action") or "").upper() == action), None)
