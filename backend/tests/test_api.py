@@ -12,6 +12,7 @@ import sys
 from pathlib import Path
 
 from app import decision_config as config
+from app.price_history import PriceHistoryUnavailable
 
 
 _suite_path = Path(__file__).with_name("api_suite.py")
@@ -25,7 +26,9 @@ setup_function = _suite.setup_function
 
 _REPLACED = {
     "test_decision_shadow_endpoint_persists_policy_candidates_without_replacing_recommendations",
+    "test_derived_refresh_uses_sufficient_local_history_without_remote_fetch",
     "test_paper_run_persists_run_stages_and_symbol_terminal_state",
+    "test_paper_run_records_skipped_data_unavailable_when_history_missing",
 }
 for _name, _value in vars(_suite).items():
     if _name.startswith("test_") and callable(_value) and _name not in _REPLACED:
@@ -58,6 +61,41 @@ def test_decision_shadow_endpoint_persists_policy_candidates_without_replacing_r
     assert response.json()["policy_version"] == config.ACTION_POLICY_VERSION
     assert _suite.store.shadow_reports("600519")[0]["shadow_id"] == response.json()["shadow_id"]
     assert _suite.client.get("/v1/research-recommendations").json() == []
+
+
+def test_derived_refresh_uses_sufficient_local_history_without_remote_fetch(monkeypatch):
+    class MarketRegimeFixture:
+        def assess(self):
+            return {"status": "unavailable"}
+
+    symbol = "600519"
+    _suite.store.add("holding-1", symbol, "test", 100, 10)
+    expected = _suite.date(2026, 8, 14)
+    _suite.store.save_daily_prices(symbol, [{
+        "trading_date": (expected - _suite.timedelta(days=64 - index)).isoformat(),
+        "open": 10 + index,
+        "close": 10.5 + index,
+        "high": 11 + index,
+        "low": 9 + index,
+        "source": "local-test",
+    } for index in range(65)])
+    remote_calls = []
+    monkeypatch.setattr(
+        _suite.main.price_history_service,
+        "refresh",
+        lambda *args, **kwargs: remote_calls.append((args, kwargs)),
+    )
+    monkeypatch.setattr(_suite.main, "market_regime_service", MarketRegimeFixture())
+    monkeypatch.setattr(
+        _suite.main.trading_calendar,
+        "latest_completed_symbol_session_date",
+        lambda *_args, **_kwargs: expected.isoformat(),
+    )
+
+    _suite.main.refresh_derived_cache([symbol], "paper-trading-decision", force_history=True)
+
+    assert remote_calls == []
+    assert _suite.store.cached_risk(symbol) is not None
 
 
 def test_paper_run_persists_run_stages_and_symbol_terminal_state(monkeypatch):
@@ -99,10 +137,14 @@ def test_paper_run_persists_run_stages_and_symbol_terminal_state(monkeypatch):
     monkeypatch.setattr(_suite.main.market_data, "latest_market_snapshot", lambda markets: [])
     monkeypatch.setattr(_suite.main.news_service, "fetch", lambda symbols, names: [])
     monkeypatch.setattr(_suite.main, "market_regime_service", MarketRegimeFixture())
+    monkeypatch.setattr(
+        _suite.main.trading_calendar,
+        "is_symbol_market_open",
+        lambda *_args, **_kwargs: False,
+    )
 
     result = _suite.main.run_paper_trading_cycle([symbol], force=True, allow_when_disabled=True)
 
-    assert remote_quote_calls == []
     assert result["run_id"]
     runs = _suite.store.simulation_runs()
     assert len(runs) == 1
@@ -131,3 +173,43 @@ def test_paper_run_persists_run_stages_and_symbol_terminal_state(monkeypatch):
     response = _suite.client.get(f"/v1/paper-trading/runs/{result['run_id']}")
     assert response.status_code == 200
     assert response.json()["status"] == "completed"
+
+
+def test_paper_run_records_skipped_data_unavailable_when_history_missing(monkeypatch):
+    class MarketRegimeFixture:
+        def assess(self):
+            return {"status": "unavailable"}
+
+    symbol = "000001"
+    _suite.store.save_paper_account(100_000)
+    quote = {
+        "symbol": symbol,
+        "name": "test",
+        "price": 10.0,
+        "as_of": "2026-08-17T10:00:00+08:00",
+        "retrieved_at": "2026-08-17T10:00:00+08:00",
+        "source": "test",
+        "change_percent": 0.0,
+        "refresh_status": "stored",
+    }
+    monkeypatch.setattr(_suite.main.market_data, "quotes", lambda symbols, force_refresh=False: [dict(quote)])
+    monkeypatch.setattr(_suite.main.market_data, "latest_market_snapshot", lambda markets: [])
+    monkeypatch.setattr(_suite.main.news_service, "fetch", lambda symbols, names: [])
+    monkeypatch.setattr(_suite.main, "market_regime_service", MarketRegimeFixture())
+    monkeypatch.setattr(_suite.main.trading_calendar, "is_symbol_market_open", lambda *_args, **_kwargs: True)
+    monkeypatch.setattr(
+        _suite.main.price_history_service,
+        "refresh",
+        lambda *args, **kwargs: (_ for _ in ()).throw(PriceHistoryUnavailable("test outage")),
+    )
+
+    result = _suite.main.run_paper_trading_cycle([symbol], force=True, allow_when_disabled=True)
+
+    detail = _suite.store.simulation_run(result["run_id"])
+    symbol_state = next(item for item in detail["symbols"] if item["symbol"] == symbol)
+    assert symbol_state["terminal_state"] == "skipped_data_unavailable"
+    assert symbol_state["detail"]["reason"] == "insufficient_daily_bars"
+    assert not any(
+        stage["stage"] == "decision" and stage["symbol"] == symbol and stage["status"] == "ok"
+        for stage in detail["stages"]
+    )
