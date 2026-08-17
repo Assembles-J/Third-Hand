@@ -96,16 +96,19 @@ class CompanyAkshareProvider:
 
     provider_name = "AKShare"
 
+    def supports(self, data_type: str, symbol: str) -> bool:
+        supported = HK_SHARE_TYPES if _is_hk(str(symbol or "").strip().upper()) else A_SHARE_TYPES
+        return str(data_type or "").strip().lower() in supported
+
     def register(self, registry) -> None:
         for data_type in sorted(A_SHARE_TYPES | HK_SHARE_TYPES):
-            registry.register(data_type, self.fetch)
+            registry.register(data_type, self.fetch, supports=self.supports)
 
     def fetch(self, request: ResearchDataRequest, missing, existing) -> ProviderFetchResult:
         symbol = str(request.symbol or "").strip().upper()
         if not symbol:
             raise ValueError("company_provider_symbol_required")
-        supported = HK_SHARE_TYPES if _is_hk(symbol) else A_SHARE_TYPES
-        if request.data_type not in supported:
+        if not self.supports(request.data_type, symbol):
             raise ValueError(f"company_dataset_not_supported_for_market:{request.data_type}:{symbol}")
 
         import akshare as ak
