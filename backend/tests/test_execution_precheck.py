@@ -1,4 +1,4 @@
-from app.execution_precheck import validate_daily_execution
+from app.execution_precheck import execution_quote_observed_at, validate_daily_execution
 
 
 def _report(action: str = "OPEN", market_as_of: str = "2026-08-17T10:04:00+08:00") -> dict[str, object]:
@@ -69,6 +69,26 @@ def test_date_only_market_as_of_uses_retrieved_timestamp_for_ordering():
     check = validate_daily_execution(report, quote)
 
     assert check.allowed is True
+
+
+def test_execution_quote_audit_uses_retrieved_at_when_as_of_is_date_only():
+    quote = {
+        "price": 10.5,
+        "as_of": "2026-08-17",
+        "retrieved_at": "2026-08-17T10:14:01+08:00",
+    }
+
+    assert execution_quote_observed_at(quote) == "2026-08-17T10:14:01+08:00"
+
+
+def test_execution_quote_audit_prefers_precise_provider_time():
+    quote = {
+        "price": 10.5,
+        "as_of": "2026-08-17T10:14:00+08:00",
+        "retrieved_at": "2026-08-17T10:14:01+08:00",
+    }
+
+    assert execution_quote_observed_at(quote) == "2026-08-17T10:14:00+08:00"
 
 
 def test_open_still_requires_allowed_action_gate():
