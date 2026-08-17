@@ -40,6 +40,14 @@ def _observed_at(primary: object, fallback: object) -> datetime | None:
     return _datetime(fallback) or _datetime(primary)
 
 
+def execution_quote_observed_at(quote: dict[str, object] | None) -> str | None:
+    """Return the canonical timestamp used to prove a fill was observed after its decision."""
+    if not quote:
+        return None
+    observed = _observed_at(quote.get("as_of"), quote.get("retrieved_at"))
+    return observed.isoformat() if observed is not None else None
+
+
 def validate_daily_execution(report: dict[str, object], quote: dict[str, object] | None) -> ExecutionCheck:
     """Allow execution only on a strictly later independently observed quote.
 
