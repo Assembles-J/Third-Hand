@@ -10,13 +10,17 @@ EVIDENCE_VERSION = "evidence-v2-usage-scope"
 ACTION_POLICY_VERSION = "swing-policy-v3-position-action-semantics"
 OPEN_GATE_AUDIT_VERSION = "open-gate-audit-v1"
 # v2 records the Day-0 shift from wall-clock TTL checks for daily data to
-# latest-completed-exchange-session semantics.  Thresholds are unchanged; the
+# latest-completed-exchange-session semantics. Thresholds are unchanged; the
 # version bump makes the already-deployed behavior auditable in DecisionReport.
 FRESHNESS_POLICY_VERSION = "freshness-v2-session-aware"
+# v2 fixes A-share execution semantics: OPEN/ADD may fill on a strictly later
+# observed quote in the same trading day, while T+1 remains a SELL-availability
+# constraint enforced by the paper ledger.
+EXECUTION_POLICY_VERSION = "execution-v2-t1-sell-only"
 CANDIDATE_SELECTION_VERSION = "candidate-rotation-v1"
 OPPORTUNITY_SCORING_VERSION = "research-priority-v1"
-# P0 deliberately applies one conservative, documented age budget across the
-# daily decision flow. Intraday execution is not supported by this policy.
+# Decision-input freshness stays conservative. Execution is a separate boundary:
+# it may consume a strictly later observed intraday quote under EXECUTION_POLICY_VERSION.
 QUOTE_MAX_AGE_SECONDS = 86_400
 MARKET_INTELLIGENCE_MAX_AGE_SECONDS = 86_400
 DAILY_BAR_MAX_AGE_DAYS = 2
@@ -41,6 +45,7 @@ def audit_version_snapshot() -> dict[str, str]:
         "open_gate_audit_version": OPEN_GATE_AUDIT_VERSION,
         "sizing_version": SIZING_VERSION,
         "freshness_policy_version": FRESHNESS_POLICY_VERSION,
+        "execution_policy_version": EXECUTION_POLICY_VERSION,
         "decision_prompt_version": DECISION_RESEARCH_PROMPT_VERSION,
         "candidate_selection_version": CANDIDATE_SELECTION_VERSION,
         "opportunity_scoring_version": OPPORTUNITY_SCORING_VERSION,

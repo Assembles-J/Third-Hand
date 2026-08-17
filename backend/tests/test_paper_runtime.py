@@ -7,6 +7,10 @@ from app.paper_runtime import (
 )
 
 
+def _execution_audit() -> dict[str, str]:
+    return {"execution_policy_version": config.EXECUTION_POLICY_VERSION}
+
+
 def test_requested_scope_can_only_narrow_not_inject_candidates_or_due_items():
     selection = select_candidates(
         ["600001", "600002", "600003"],
@@ -47,18 +51,24 @@ def test_due_historical_decision_survives_new_rotation_when_in_execution_scope()
     assert old_due in runtime
 
 
-def test_report_reuse_requires_same_candidate_and_policy_lineage():
+def test_report_reuse_requires_same_candidate_policy_and_execution_lineage():
     selection = select_candidates(["600001", "600002"], limit=1, rotation_key="2026-08-14")
     report = {
         "policy_version": "policy-v2",
         "candidate_selection_version": selection.selection_version,
         "candidate_pool_hash": selection.candidate_pool_hash,
         "candidate_rotation_key": selection.rotation_key,
+        "audit_versions": _execution_audit(),
     }
 
     assert report_matches_current_selection(report, selection, policy_version="policy-v2")
     assert not report_matches_current_selection({**report, "policy_version": "policy-v1"}, selection, policy_version="policy-v2")
     assert not report_matches_current_selection({**report, "candidate_pool_hash": "old"}, selection, policy_version="policy-v2")
+    assert not report_matches_current_selection(
+        {**report, "audit_versions": {"execution_policy_version": "execution-v1-next-session"}},
+        selection,
+        policy_version="policy-v2",
+    )
 
 
 def test_newer_manual_report_does_not_mask_latest_formal_paper_report():
@@ -66,11 +76,13 @@ def test_newer_manual_report_does_not_mask_latest_formal_paper_report():
         "decision_id": "formal",
         "policy_version": "policy-v2",
         "candidate_selection_version": config.CANDIDATE_SELECTION_VERSION,
+        "audit_versions": _execution_audit(),
     }
     manual = {
         "decision_id": "manual",
         "policy_version": "policy-v2",
         "candidate_selection_version": None,
+        "audit_versions": _execution_audit(),
     }
 
     class Store:
@@ -80,3 +92,19 @@ def test_newer_manual_report_does_not_mask_latest_formal_paper_report():
 
     resolved = latest_current_version_decision_report(Store(), "600001", policy_version="policy-v2")
     assert resolved is formal
+
+
+def test_old_execution_policy_report_is_not_due_under_new_execution_semantics():
+    old = {
+        "decision_id": "old-execution-policy",
+        "policy_version": "policy-v2",
+        "candidate_selection_version": config.CANDIDATE_SELECTION_VERSION,
+        "audit_versions": {"execution_policy_version": "execution-v1-next-session"},
+    }
+
+    class Store:
+        @staticmethod
+        def decision_reports(_symbol, _limit):
+            return [old]
+
+    assert latest_current_version_decision_report(Store(), "600001", policy_version="policy-v2") is None

@@ -277,7 +277,7 @@ def install(m) -> None:
                 continue
             check = m.validate_daily_execution(report, quote)
             if not check.allowed:
-                terminal_state = "not_due" if check.reason == "execution_not_due_next_market_session" else "blocked_by_gate" if check.reason == "execution_action_gate_blocked" else "skipped_execution"
+                terminal_state = "not_due" if check.reason in {"execution_not_due_next_market_session", "execution_not_due_later_quote"} else "blocked_by_gate" if check.reason == "execution_action_gate_blocked" else "skipped_execution"
                 detail = {"name": symbol_name, "decision_id": str(report.get("decision_id") or ""), "reason": check.reason, "action": report.get("action")}
                 m._record_simulation_symbol_state(run_id, symbol, terminal_state, detail, name=symbol_name)
                 m._record_simulation_stage(run_id, "execution", "skipped", symbol=symbol, detail={"terminal_state": terminal_state, **detail}, started_at=stage_started_at)
@@ -305,7 +305,7 @@ def install(m) -> None:
                 m.store.execute_paper_trade(
                     trade_id=str(uuid4()), symbol=symbol, name=symbol_name, side=side,
                     quantity=quantity, price=price, decision_id=str(report.get("decision_id") or "") or None,
-                    reason=f"next_market_session:{action}; {str(report.get('summary') or '')[:180]}",
+                    reason=f"next_eligible_observed_quote:{action}; {str(report.get('summary') or '')[:180]}",
                     execution_quote_at=str((quote or {}).get("as_of") or (quote or {}).get("retrieved_at") or "") or None,
                     execution_quote_source=str((quote or {}).get("source") or "") or None,
                     fill_price_mode="NEXT_ELIGIBLE_OBSERVED_QUOTE",

@@ -51,9 +51,12 @@ def current_candidate_selection(store, *, limit: int, rotation_key: str) -> Cand
 
 
 def _is_current_formal_report(report: dict[str, object], *, policy_version: str) -> bool:
+    audit_versions = report.get("audit_versions") or {}
     return bool(
         report.get("policy_version") == policy_version
         and report.get("candidate_selection_version") == config.CANDIDATE_SELECTION_VERSION
+        and isinstance(audit_versions, dict)
+        and audit_versions.get("execution_policy_version") == config.EXECUTION_POLICY_VERSION
     )
 
 
@@ -81,9 +84,10 @@ def pending_current_version_decision_symbols(
 
     A due historical DecisionReport must not disappear merely because a new day's
     deterministic rotation chose a different research cohort. Conversely, legacy
-    reports from an older policy/candidate regime must never leak into the frozen
-    observation ledger. Newer manual/research DecisionReports without candidate
-    lineage are ignored rather than masking the latest formal paper report.
+    reports from an older policy/candidate/execution regime must never leak into
+    the frozen observation ledger. Newer manual/research DecisionReports without
+    candidate lineage are ignored rather than masking the latest formal paper
+    report.
     """
     with store._connect() as connection:  # package-internal read-only adapter
         rows = connection.execute(
