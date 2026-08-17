@@ -6,6 +6,7 @@ current-version DecisionReport -> next eligible observed quote path.
 """
 from __future__ import annotations
 
+import json
 from typing import Any
 
 from .tool_registry import ALLOWED_TOOLS
@@ -46,6 +47,24 @@ class ToolExecutor:
                 except TypeError:
                     continue
         return None
+
+    def _latest_company_context(self, symbol: str):
+        """Read the persisted RESEARCH_ONLY CompanyContext when the v2 schema exists."""
+        try:
+            with self.store._connect() as connection:
+                row = connection.execute(
+                    """SELECT payload_json FROM company_research_snapshots
+                       WHERE symbol=? ORDER BY generated_at DESC LIMIT 1""",
+                    (symbol,),
+                ).fetchone()
+        except Exception:
+            return None
+        if not row:
+            return None
+        try:
+            return json.loads(str(row["payload_json"]))
+        except (TypeError, ValueError, json.JSONDecodeError):
+            return None
 
     def execute(self, name, args, context):
         if name not in ALLOWED_TOOLS:
@@ -124,7 +143,13 @@ class ToolExecutor:
             return self._json_safe(self.store.cached_risk(symbol))
 
         if name == "get_company_fundamentals":
-            return self._json_safe(self.store.instrument_metadata(symbol))
+            company_context = self._latest_company_context(symbol)
+            return self._json_safe({
+                "company_context": company_context,
+                "instrument_metadata": self.store.instrument_metadata(symbol),
+                "usage_scope": "RESEARCH_ONLY",
+                "formal_trade_authority": False,
+            })
 
         if name in {"get_announcement_timeline", "get_company_news"}:
             limit = max(1, min(int(args.get("limit") or 20), 50))

@@ -16,7 +16,8 @@ def load_legacy_application() -> ModuleType:
     Import ordering is part of the production contract: daily-history policy and
     compatibility hooks must wrap PortfolioStore/provider classes before the
     legacy module constructs its singletons. Paper runtime governance then
-    patches that exact module object. Session-aware data scheduling narrows when
+    patches that exact module object. Adaptive scheduling narrows cadence/scope
+    without changing policy authority. Session-aware data scheduling narrows when
     provider-backed refreshes may run. Finally, additive non-conflicting v2
     routes receive dependencies from bootstrap.
     """
@@ -28,10 +29,12 @@ def load_legacy_application() -> ModuleType:
 
     from app.legacy import application_legacy as application
     from app.paper_runtime_integration import install as install_paper_runtime_governance
+    from app.adaptive_paper_runtime import install as install_adaptive_paper_runtime
     from app.data_scheduling_policy import install as install_data_scheduling_policy
     from app.bootstrap.v2_routes import register_v2_routes
 
     install_paper_runtime_governance(application)
+    install_adaptive_paper_runtime(application)
     install_data_scheduling_policy(application)
     register_v2_routes(application)
     return application
