@@ -1,7 +1,7 @@
 """Install adaptive scheduling around the governed paper runtime.
 
 This module deliberately reuses the already-installed paper runtime primitives.
-It only controls cadence and scope.  Candidate authorization, ActionPolicy,
+It only controls cadence and scope. Candidate authorization, ActionPolicy,
 PositionSizing and execution remain owned by their existing deterministic layers.
 """
 from __future__ import annotations
@@ -23,6 +23,7 @@ def install(m) -> None:
     original_paper_trading_symbols = m.paper_trading_symbols
     original_refresh_universe_opportunity_inputs = m.refresh_universe_opportunity_inputs
     m.last_paper_candidate_scan_at = 0.0
+    m.last_company_intelligence_focus_at = 0.0
 
     def _plan(pending_symbols=()):
         settings = m.store.system_settings()
@@ -46,11 +47,27 @@ def install(m) -> None:
             elapsed = max(0.0, now - m.last_paper_candidate_scan_at)
             candidate_scan_due = m.last_paper_candidate_scan_at <= 0 or elapsed >= scan_interval
             seconds_until_candidate_scan = 0 if candidate_scan_due else max(0, round(scan_interval - elapsed))
+
+        company_elapsed = max(0.0, now - m.last_company_intelligence_focus_at)
+        company_research_due = bool(plan.holding_symbols) and (
+            m.last_company_intelligence_focus_at <= 0
+            or company_elapsed >= plan.company_research_interval_seconds
+        )
+        seconds_until_company_research = None
+        if plan.holding_symbols:
+            seconds_until_company_research = (
+                0
+                if company_research_due
+                else max(0, round(plan.company_research_interval_seconds - company_elapsed))
+            )
+
         return {
             **plan.as_dict(),
             "pending_symbols": list(pending),
             "candidate_scan_due": candidate_scan_due,
             "seconds_until_candidate_scan": seconds_until_candidate_scan,
+            "company_research_due": company_research_due,
+            "seconds_until_company_research": seconds_until_company_research,
             "usage_scope": "SCHEDULING_ONLY",
             "formal_trade_authority": False,
         }
@@ -126,6 +143,13 @@ def install(m) -> None:
                 or scan_elapsed >= plan.candidate_scan_interval_seconds
             )
 
+        company_elapsed = max(0.0, now_mono - m.last_company_intelligence_focus_at)
+        company_research_due = bool(plan.holding_symbols) and (
+            force
+            or m.last_company_intelligence_focus_at <= 0
+            or company_elapsed >= plan.company_research_interval_seconds
+        )
+
         if force:
             effective_requested = tuple(dict.fromkeys(
                 str(item).strip().upper() for item in requested_symbols if str(item).strip()
@@ -184,6 +208,7 @@ def install(m) -> None:
             "adaptive_schedule": {
                 **plan.as_dict(),
                 "candidate_scan_due": candidate_scan_due,
+                "company_research_due": company_research_due,
             },
         })
         for item in pool_detail.get("selected_items", []):
@@ -231,16 +256,31 @@ def install(m) -> None:
                 detail={"symbol_count": len(symbols), "usage_scope": "RESEARCH_ONLY"},
             )
 
-            # Company Intelligence is research-only.  When installed, held names
-            # receive the deeper L3/L4 context chosen by the adaptive plan.  Its
-            # own gateway remains local-first and TTL-controlled.
-            company_focus = [symbol for symbol in plan.focus_symbols if symbol in set(symbols)]
+            # Market/risk review may run every five minutes, but company
+            # fundamentals are slow-moving. Deep research is separately
+            # throttled and the gateway remains local-first/TTL-aware.
             refresh_company = getattr(m, "refresh_company_intelligence_focus", None)
-            if callable(refresh_company) and company_focus:
+            if callable(refresh_company) and plan.holding_symbols and company_research_due:
+                # Record the attempt before provider work so a failing endpoint
+                # cannot become a five-minute retry loop.
+                m.last_company_intelligence_focus_at = now_mono
                 refresh_company(
-                    company_focus,
+                    list(plan.holding_symbols),
                     research_priority=plan.holding_research_priority,
                     run_id=run_id,
+                )
+            elif plan.holding_symbols:
+                m._record_simulation_stage(
+                    run_id,
+                    "company_intelligence",
+                    "skipped",
+                    detail={
+                        "research_priority": plan.holding_research_priority,
+                        "reason": "adaptive_company_research_interval_not_due",
+                        "company_research_interval_seconds": plan.company_research_interval_seconds,
+                        "usage_scope": "RESEARCH_ONLY",
+                        "formal_trade_authority": False,
+                    },
                 )
 
             due_executed, due_skipped = m.execute_due_paper_decisions(list(due_symbols), names, run_id=run_id)
