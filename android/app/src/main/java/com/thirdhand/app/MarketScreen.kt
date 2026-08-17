@@ -15,9 +15,12 @@ import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Refresh
+import androidx.compose.material.icons.filled.Search
 import androidx.compose.material.icons.filled.TrendingDown
 import androidx.compose.material.icons.filled.TrendingFlat
 import androidx.compose.material.icons.filled.TrendingUp
+import androidx.compose.material3.Card
+import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.FilterChip
@@ -32,6 +35,7 @@ import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
@@ -46,8 +50,8 @@ import com.thirdhand.app.ui.components.TradingPageHeader
 import com.thirdhand.app.ui.components.TradingRowDivider
 import com.thirdhand.app.ui.components.TradingSection
 import com.thirdhand.app.ui.theme.LocalMarketColors
-import kotlinx.coroutines.launch
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.launch
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -58,13 +62,15 @@ fun MarketScreen(onOpenDetail: (ResearchTargetDto) -> Unit) {
     var quotes by remember { mutableStateOf<List<MarketQuoteDto>>(emptyList()) }
     var pulse by remember { mutableStateOf<MarketIntelligenceDto?>(null) }
     var paperSymbols by remember { mutableStateOf<Set<String>>(emptySet()) }
-    var selectedTab by remember { mutableStateOf(0) }
+    var selectedTab by remember { mutableIntStateOf(0) }
     var stockRanking by remember { mutableStateOf("全部") }
     var selectedSector by remember { mutableStateOf<MarketSectorDto?>(null) }
     var sectorDetail by remember { mutableStateOf<MarketSectorDetailDto?>(null) }
     var sectorLoading by remember { mutableStateOf(false) }
+    var searchOpen by remember { mutableStateOf(false) }
     var loading by remember { mutableStateOf(true) }
     var error by remember { mutableStateOf<String?>(null) }
+
     fun refresh() = scope.launch {
         loading = true
         runCatching {
@@ -72,38 +78,87 @@ fun MarketScreen(onOpenDetail: (ResearchTargetDto) -> Unit) {
             val sorted = api.cachedMarketQuotes().sortedWith(compareByDescending<MarketQuoteDto> { it.symbol in positions }.thenBy { it.name.ifBlank { it.symbol } })
             Triple(positions, sorted, api.marketIntelligence(refresh = true))
         }.onSuccess { (positions, cachedQuotes, intelligence) ->
-            paperSymbols = positions; quotes = cachedQuotes; pulse = intelligence; error = null
-            // The server starts AKShare collection in the background.  Show the
-            // cached snapshot immediately, then quietly read it again instead
-            // of making the user press refresh a second time.
+            paperSymbols = positions
+            quotes = cachedQuotes
+            pulse = intelligence
+            error = null
             scope.launch {
-                delay(1400)
-                runCatching { api.marketIntelligence() }.onSuccess { refreshed ->
-                    if (refreshed.data_health != "pending" || refreshed.indices.isNotEmpty()) pulse = refreshed
+                repeat(8) {
+                    if (it > 0) delay(650)
+                    val refreshed = runCatching { api.marketIntelligence() }.getOrNull() ?: return@repeat
+                    pulse = refreshed
+                    if (refreshed.data_health != "pending") return@launch
                 }
             }
         }.onFailure { error = "无法读取行情缓存：${it.message ?: "请检查服务连接"}" }
         loading = false
     }
+
     LaunchedEffect(Unit) { refresh() }
+
     LaunchedEffect(selectedSector?.name) {
         val sector = selectedSector?.name ?: return@LaunchedEffect
         sectorLoading = true
-        sectorDetail = runCatching {
-            api.marketSectorIntelligence(sector, refresh = true)
-            delay(900)
-            api.marketSectorIntelligence(sector)
-        }.getOrElse { MarketSectorDetailDto(sector = sector, data_health = "unavailable", error_message = it.message ?: "板块数据暂不可用") }
+        sectorDetail = null
+        val first = runCatching { api.marketSectorIntelligence(sector, refresh = true) }
+            .getOrElse { MarketSectorDetailDto(sector = sector, data_health = "unavailable", error_message = it.message ?: "板块数据暂不可用") }
+        sectorDetail = first
+        if (first.data_health != "pending" && first.rows.isNotEmpty()) sectorLoading = false
+
+        repeat(12) {
+            if (!sectorLoading) return@LaunchedEffect
+            delay(600)
+            val refreshed = runCatching { api.marketSectorIntelligence(sector) }.getOrNull() ?: return@repeat
+            sectorDetail = refreshed
+            if (refreshed.data_health != "pending") {
+                sectorLoading = false
+                return@LaunchedEffect
+            }
+        }
         sectorLoading = false
     }
+
     LazyColumn(Modifier.fillMaxSize(), contentPadding = PaddingValues(bottom = 24.dp)) {
-        item { TradingPageHeader("行情", "全市场快照、资金流与持仓") { IconButton(onClick = ::refresh, enabled = !loading) { if (loading) CircularProgressIndicator(Modifier.size(20.dp), strokeWidth = 2.dp) else Icon(Icons.Filled.Refresh, "刷新行情") } } }
+        item {
+            TradingPageHeader("行情", "全市场快照、资金流与持仓") {
+                IconButton(onClick = ::refresh, enabled = !loading) {
+                    if (loading) CircularProgressIndicator(Modifier.size(20.dp), strokeWidth = 2.dp)
+                    else Icon(Icons.Filled.Refresh, "刷新行情")
+                }
+            }
+        }
+        item {
+            Card(
+                modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 10.dp).clickable { searchOpen = true },
+                colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceContainerHigh),
+            ) {
+                Row(Modifier.fillMaxWidth().padding(horizontal = 14.dp, vertical = 12.dp), verticalAlignment = Alignment.CenterVertically) {
+                    Icon(Icons.Filled.Search, contentDescription = null, modifier = Modifier.size(20.dp), tint = MaterialTheme.colorScheme.onSurfaceVariant)
+                    Column(Modifier.padding(start = 10.dp)) {
+                        Text("搜索股票名称 / 代码", style = MaterialTheme.typography.bodyMedium, fontWeight = FontWeight.Medium)
+                        Text("支持 A 股、ETF、港股", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    }
+                }
+            }
+        }
         if (loading) item { LinearProgressIndicator(Modifier.fillMaxWidth().padding(horizontal = 20.dp)) }
         error?.let { item { Text(it, Modifier.padding(horizontal = 20.dp, vertical = 12.dp), color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.bodySmall) } }
-        item { TabRow(selectedTabIndex = selectedTab) { listOf("大盘", "板块", "个股").forEachIndexed { index, label -> Tab(selected = selectedTab == index, onClick = { selectedTab = index }, text = { Text(label) }) } } }
+        item {
+            TabRow(selectedTabIndex = selectedTab) {
+                listOf("大盘", "板块", "个股").forEachIndexed { index, label ->
+                    Tab(selected = selectedTab == index, onClick = { selectedTab = index }, text = { Text(label) })
+                }
+            }
+        }
         when (selectedTab) {
             0 -> item { MarketOverview(pulse) }
-            1 -> item { MarketSectorRanking(pulse, onOpenSector = { selectedSector = it; sectorDetail = null }) }
+            1 -> item {
+                MarketSectorRanking(pulse, onOpenSector = {
+                    sectorLoading = true
+                    sectorDetail = null
+                    selectedSector = it
+                })
+            }
             else -> {
                 item { TradingSection("全部股票", if (quotes.isEmpty()) "等待本地数据" else "持仓置顶 · 共 ${quotes.size} 只 · 点击查看详情与 K 线") }
                 item { StockRankingFilters(stockRanking) { stockRanking = it } }
@@ -117,14 +172,25 @@ fun MarketScreen(onOpenDetail: (ResearchTargetDto) -> Unit) {
             }
         }
     }
+
+    if (searchOpen) {
+        ModalBottomSheet(onDismissRequest = { searchOpen = false }) {
+            StockSearchScreen(onSelect = { candidate ->
+                searchOpen = false
+                onOpenDetail(ResearchTargetDto(candidate.symbol, candidate.name, "market", ""))
+            })
+        }
+    }
+
     selectedSector?.let { sector ->
-        ModalBottomSheet(onDismissRequest = { selectedSector = null; sectorDetail = null }) {
+        ModalBottomSheet(onDismissRequest = { selectedSector = null; sectorDetail = null; sectorLoading = false }) {
             SectorDrillDownSheet(sector, sectorDetail, sectorLoading, onOpenDetail)
         }
     }
 }
 
-@Composable private fun StockRankingFilters(selected: String, onSelected: (String) -> Unit) {
+@Composable
+private fun StockRankingFilters(selected: String, onSelected: (String) -> Unit) {
     LazyRow(Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 8.dp)) {
         items(listOf("全部", "涨幅", "跌幅", "成交额", "主力流入", "主力流出")) { label ->
             FilterChip(selected = selected == label, onClick = { onSelected(label) }, label = { Text(label) }, modifier = Modifier.padding(end = 8.dp))
@@ -132,25 +198,26 @@ fun MarketScreen(onOpenDetail: (ResearchTargetDto) -> Unit) {
     }
 }
 
-@Composable private fun MarketOverview(pulse: MarketIntelligenceDto?) {
+@Composable
+private fun MarketOverview(pulse: MarketIntelligenceDto?) {
     val colors = LocalMarketColors.current
     val breadth = pulse?.breadth.orEmpty()
     MarketSessionCard(pulse)
     TradingSection("市场概览", marketFreshnessLabel(pulse))
-    androidx.compose.material3.Card(
+    Card(
         modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp),
-        colors = androidx.compose.material3.CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
+        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
     ) {
-    Row(Modifier.fillMaxWidth().padding(12.dp)) {
-        pulse?.indices?.take(3)?.forEach { index ->
-            val change = index.change_percent ?: 0.0
-            Column(Modifier.weight(1f).padding(end = 8.dp)) {
-                Text(index.name, style = MaterialTheme.typography.labelMedium)
-                Text(index.price?.let { "%.2f".format(it) } ?: "--", fontWeight = FontWeight.SemiBold)
-                Text("${if (change > 0) "+" else ""}${"%.2f".format(change)}%", color = if (change >= 0) colors.rise else colors.fall, style = MaterialTheme.typography.labelSmall)
+        Row(Modifier.fillMaxWidth().padding(12.dp)) {
+            pulse?.indices?.take(3)?.forEach { index ->
+                val change = index.change_percent ?: 0.0
+                Column(Modifier.weight(1f).padding(end = 8.dp)) {
+                    Text(index.name, style = MaterialTheme.typography.labelMedium)
+                    Text(index.price?.let { "%.2f".format(it) } ?: "--", fontWeight = FontWeight.SemiBold)
+                    Text("${if (change > 0) "+" else ""}${"%.2f".format(change)}%", color = if (change >= 0) colors.rise else colors.fall, style = MaterialTheme.typography.labelSmall)
+                }
             }
         }
-    }
     }
     Text("涨 ${breadth["rise_count"]?.toInt() ?: "--"} · 平 ${breadth["flat_count"]?.toInt() ?: "--"} · 跌 ${breadth["fall_count"]?.toInt() ?: "--"}", Modifier.padding(horizontal = 20.dp, vertical = 12.dp), style = MaterialTheme.typography.bodyMedium)
     val mainNet = pulse?.fund_flow?.get("主力")?.get("net_amount")
@@ -182,12 +249,9 @@ private fun marketFreshnessLabel(pulse: MarketIntelligenceDto?): String = when (
 private fun MarketSessionCard(pulse: MarketIntelligenceDto?) {
     val colors = LocalMarketColors.current
     val mainNet = pulse?.fund_flow?.get("主力")?.get("net_amount")
-    androidx.compose.material3.Card(
+    Card(
         modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 12.dp),
-        colors = androidx.compose.material3.CardDefaults.cardColors(
-            containerColor = MaterialTheme.colorScheme.primaryContainer,
-            contentColor = MaterialTheme.colorScheme.onPrimaryContainer,
-        ),
+        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.primaryContainer, contentColor = MaterialTheme.colorScheme.onPrimaryContainer),
     ) {
         Column(Modifier.padding(16.dp)) {
             Row(verticalAlignment = Alignment.CenterVertically) {
@@ -197,31 +261,29 @@ private fun MarketSessionCard(pulse: MarketIntelligenceDto?) {
                 }
                 Column(horizontalAlignment = Alignment.End) {
                     Text("主力净流入", style = MaterialTheme.typography.labelSmall)
-                    Text(
-                        mainNet?.let { "%.2f 亿".format(it / 100000000) } ?: "--",
-                        style = MaterialTheme.typography.titleLarge,
-                        fontWeight = FontWeight.Bold,
-                        color = if ((mainNet ?: 0.0) >= 0) colors.rise else colors.fall,
-                    )
+                    Text(mainNet?.let { "%.2f 亿".format(it / 100000000) } ?: "--", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold, color = if ((mainNet ?: 0.0) >= 0) colors.rise else colors.fall)
                 }
             }
-            Text(
-                "数据按市场快照刷新；涨跌颜色同时以数值与正负号表达。",
-                modifier = Modifier.padding(top = 8.dp),
-                style = MaterialTheme.typography.labelSmall,
-            )
+            Text("数据按市场快照刷新；涨跌颜色同时以数值与正负号表达。", modifier = Modifier.padding(top = 8.dp), style = MaterialTheme.typography.labelSmall)
         }
     }
 }
 
-@Composable private fun MarketRankingPreview(title: String, rows: List<MarketRankingDto>, color: androidx.compose.ui.graphics.Color, modifier: Modifier = Modifier, showNetAmount: Boolean = false) {
+@Composable
+private fun MarketRankingPreview(title: String, rows: List<MarketRankingDto>, color: androidx.compose.ui.graphics.Color, modifier: Modifier = Modifier, showNetAmount: Boolean = false) {
     Column(modifier.padding(end = 12.dp)) {
         Text(title, style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
-        rows.take(3).forEach { row -> Row(Modifier.fillMaxWidth().padding(top = 5.dp)) { Text(row.name.ifBlank { row.symbol }, Modifier.weight(1f), maxLines = 1, overflow = TextOverflow.Ellipsis, style = MaterialTheme.typography.labelSmall); Text(if (showNetAmount) row.net_amount?.let { "%.2f 亿".format(it / 100000000) } ?: "--" else row.change_percent?.let { "%.2f%%".format(it) } ?: "--", color = color, style = MaterialTheme.typography.labelSmall) } }
+        rows.take(3).forEach { row ->
+            Row(Modifier.fillMaxWidth().padding(top = 5.dp)) {
+                Text(row.name.ifBlank { row.symbol }, Modifier.weight(1f), maxLines = 1, overflow = TextOverflow.Ellipsis, style = MaterialTheme.typography.labelSmall)
+                Text(if (showNetAmount) row.net_amount?.let { "%.2f 亿".format(it / 100000000) } ?: "--" else row.change_percent?.let { "%.2f%%".format(it) } ?: "--", color = color, style = MaterialTheme.typography.labelSmall)
+            }
+        }
     }
 }
 
-@Composable private fun MarketSectorRanking(pulse: MarketIntelligenceDto?, onOpenSector: (MarketSectorDto) -> Unit) {
+@Composable
+private fun MarketSectorRanking(pulse: MarketIntelligenceDto?, onOpenSector: (MarketSectorDto) -> Unit) {
     TradingSection("行业资金流", "涨跌幅 · 主力净流入 · 点击查看成分股")
     (pulse?.sectors ?: emptyList()).take(15).forEach { sector ->
         Row(Modifier.fillMaxWidth().clickable { onOpenSector(sector) }.padding(horizontal = 20.dp, vertical = 12.dp), verticalAlignment = Alignment.CenterVertically) {
@@ -237,45 +299,104 @@ private fun MarketSessionCard(pulse: MarketIntelligenceDto?) {
     }
 }
 
-@Composable private fun MarketRankingRow(row: MarketRankingDto, ranking: String, asOf: String?, onOpenDetail: (ResearchTargetDto) -> Unit) {
+@Composable
+private fun MarketRankingRow(row: MarketRankingDto, ranking: String, asOf: String?, onOpenDetail: (ResearchTargetDto) -> Unit) {
     val value = if (ranking.startsWith("主力")) row.net_amount else row.change_percent
     val color = if ((value ?: 0.0) >= 0) LocalMarketColors.current.rise else LocalMarketColors.current.fall
     Column(Modifier.fillMaxWidth().clickable { onOpenDetail(ResearchTargetDto(row.symbol, row.name, "market", asOf ?: "")) }.padding(horizontal = 20.dp, vertical = 12.dp)) {
         Row(verticalAlignment = Alignment.CenterVertically) {
-            Column(Modifier.weight(1f)) { Text(row.name.ifBlank { row.symbol }, fontWeight = FontWeight.SemiBold); Text(row.symbol, style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant) }
-            Column(horizontalAlignment = Alignment.End) { Text(row.price?.let { "%.2f".format(it) } ?: "--", fontWeight = FontWeight.Medium); Text(if (ranking.startsWith("主力")) row.net_amount?.let { "%.2f 亿".format(it / 100000000) } ?: "--" else row.change_percent?.let { "${if (it > 0) "+" else ""}%.2f%%".format(it) } ?: "--", color = color, style = MaterialTheme.typography.labelMedium) }
+            Column(Modifier.weight(1f)) {
+                Text(row.name.ifBlank { row.symbol }, fontWeight = FontWeight.SemiBold)
+                Text(row.symbol, style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            }
+            Column(horizontalAlignment = Alignment.End) {
+                Text(row.price?.let { "%.2f".format(it) } ?: "--", fontWeight = FontWeight.Medium)
+                Text(if (ranking.startsWith("主力")) row.net_amount?.let { "%.2f 亿".format(it / 100000000) } ?: "--" else row.change_percent?.let { "${if (it > 0) "+" else ""}%.2f%%".format(it) } ?: "--", color = color, style = MaterialTheme.typography.labelMedium)
+            }
         }
         TradingRowDivider()
     }
 }
 
-@Composable private fun SectorDrillDownSheet(sector: MarketSectorDto, detail: MarketSectorDetailDto?, loading: Boolean, onOpenDetail: (ResearchTargetDto) -> Unit) {
+@Composable
+private fun SectorDrillDownSheet(sector: MarketSectorDto, detail: MarketSectorDetailDto?, loading: Boolean, onOpenDetail: (ResearchTargetDto) -> Unit) {
+    var visibleRows by remember(sector.name, detail?.retrieved_at) { mutableIntStateOf(8) }
+    val allRows = detail?.rows.orEmpty().take(30)
+    LaunchedEffect(allRows.size, visibleRows) {
+        if (visibleRows < allRows.size) {
+            delay(120)
+            visibleRows = (visibleRows + 8).coerceAtMost(allRows.size)
+        }
+    }
+
     Column(Modifier.fillMaxWidth().verticalScroll(rememberScrollState()).padding(horizontal = 20.dp, vertical = 8.dp)) {
         Text(sector.name, style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.SemiBold)
         Text("行业成分股 · 按主力资金流查看", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
-        if (loading || detail?.data_health == "pending") LinearProgressIndicator(Modifier.fillMaxWidth().padding(vertical = 16.dp))
-        detail?.error_message?.let { Text(it, Modifier.padding(vertical = 8.dp), style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.error) }
-        detail?.rows?.take(30)?.forEach { row ->
-            Row(Modifier.fillMaxWidth().clickable { onOpenDetail(ResearchTargetDto(row.symbol, row.name, "market", detail.retrieved_at ?: "")) }.padding(vertical = 12.dp), verticalAlignment = Alignment.CenterVertically) {
-                Column(Modifier.weight(1f)) { Text(row.name.ifBlank { row.symbol }, fontWeight = FontWeight.Medium); Text(row.symbol, style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant) }
-                Column(horizontalAlignment = Alignment.End) { Text(row.price?.let { "%.2f".format(it) } ?: "--"); Text(row.net_amount?.let { "%.2f 亿".format(it / 100000000) } ?: "--", color = if ((row.net_amount ?: 0.0) >= 0) LocalMarketColors.current.rise else LocalMarketColors.current.fall, style = MaterialTheme.typography.labelMedium) }
+        if (loading || detail?.data_health == "pending") {
+            LinearProgressIndicator(Modifier.fillMaxWidth().padding(top = 16.dp))
+            Text(
+                if (allRows.isEmpty()) "正在后台获取板块成分股，完成后自动显示…" else "正在刷新板块数据，当前先显示已有结果…",
+                Modifier.padding(top = 8.dp, bottom = 8.dp),
+                style = MaterialTheme.typography.labelSmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+        }
+        detail?.error_message?.takeIf { detail.data_health != "pending" }?.let {
+            Text(it, Modifier.padding(vertical = 8.dp), style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.error)
+        }
+        allRows.take(visibleRows).forEach { row ->
+            Row(Modifier.fillMaxWidth().clickable { onOpenDetail(ResearchTargetDto(row.symbol, row.name, "market", detail?.retrieved_at ?: "")) }.padding(vertical = 12.dp), verticalAlignment = Alignment.CenterVertically) {
+                Column(Modifier.weight(1f)) {
+                    Text(row.name.ifBlank { row.symbol }, fontWeight = FontWeight.Medium)
+                    Text(row.symbol, style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                }
+                Column(horizontalAlignment = Alignment.End) {
+                    Text(row.price?.let { "%.2f".format(it) } ?: "--")
+                    Text(row.net_amount?.let { "%.2f 亿".format(it / 100000000) } ?: "--", color = if ((row.net_amount ?: 0.0) >= 0) LocalMarketColors.current.rise else LocalMarketColors.current.fall, style = MaterialTheme.typography.labelMedium)
+                }
             }
             TradingRowDivider()
         }
-        if (!loading && detail?.rows.isNullOrEmpty()) Text("暂无可用成分股资金流，请稍后在行情页点击刷新。", Modifier.padding(vertical = 20.dp), style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
+        if (visibleRows < allRows.size) {
+            Row(Modifier.fillMaxWidth().padding(vertical = 14.dp), verticalAlignment = Alignment.CenterVertically) {
+                CircularProgressIndicator(Modifier.size(18.dp), strokeWidth = 2.dp)
+                Text("正在加载更多成分股…", Modifier.padding(start = 8.dp), style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            }
+        }
+        if (!loading && allRows.isEmpty()) {
+            Text("暂无可用成分股资金流，请稍后重试。", Modifier.padding(vertical = 20.dp), style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
+        }
     }
 }
 
-@Composable private fun MarketQuoteRow(quote: MarketQuoteDto, isPaperPosition: Boolean, onOpenDetail: (ResearchTargetDto) -> Unit) {
+@Composable
+private fun MarketQuoteRow(quote: MarketQuoteDto, isPaperPosition: Boolean, onOpenDetail: (ResearchTargetDto) -> Unit) {
     val change = quote.change_percent ?: 0.0
-    val color = when { change > 0 -> LocalMarketColors.current.rise; change < 0 -> LocalMarketColors.current.fall; else -> LocalMarketColors.current.neutral }
+    val color = when {
+        change > 0 -> LocalMarketColors.current.rise
+        change < 0 -> LocalMarketColors.current.fall
+        else -> LocalMarketColors.current.neutral
+    }
     Column(Modifier.fillMaxWidth().clickable { onOpenDetail(ResearchTargetDto(quote.symbol, quote.name, "market", quote.as_of ?: "")) }.padding(horizontal = 20.dp, vertical = 12.dp)) {
         Row(verticalAlignment = Alignment.CenterVertically) {
             Column(Modifier.weight(1f)) {
-                Row(verticalAlignment = Alignment.CenterVertically) { Text(quote.name.ifBlank { quote.symbol }, maxLines = 1, overflow = TextOverflow.Ellipsis, fontWeight = FontWeight.SemiBold); if (isPaperPosition) Text("持仓", Modifier.padding(start = 6.dp), color = MaterialTheme.colorScheme.primary, style = MaterialTheme.typography.labelSmall) }
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Text(quote.name.ifBlank { quote.symbol }, maxLines = 1, overflow = TextOverflow.Ellipsis, fontWeight = FontWeight.SemiBold)
+                    if (isPaperPosition) Text("持仓", Modifier.padding(start = 6.dp), color = MaterialTheme.colorScheme.primary, style = MaterialTheme.typography.labelSmall)
+                }
                 Text("${quote.symbol} · ${quote.as_of?.replace('T', ' ')?.substringBefore('+')?.takeLast(11) ?: "时间未知"}", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
             }
-            Column(horizontalAlignment = Alignment.End) { Text(quote.price?.let { "%.2f".format(it) } ?: "--", fontWeight = FontWeight.SemiBold); Row(verticalAlignment = Alignment.CenterVertically) { Icon(when { change > 0 -> Icons.Filled.TrendingUp; change < 0 -> Icons.Filled.TrendingDown; else -> Icons.Filled.TrendingFlat }, if (change > 0) "上涨" else if (change < 0) "下跌" else "平盘", tint = color, modifier = Modifier.size(16.dp)); Text("${if (change > 0) "+" else ""}${"%.2f".format(change)}%", color = color, style = MaterialTheme.typography.labelMedium) } }
+            Column(horizontalAlignment = Alignment.End) {
+                Text(quote.price?.let { "%.2f".format(it) } ?: "--", fontWeight = FontWeight.SemiBold)
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Icon(when {
+                        change > 0 -> Icons.Filled.TrendingUp
+                        change < 0 -> Icons.Filled.TrendingDown
+                        else -> Icons.Filled.TrendingFlat
+                    }, if (change > 0) "上涨" else if (change < 0) "下跌" else "平盘", tint = color, modifier = Modifier.size(16.dp))
+                    Text("${if (change > 0) "+" else ""}${"%.2f".format(change)}%", color = color, style = MaterialTheme.typography.labelMedium)
+                }
+            }
         }
         TradingRowDivider()
     }
