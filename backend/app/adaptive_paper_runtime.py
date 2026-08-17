@@ -21,6 +21,7 @@ def install(m) -> None:
     m._adaptive_paper_runtime_installed = True
 
     original_paper_trading_symbols = m.paper_trading_symbols
+    original_refresh_universe_opportunity_inputs = m.refresh_universe_opportunity_inputs
     m.last_paper_candidate_scan_at = 0.0
 
     def _plan(pending_symbols=()):
@@ -53,6 +54,28 @@ def install(m) -> None:
             "usage_scope": "SCHEDULING_ONLY",
             "formal_trade_authority": False,
         }
+
+    def refresh_universe_opportunity_inputs(trigger: str) -> list[str]:
+        """Suppress automatic broad-market research when capital is fully deployed.
+
+        Manual/explicit maintenance calls retain their historical behavior. The
+        scheduler-only suppression is important because the legacy market loop
+        performs the whole-market refresh *before* asking ``paper_trading_symbols``.
+        Without this guard a FULL_FOCUS account would still download thousands
+        of unrelated quotes every 30 minutes even though formal paper work had
+        already narrowed itself to holdings.
+        """
+        if str(trigger) == "scheduler-whole-market":
+            state = adaptive_paper_schedule_state()
+            if state["mode"] == "FULL_FOCUS":
+                m.logger.info(
+                    "whole-market candidate refresh skipped adaptive_mode=FULL_FOCUS "
+                    "cash_ratio=%s focus_symbols=%s",
+                    state["cash_ratio"],
+                    ",".join(str(item) for item in state["focus_symbols"]) or "none",
+                )
+                return []
+        return original_refresh_universe_opportunity_inputs(trigger)
 
     def paper_trading_symbols() -> list[str]:
         """Return only work that is actually due under the adaptive cadence."""
@@ -284,5 +307,6 @@ def install(m) -> None:
             raise
 
     m.adaptive_paper_schedule_state = adaptive_paper_schedule_state
+    m.refresh_universe_opportunity_inputs = refresh_universe_opportunity_inputs
     m.paper_trading_symbols = paper_trading_symbols
     m.run_paper_trading_cycle = run_paper_trading_cycle
