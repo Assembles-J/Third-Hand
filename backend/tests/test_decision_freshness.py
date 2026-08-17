@@ -52,14 +52,25 @@ def test_watchlist_state_is_not_an_input_to_policy(tmp_path):
     assert before.data_quality == after.data_quality
 
 
-def test_daily_execution_waits_for_a_later_market_session():
+def test_execution_waits_for_a_later_observed_quote_not_a_later_market_date():
     report = {
-        "action": "OPEN", "generated_at": "2026-08-12T16:00:00+08:00", "market_as_of": "2026-08-12",
+        "action": "OPEN",
+        "generated_at": "2026-08-17T10:04:05+08:00",
+        "market_as_of": "2026-08-17T10:04:00+08:00",
         "data_quality": {"action_gates": [{"action": "OPEN", "permission": "allowed"}]},
     }
 
-    assert validate_daily_execution(report, {"price": 10, "as_of": "2026-08-12"}).reason == "execution_not_due_next_market_session"
-    assert validate_daily_execution(report, {"price": 10, "as_of": "2026-08-13"}).allowed is True
+    same_quote = validate_daily_execution(
+        report,
+        {"price": 10, "as_of": "2026-08-17T10:04:00+08:00"},
+    )
+    later_same_day = validate_daily_execution(
+        report,
+        {"price": 10, "as_of": "2026-08-17T10:14:00+08:00"},
+    )
+
+    assert same_quote.reason == "execution_not_due_later_quote"
+    assert later_same_day.allowed is True
 
 
 def test_llm_news_impact_is_research_only_and_cannot_create_policy_event(tmp_path):
