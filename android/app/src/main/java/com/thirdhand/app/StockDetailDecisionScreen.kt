@@ -135,6 +135,12 @@ fun StockDetailDecisionRoute(
         if (loading && quote == null) item { LoadingCard("正在读取行情…") }
         item { DenseDivider() }
         item { TradingPeriodKLinePanel(symbol = target.symbol, quote = quote) }
+        item {
+            CompanyIntelligencePanel(
+                symbol = target.symbol,
+                researchPriority = if (paperPosition != null || holding != null) "L3" else "L2",
+            )
+        }
         item { DenseDivider() }
         item {
             Column(Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 10.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
@@ -373,6 +379,12 @@ private fun StockDetailDecisionScreen(
         }
         item { DenseDivider() }
         item { TradingPeriodKLinePanel(symbol = target.symbol, quote = state.quote) }
+        item {
+            CompanyIntelligencePanel(
+                symbol = target.symbol,
+                researchPriority = if (state.holding != null) "L3" else "L2",
+            )
+        }
         item { DenseDivider() }
         item {
             ActionPlanCard(
