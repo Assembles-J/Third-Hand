@@ -95,7 +95,9 @@ def test_derived_refresh_uses_sufficient_local_history_without_remote_fetch(monk
     _suite.main.refresh_derived_cache([symbol], "paper-trading-decision", force_history=True)
 
     assert remote_calls == []
-    assert _suite.store.cached_risk(symbol) is not None
+    bars = _suite.store.daily_prices(symbol, 100)
+    assert len(bars) >= 65
+    assert bars[-1]["trading_date"] == expected.isoformat()
 
 
 def test_paper_run_persists_run_stages_and_symbol_terminal_state(monkeypatch):
