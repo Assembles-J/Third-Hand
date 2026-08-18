@@ -1,3 +1,4 @@
+import json
 from datetime import datetime, timedelta, timezone
 from types import SimpleNamespace
 
@@ -227,6 +228,44 @@ def test_future_dataset_is_not_visible_to_earlier_decision(tmp_path):
     assert availability["company_dataset.profit_cashflow_drivers"].reason_codes == ("not_available_at_decision_time",)
     # The independently available margin snapshot remains usable.
     assert any(fact.metric == "gross_margin_percent" for fact in result.facts)
+
+
+def test_future_raw_snapshot_cannot_hide_behind_older_company_ref(tmp_path):
+    store = PortfolioStore(tmp_path / "company-raw-lookahead.db")
+    saved = _save_company_context(
+        store,
+        generated_at="2026-08-17T15:30:00+08:00",
+        future_dataset=True,
+    )
+
+    # Simulate a damaged/backfilled CompanyContext ref claiming that the future
+    # underlying snapshot was already available at 15:00. The raw research
+    # snapshot still truthfully records 17:00 and must win the point-in-time gate.
+    company_context_id = saved["company"]["context_id"]
+    with store._connect() as connection:
+        row = connection.execute(
+            "SELECT payload_json FROM company_research_snapshots WHERE context_id=?",
+            (company_context_id,),
+        ).fetchone()
+        payload = json.loads(str(row["payload_json"]))
+        profit_ref = next(
+            item for item in payload["dataset_refs"]
+            if item["dataset_key"] == "profit_cashflow_drivers"
+        )
+        profit_ref["available_at"] = "2026-08-17T15:00:00+08:00"
+        connection.execute(
+            "UPDATE company_research_snapshots SET payload_json=? WHERE context_id=?",
+            (json.dumps(payload, ensure_ascii=False), company_context_id),
+        )
+
+    result = CompanyResearchAtomicSource(store).build(_decision_context())
+    availability = {item.capability: item for item in result.availability}
+
+    assert not any("profit_cashflow_drivers" in fact.fact_id for fact in result.facts)
+    assert availability["company_dataset.profit_cashflow_drivers"].status == "missing"
+    assert availability["company_dataset.profit_cashflow_drivers"].reason_codes == (
+        "research_snapshot_not_available_at_decision_time",
+    )
 
 
 def test_future_company_context_is_not_backfilled_into_historical_decision(tmp_path):
