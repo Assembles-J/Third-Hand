@@ -114,17 +114,19 @@ weights or a model-produced research label into formal action authority.
 
 ### Phase 3 — Deterministic research aggregation — ACTIVE
 
-The first aggregation slice is implemented: a versioned deterministic
-`DimensionAggregator` and `ResearchAggregator` build a `FundamentalVector` and
-`ResearchAssessment` directly from frozen Atomic Evidence. Mixed polarity,
-missing capability and source conflict remain explicit states; no LLM output or
-Xiaomi-specific weighting is consulted. The assessment is persisted on the
-decision report for audit, but has no action authority until Phase 4.
+The first aggregation slice is implemented: versioned Fact Polarity, Dimension,
+Fundamental and Research policies build a `FundamentalVector` and
+`ResearchAssessment` directly from frozen Atomic Evidence. Fundamental,
+technical, event, optional expectation and market partitions remain isolated;
+mixed polarity, missing capability and source conflict are explicit states. No
+LLM output or Xiaomi-specific weighting is consulted. The assessment is
+persisted on the decision report for audit, but has no action authority until
+Phase 4.
 
 Semantic invariants now validate fact references, mutually exclusive polarity
 buckets, conflict propagation, snapshot identity, and the Phase-4 boundary for
 decision confidence. Remaining: expand domain policies beyond the initial
-fundamental/technical/event/market partitions and introduce the formal
+fundamental/technical/event/expectation/market policies and introduce the formal
 DecisionArbiter with separate decision confidence.
 
 ### Phase 4 — Decision semantics/state machine

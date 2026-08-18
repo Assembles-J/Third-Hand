@@ -45,6 +45,7 @@ class ResearchAssessment(ResearchModel):
     fundamental_vector: FundamentalVector
     technical_state: DimensionAssessment
     event_state: DimensionAssessment
+    expectation_state: DimensionAssessment
     market_context: DimensionAssessment
     research_bias: ResearchState
     evidence_confidence: float = Field(ge=0, le=1)
@@ -77,19 +78,49 @@ _FUNDAMENTAL_DIMENSIONS = {
 }
 
 
+def _aggregate_state(assessments: tuple[DimensionAssessment, ...]) -> ResearchState:
+    states = {item.state for item in assessments}
+    if "CONFLICT" in states:
+        return "CONFLICT"
+    if "SUPPORTIVE" in states and "ADVERSE" in states:
+        return "MIXED"
+    if "MIXED" in states:
+        return "MIXED"
+    if "SUPPORTIVE" in states:
+        return "SUPPORTIVE"
+    if "ADVERSE" in states:
+        return "ADVERSE"
+    if "NEUTRAL" in states:
+        return "NEUTRAL"
+    return "INSUFFICIENT"
+
+
+class FactPolarityPolicy:
+    """Atomic fact polarity is the only directional authority in Phase 3."""
+
+    version = config.FACT_POLARITY_POLICY_VERSION
+
+    @staticmethod
+    def classify(fact: AtomicFactRecord) -> str:
+        return fact.polarity
+
+
 class DimensionAggregator:
     """Aggregate fact polarity without source-level sentiment or model output."""
 
     version = config.DIMENSION_AGGREGATION_POLICY_VERSION
 
+    def __init__(self, polarity_policy: FactPolarityPolicy | None = None) -> None:
+        self.polarity_policy = polarity_policy or FactPolarityPolicy()
+
     def assess(self, dimension: str, facts: tuple[AtomicFactRecord, ...], *, conflicted: bool = False) -> DimensionAssessment:
         facts = tuple(sorted(facts, key=lambda item: item.fact_id))
-        supportive = tuple(item.fact_id for item in facts if item.polarity == "SUPPORTIVE")
-        adverse = tuple(item.fact_id for item in facts if item.polarity == "ADVERSE")
-        neutral = tuple(item.fact_id for item in facts if item.polarity == "NEUTRAL_MATERIAL")
-        unresolved = tuple(item.fact_id for item in facts if item.polarity in {"CONFLICT", "MISSING"})
+        supportive = tuple(item.fact_id for item in facts if self.polarity_policy.classify(item) == "SUPPORTIVE")
+        adverse = tuple(item.fact_id for item in facts if self.polarity_policy.classify(item) == "ADVERSE")
+        neutral = tuple(item.fact_id for item in facts if self.polarity_policy.classify(item) == "NEUTRAL_MATERIAL")
+        unresolved = tuple(item.fact_id for item in facts if self.polarity_policy.classify(item) in {"CONFLICT", "MISSING"})
         directional = len(supportive) + len(adverse)
-        if conflicted or any(item.polarity == "CONFLICT" for item in facts):
+        if conflicted or any(self.polarity_policy.classify(item) == "CONFLICT" for item in facts):
             state = "CONFLICT"
         elif supportive and adverse:
             state = "MIXED"
@@ -117,13 +148,36 @@ class DimensionAggregator:
         )
 
 
+class FundamentalAggregationPolicy:
+    version = config.FUNDAMENTAL_AGGREGATION_POLICY_VERSION
+
+    @staticmethod
+    def aggregate(dimensions: tuple[DimensionAssessment, ...]) -> ResearchState:
+        return _aggregate_state(dimensions)
+
+
+class ResearchAggregationPolicy:
+    version = config.RESEARCH_AGGREGATION_POLICY_VERSION
+
+    @staticmethod
+    def aggregate(dimensions: tuple[DimensionAssessment, ...], *, has_conflicts: bool) -> ResearchState:
+        return "CONFLICT" if has_conflicts else _aggregate_state(dimensions)
+
+
 class ResearchAggregator:
     """Build a reproducible ResearchAssessment from a frozen Atomic snapshot."""
 
     version = config.RESEARCH_AGGREGATION_POLICY_VERSION
 
-    def __init__(self, dimension_aggregator: DimensionAggregator | None = None) -> None:
+    def __init__(
+        self,
+        dimension_aggregator: DimensionAggregator | None = None,
+        fundamental_policy: FundamentalAggregationPolicy | None = None,
+        research_policy: ResearchAggregationPolicy | None = None,
+    ) -> None:
         self.dimension_aggregator = dimension_aggregator or DimensionAggregator()
+        self.fundamental_policy = fundamental_policy or FundamentalAggregationPolicy()
+        self.research_policy = research_policy or ResearchAggregationPolicy()
 
     def build(self, snapshot: AtomicEvidenceSnapshot) -> ResearchAssessment:
         facts_by_metric: dict[str, list[AtomicFactRecord]] = defaultdict(list)
@@ -149,7 +203,7 @@ class ResearchAggregator:
         )
         fundamental = FundamentalVector(
             dimensions=fundamental_dimensions,
-            aggregate_bias=self._state(fundamental_dimensions),
+            aggregate_bias=self.fundamental_policy.aggregate(fundamental_dimensions),
         )
         technical = self.dimension_aggregator.assess(
             "technical",
@@ -159,11 +213,19 @@ class ResearchAggregator:
             "event",
             tuple(fact for fact in snapshot.facts if fact.dimension == "corporate_event"),
         )
+        expectation = self.dimension_aggregator.assess(
+            "expectation",
+            tuple(
+                fact for fact in snapshot.facts
+                if fact.dimension in {"expectation", "valuation"}
+                or fact.metric.startswith(("expectation.", "valuation."))
+            ),
+        )
         market = self.dimension_aggregator.assess(
             "market",
             tuple(fact for fact in snapshot.facts if fact.dimension in {"market_context", "relative_strength"}),
         )
-        states = (*fundamental_dimensions, technical, event, market)
+        states = (*fundamental_dimensions, technical, event, expectation, market)
         unresolved = tuple(sorted(
             f"availability:{item.capability}"
             for item in snapshot.availability
@@ -183,8 +245,9 @@ class ResearchAggregator:
             fundamental_vector=fundamental,
             technical_state=technical,
             event_state=event,
+            expectation_state=expectation,
             market_context=market,
-            research_bias="CONFLICT" if snapshot.conflicts else self._state(states),
+            research_bias=self.research_policy.aggregate(states, has_conflicts=bool(snapshot.conflicts)),
             evidence_confidence=evidence_confidence,
             research_conviction=conviction,
             supportive_fact_ids=tuple(item.fact_id for item in facts if item.polarity == "SUPPORTIVE"),
@@ -196,28 +259,12 @@ class ResearchAggregator:
                 *(f"unavailable:{item.capability}" for item in snapshot.availability if item.status == "missing"),
             })),
             aggregation_policy_versions={
+                "fact_polarity": self.dimension_aggregator.polarity_policy.version,
                 "dimension": self.dimension_aggregator.version,
-                "fundamental": config.FUNDAMENTAL_AGGREGATION_POLICY_VERSION,
-                "research": self.version,
+                "fundamental": self.fundamental_policy.version,
+                "research": self.research_policy.version,
             },
         )
-
-    @staticmethod
-    def _state(assessments: tuple[DimensionAssessment, ...]) -> ResearchState:
-        states = {item.state for item in assessments}
-        if "CONFLICT" in states:
-            return "CONFLICT"
-        if "SUPPORTIVE" in states and "ADVERSE" in states:
-            return "MIXED"
-        if "MIXED" in states:
-            return "MIXED"
-        if "SUPPORTIVE" in states:
-            return "SUPPORTIVE"
-        if "ADVERSE" in states:
-            return "ADVERSE"
-        if "NEUTRAL" in states:
-            return "NEUTRAL"
-        return "INSUFFICIENT"
 
 
 class SemanticInvariantValidator:
@@ -257,7 +304,8 @@ class SemanticInvariantValidator:
 
 
 __all__ = [
-    "DimensionAggregator", "DimensionAssessment", "FundamentalVector",
+    "DimensionAggregator", "DimensionAssessment", "FactPolarityPolicy",
+    "FundamentalAggregationPolicy", "FundamentalVector", "ResearchAggregationPolicy",
     "ResearchAssessment", "ResearchAssessmentValidation", "ResearchAggregator",
     "SemanticInvariantValidator",
 ]

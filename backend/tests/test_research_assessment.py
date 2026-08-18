@@ -113,3 +113,13 @@ def test_research_assessment_treats_conflict_and_missing_data_as_deterministic_u
     ), invalid)
     assert validation.valid is False
     assert "snapshot_conflict_requires_conflict_research_bias" in validation.violations
+
+
+def test_expectation_facts_have_an_explicit_optional_dimension():
+    assessment = ResearchAggregator().build(_snapshot(
+        _fact("fact.valuation", "valuation.forward_pe", "SUPPORTIVE", dimension="valuation"),
+    ))
+
+    assert assessment.expectation_state.state == "SUPPORTIVE"
+    assert assessment.expectation_state.supportive_fact_ids == ("fact.valuation",)
+    assert assessment.aggregation_policy_versions["fact_polarity"] == "fact-polarity-v1-atomic-record-authority"

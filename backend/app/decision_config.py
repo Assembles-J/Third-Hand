@@ -12,6 +12,7 @@ ATOMIC_EVIDENCE_VERSION = "atomic-evidence-shadow-v2-company-research"
 # Phase 3 makes evidence aggregation reproducible and auditable.  These policy
 # versions never grant a research assessment action authority by themselves.
 DIMENSION_AGGREGATION_POLICY_VERSION = "dimension-aggregation-v1-fact-polarity"
+FACT_POLARITY_POLICY_VERSION = "fact-polarity-v1-atomic-record-authority"
 FUNDAMENTAL_AGGREGATION_POLICY_VERSION = "fundamental-aggregation-v1-dimension-consensus"
 RESEARCH_AGGREGATION_POLICY_VERSION = "research-aggregation-v1-domain-consensus"
 SEMANTIC_INVARIANT_VALIDATOR_VERSION = "research-semantic-invariants-v1"
@@ -67,6 +68,7 @@ def audit_version_snapshot() -> dict[str, str]:
         "evidence_version": EVIDENCE_VERSION,
         "atomic_evidence_version": ATOMIC_EVIDENCE_VERSION,
         "dimension_aggregation_policy_version": DIMENSION_AGGREGATION_POLICY_VERSION,
+        "fact_polarity_policy_version": FACT_POLARITY_POLICY_VERSION,
         "fundamental_aggregation_policy_version": FUNDAMENTAL_AGGREGATION_POLICY_VERSION,
         "research_aggregation_policy_version": RESEARCH_AGGREGATION_POLICY_VERSION,
         "semantic_invariant_validator_version": SEMANTIC_INVARIANT_VALIDATOR_VERSION,
