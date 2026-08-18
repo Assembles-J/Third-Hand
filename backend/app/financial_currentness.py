@@ -52,7 +52,8 @@ class FinancialCurrentnessPolicy:
             for fact in financial
             if (parsed := self._date(fact.period_end)) is not None
         )
-        latest_observed = max(report_dates).isoformat() if report_dates else None
+        latest_observed_date = max(report_dates) if report_dates else None
+        latest_observed = latest_observed_date.isoformat() if latest_observed_date else None
 
         earnings_dates = tuple(
             parsed
@@ -63,14 +64,18 @@ class FinancialCurrentnessPolicy:
         expected_report_at = min(earnings_dates).isoformat() if earnings_dates else None
         expected_date = self._date(expected_report_at)
 
-        verified_after_event = False
-        if expected_date is not None:
-            verified_after_event = any(
-                (announced := self._date(fact.announced_at)) is not None
+        def _verified_current_fact(fact: AtomicFactRecord) -> bool:
+            announced = self._date(fact.announced_at)
+            period = self._date(fact.period_end)
+            return (
+                expected_date is not None
+                and announced is not None
                 and announced >= expected_date
-                and self._date(fact.period_end) is not None
-                for fact in financial
+                and period is not None
+                and period == latest_observed_date
             )
+
+        verified_after_event = any(_verified_current_fact(fact) for fact in financial)
 
         if has_financial_conflict:
             current_confirmation = "CONFLICTED"
@@ -102,7 +107,7 @@ class FinancialCurrentnessPolicy:
                 continue
             if self._date(fact.period_end) is None:
                 observation_currentness = "UNKNOWN"
-            elif latest_period_status == "CURRENT" and fact.announced_at:
+            elif latest_period_status == "CURRENT" and _verified_current_fact(fact):
                 observation_currentness = "CURRENT"
             elif latest_period_status == "PENDING_EXPECTED_REPORT":
                 observation_currentness = "PENDING_EXPECTED_REPORT"
