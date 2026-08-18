@@ -414,3 +414,6 @@ def test_xiaomi_frozen_shadow_benchmark_is_reproducible_and_action_isolated(tmp_
     assert shadow_report.entry_decision is not None
     assert shadow_report.entry_decision.action == "WAIT"
     assert shadow_report.position_decision is None
+    assert shadow_report.timeframe_authority is not None
+    assert shadow_report.timeframe_authority.formal_technical_timeframe is None
+    assert "60m" in shadow_report.timeframe_authority.unavailable_timeframes

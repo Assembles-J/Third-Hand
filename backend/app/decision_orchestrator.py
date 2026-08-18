@@ -11,6 +11,7 @@ from app.decision_ai import DecisionAiOutcome
 from app.decision_models import DecisionReport, OperationItem
 from app.research_assessment import ResearchAggregator, SemanticInvariantValidator
 from app.decision_semantics import DecisionArbiter
+from app.timeframe_authority import TimeframeAuthorityPolicy
 from app.time_utils import beijing_now
 from app.trading_calendar import TradingCalendarService
 
@@ -18,13 +19,14 @@ logger = logging.getLogger(__name__)
 
 
 class DecisionOrchestrator:
-    def __init__(self, evidence_engine, policy_engine, sizing_engine, ai_service, guard, atomic_evidence_builder=None, research_aggregator=None, research_validator=None, decision_arbiter=None) -> None:
+    def __init__(self, evidence_engine, policy_engine, sizing_engine, ai_service, guard, atomic_evidence_builder=None, research_aggregator=None, research_validator=None, decision_arbiter=None, timeframe_policy=None) -> None:
         self.evidence_engine, self.policy_engine = evidence_engine, policy_engine
         self.sizing_engine, self.ai_service, self.guard = sizing_engine, ai_service, guard
         self.atomic_evidence_builder = atomic_evidence_builder or AtomicEvidenceSnapshotBuilder()
         self.research_aggregator = research_aggregator or ResearchAggregator()
         self.research_validator = research_validator or SemanticInvariantValidator()
         self.decision_arbiter = decision_arbiter or DecisionArbiter()
+        self.timeframe_policy = timeframe_policy or TimeframeAuthorityPolicy()
 
     def generate(self, context, *, candidate_audit: dict[str, object] | None = None) -> DecisionReport:
         evidence = self.evidence_engine.build(context)
@@ -38,6 +40,7 @@ class DecisionOrchestrator:
         if not research_validation.valid:
             raise ValueError(f"invalid deterministic research assessment: {research_validation.violations}")
         semantic_decision = self.decision_arbiter.arbitrate(context, candidates)
+        timeframe_authority = self.timeframe_policy.assess(context)
         logger.info(
             "Atomic evidence shadow context_id=%s symbol=%s snapshot_hash=%s fact_count=%s availability_count=%s conflict_count=%s",
             context.context_id,
@@ -91,6 +94,7 @@ class DecisionOrchestrator:
             entry_decision=semantic_decision if context.position is None else None,
             position_decision=semantic_decision if context.position is not None else None,
             formal_action=semantic_decision.action,
+            timeframe_authority=timeframe_authority,
             action_candidates=candidates,
             operation_items=self._operation_items(context, action, candidates[0].blocked_reasons, sizing, canonical.display_price),
             ai_assessment=assessment, ai_status=ai_outcome.status, ai_error_code=ai_outcome.error_code,

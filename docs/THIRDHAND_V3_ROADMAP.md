@@ -141,8 +141,11 @@ ResearchAssessment or model output.
 Explicit state transitions (`FLAT`, `ENTRY_PENDING`, `HOLDING`,
 `REDUCE_PENDING`, `EXIT_PENDING`, `BLOCKED`) are now emitted with each semantic
 decision. Existing deterministic event gates are copied into a blocked entry's
-reason codes without changing their scope. Remaining: multi-timeframe
-authority.
+reason codes without changing their scope. A versioned timeframe authority
+contract now makes daily the current formal technical input and explicitly
+reports missing weekly/60m/15m/5m inputs; it never fabricates an intraday
+technical conclusion. Remaining: ingest and validate those additional
+timeframes before granting them authority.
 
 ### Phase 5 — Market/execution adapters
 

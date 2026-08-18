@@ -17,6 +17,7 @@ FUNDAMENTAL_AGGREGATION_POLICY_VERSION = "fundamental-aggregation-v1-dimension-c
 RESEARCH_AGGREGATION_POLICY_VERSION = "research-aggregation-v1-domain-consensus"
 SEMANTIC_INVARIANT_VALIDATOR_VERSION = "research-semantic-invariants-v1"
 DECISION_ARBITER_POLICY_VERSION = "decision-arbiter-v3-state-and-event-gates"
+TIMEFRAME_AUTHORITY_POLICY_VERSION = "timeframe-authority-v1-daily-only"
 # v3 is a Day-0 correctness break: REDUCE now requires an existing position.
 # Bumping the version prevents historical v2 empty-position REDUCE reports from
 # remaining eligible for next-session execution after deployment.
@@ -74,6 +75,7 @@ def audit_version_snapshot() -> dict[str, str]:
         "research_aggregation_policy_version": RESEARCH_AGGREGATION_POLICY_VERSION,
         "semantic_invariant_validator_version": SEMANTIC_INVARIANT_VALIDATOR_VERSION,
         "decision_arbiter_policy_version": DECISION_ARBITER_POLICY_VERSION,
+        "timeframe_authority_policy_version": TIMEFRAME_AUTHORITY_POLICY_VERSION,
         "action_policy_version": ACTION_POLICY_VERSION,
         "open_gate_audit_version": OPEN_GATE_AUDIT_VERSION,
         "sizing_version": SIZING_VERSION,
