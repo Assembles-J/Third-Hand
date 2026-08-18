@@ -1,4 +1,6 @@
-from app.execution_precheck import execution_quote_observed_at, validate_daily_execution
+from datetime import datetime
+
+from app.execution_precheck import execution_quote_observed_at, precheck_fill, validate_daily_execution
 
 
 def _report(action: str = "OPEN", market_as_of: str = "2026-08-17T10:04:00+08:00") -> dict[str, object]:
@@ -129,3 +131,38 @@ def test_execution_allows_the_quote_at_the_decision_cooldown_boundary():
     report["decision_memory"] = {"cooldown_until": "2026-08-17T10:14:00+08:00"}
 
     assert validate_daily_execution(report, _quote("2026-08-17T10:14:00+08:00")).allowed is True
+
+
+class _Calendar:
+    def __init__(self, *, now_open: bool = True, quote_open: bool = True) -> None:
+        self.now_open, self.quote_open = now_open, quote_open
+
+    def is_symbol_market_open(self, _symbol, *, moment):
+        return self.quote_open if moment.hour == 10 and moment.minute == 14 else self.now_open
+
+
+def test_live_fill_precheck_rejects_a_stale_quote_even_when_decision_ordering_is_valid():
+    check = precheck_fill(
+        _report(), _quote(), symbol="600000",
+        now=datetime.fromisoformat("2026-08-17T10:30:00+08:00"),
+        calendar=_Calendar(), max_quote_age_seconds=900,
+    )
+
+    assert check.allowed is False
+    assert check.reason == "execution_quote_stale"
+
+
+def test_live_fill_precheck_requires_both_current_and_quote_exchange_sessions():
+    quote_outside = precheck_fill(
+        _report(), _quote(), symbol="600000",
+        now=datetime.fromisoformat("2026-08-17T10:15:00+08:00"),
+        calendar=_Calendar(quote_open=False), max_quote_age_seconds=900,
+    )
+    market_closed = precheck_fill(
+        _report(), _quote(), symbol="600000",
+        now=datetime.fromisoformat("2026-08-17T10:15:00+08:00"),
+        calendar=_Calendar(now_open=False), max_quote_age_seconds=900,
+    )
+
+    assert quote_outside.reason == "execution_quote_outside_session"
+    assert market_closed.reason == "execution_market_closed"

@@ -31,6 +31,9 @@ class AccountSnapshot(DecisionModel):
 class PositionSnapshot(DecisionModel):
     quantity: float
     average_cost: float
+    sellable_quantity: float | None = None
+    locked_quantity: float | None = None
+    next_eligible_sell_at: str | None = None
     opened_at: str | None = None
     current_price: float | None
     market_value: float | None
@@ -335,6 +338,8 @@ class ShadowDecisionReport(DecisionModel):
 class PositionSizingResult(DecisionModel):
     status: Literal["ready", "blocked", "not_applicable"]
     current_quantity: float
+    max_executable_quantity: float | None = None
+    execution_disposition: Literal["ready", "deferred_t1", "blocked", "not_applicable"] = "ready"
     suggested_quantity: float | None = None
     target_quantity: float | None = None
     current_position_percent: float | None = None

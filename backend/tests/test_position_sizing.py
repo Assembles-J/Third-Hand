@@ -55,6 +55,40 @@ def test_reduce_never_exceeds_current_quantity_and_exit_closes_all(tmp_path):
     assert exit_.target_quantity == 0
 
 
+def test_t1_locked_position_defers_reduce_and_exit_before_execution(tmp_path):
+    context = _context(tmp_path, cap=5)
+    locked_position = context.position.model_copy(update={
+        "quantity": 1_000.0,
+        "sellable_quantity": 0.0,
+        "locked_quantity": 1_000.0,
+        "next_eligible_sell_at": "2026-08-18T09:30:00+08:00",
+    })
+    locked = context.model_copy(update={"position": locked_position})
+
+    reduce, exit_ = PositionSizingEngine().size(locked, "REDUCE"), PositionSizingEngine().size(locked, "EXIT")
+
+    assert reduce.execution_disposition == exit_.execution_disposition == "deferred_t1"
+    assert reduce.suggested_quantity == exit_.suggested_quantity == 0
+    assert reduce.max_executable_quantity == exit_.max_executable_quantity == 0
+    assert reduce.blocked_reasons == exit_.blocked_reasons == ("paper_t1_unsellable_quantity",)
+
+
+def test_exit_sizes_only_the_settled_part_of_a_mixed_t1_position(tmp_path):
+    context = _context(tmp_path, cap=5)
+    mixed_position = context.position.model_copy(update={
+        "quantity": 1_000.0,
+        "sellable_quantity": 800.0,
+        "locked_quantity": 200.0,
+        "next_eligible_sell_at": "2026-08-18T09:30:00+08:00",
+    })
+
+    result = PositionSizingEngine().size(context.model_copy(update={"position": mixed_position}), "EXIT")
+
+    assert result.status == "ready"
+    assert result.suggested_quantity == result.max_executable_quantity == 800.0
+    assert result.target_quantity == 200.0
+
+
 def test_watch_does_not_produce_a_quantity(tmp_path):
     result = PositionSizingEngine().size(_context(tmp_path), "WATCH")
 

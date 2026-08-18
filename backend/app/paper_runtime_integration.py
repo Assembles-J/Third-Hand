@@ -12,7 +12,7 @@ from uuid import uuid4
 
 from app import decision_config as config
 from app.candidate_selection import CandidateSelection, select_candidates
-from app.execution_precheck import execution_quote_observed_at
+from app.execution_precheck import execution_quote_observed_at, precheck_fill
 from app.decision_semantics import execution_side, formal_action_from_report
 from app.paper_runtime import (
     candidate_pool_audit,
@@ -166,6 +166,9 @@ def install(m) -> None:
                 "name": item["name"],
                 "quantity": item["quantity"],
                 "average_cost": item["average_cost"],
+                "sellable_quantity": item.get("sellable_quantity"),
+                "locked_quantity": item.get("locked_quantity"),
+                "next_eligible_sell_at": item.get("next_eligible_sell_at"),
                 "created_at": item.get("updated_at"),
             }
             for item in paper_account.get("positions", [])
@@ -273,7 +276,10 @@ def install(m) -> None:
 
     def execute_due_paper_decisions(symbols: list[str], names: dict[str, str], run_id: str | None = None) -> tuple[int, int]:
         """Fill current-version historical decisions at a later eligible quote."""
-        positions = {str(item["symbol"]).strip().upper(): float(item["quantity"]) for item in m.store.paper_account().get("positions", [])}
+        positions = {
+            str(item["symbol"]).strip().upper(): dict(item)
+            for item in m.store.paper_account().get("positions", [])
+        }
         executed = skipped = 0
         for symbol in symbols:
             stage_started_at = m.beijing_now().isoformat()
@@ -292,7 +298,11 @@ def install(m) -> None:
                 m._record_simulation_stage(run_id, "execution", "skipped", symbol=symbol, detail={"terminal_state": "skipped_execution", **detail}, started_at=stage_started_at)
                 skipped += 1
                 continue
-            check = m.validate_daily_execution(report, quote)
+            check = precheck_fill(
+                report, quote, symbol=symbol, now=m.beijing_now(),
+                calendar=m.trading_calendar,
+                max_quote_age_seconds=config.EXECUTION_QUOTE_MAX_AGE_SECONDS,
+            )
             if not check.allowed:
                 terminal_state = "not_due" if check.reason in {"execution_not_due_next_market_session", "execution_not_due_later_quote", "execution_cooldown_active"} else "blocked_by_gate" if check.reason == "execution_action_gate_blocked" else "skipped_execution"
                 detail = {"name": symbol_name, "decision_id": str(report.get("decision_id") or ""), "reason": check.reason, "action": report.get("action")}
@@ -304,12 +314,13 @@ def install(m) -> None:
             quantity = float(sizing.get("suggested_quantity") or sizing.get("target_quantity") or 0)
             price = float((quote or {}).get("price") or 0)
             side = execution_side(action)
-            if not side or quantity <= 0 or price <= 0:
+            if not side or price <= 0 or (side != "SELL" and quantity <= 0):
                 detail = {"name": symbol_name, "decision_id": str(report.get("decision_id") or ""), "reason": "invalid_side_or_sizing", "action": action, "quantity": quantity, "price": price}
                 m._record_simulation_symbol_state(run_id, symbol, "skipped_execution", detail, name=symbol_name)
                 m._record_simulation_stage(run_id, "execution", "skipped", symbol=symbol, detail={"terminal_state": "skipped_execution", **detail}, started_at=stage_started_at)
                 continue
-            if side == "SELL" and positions.get(symbol, 0.0) <= 0:
+            position = positions.get(symbol)
+            if side == "SELL" and (not position or float(position.get("quantity") or 0) <= 0):
                 m.store.record_paper_skip(symbol=symbol, name=symbol_name, decision_id=str(report.get("decision_id") or "") or None, reason="paper_sell_blocked_no_position", price=price)
                 detail = {"name": symbol_name, "decision_id": str(report.get("decision_id") or ""), "reason": "paper_sell_blocked_no_position", "action": action}
                 m._record_simulation_symbol_state(run_id, symbol, "skipped_execution", detail, name=symbol_name)
@@ -317,7 +328,43 @@ def install(m) -> None:
                 skipped += 1
                 continue
             if side == "SELL":
-                quantity = min(quantity, positions.get(symbol, 0.0))
+                active_deferral = m.store.active_paper_execution_deferral(symbol, now=m.beijing_now())
+                sellable_quantity = float((position or {}).get("sellable_quantity") or 0)
+                next_eligible_at = str((position or {}).get("next_eligible_sell_at") or "")
+                m.store.supersede_due_paper_execution_deferrals(symbol, now=m.beijing_now())
+                if sellable_quantity <= 0 and next_eligible_at:
+                    deferred = m.store.defer_paper_execution(
+                        decision_id=str(report.get("decision_id") or ""), symbol=symbol, action=action,
+                        requested_quantity=quantity or float((position or {}).get("quantity") or 0), max_executable_quantity=sellable_quantity,
+                        reason_code="paper_t1_unsellable_quantity", next_eligible_at=next_eligible_at,
+                        detail={"name": symbol_name, "locked_quantity": (position or {}).get("locked_quantity")},
+                    )
+                    detail = {
+                        "name": symbol_name, "decision_id": str(report.get("decision_id") or ""),
+                        "reason": "paper_t1_deferred", "action": action,
+                        "sellable_quantity": sellable_quantity,
+                        "locked_quantity": (position or {}).get("locked_quantity"),
+                        "next_eligible_at": deferred["next_eligible_at"],
+                    }
+                    m._record_simulation_symbol_state(run_id, symbol, "deferred_t1", detail, name=symbol_name)
+                    m._record_simulation_stage(run_id, "execution", "deferred", symbol=symbol, detail={"terminal_state": "deferred_t1", **detail}, started_at=stage_started_at)
+                    continue
+                if active_deferral:
+                    detail = {
+                        "name": symbol_name, "decision_id": str(report.get("decision_id") or ""),
+                        "reason": "paper_t1_deferred_existing", "action": action,
+                        "next_eligible_at": active_deferral["next_eligible_at"],
+                        "deferred_decision_id": active_deferral["decision_id"],
+                    }
+                    m._record_simulation_symbol_state(run_id, symbol, "deferred_t1", detail, name=symbol_name)
+                    m._record_simulation_stage(run_id, "execution", "deferred", symbol=symbol, detail={"terminal_state": "deferred_t1", **detail}, started_at=stage_started_at)
+                    continue
+                quantity = min(quantity, sellable_quantity)
+            if quantity <= 0:
+                detail = {"name": symbol_name, "decision_id": str(report.get("decision_id") or ""), "reason": "invalid_side_or_sizing", "action": action, "quantity": quantity, "price": price}
+                m._record_simulation_symbol_state(run_id, symbol, "skipped_execution", detail, name=symbol_name)
+                m._record_simulation_stage(run_id, "execution", "skipped", symbol=symbol, detail={"terminal_state": "skipped_execution", **detail}, started_at=stage_started_at)
+                continue
             try:
                 m.store.execute_paper_trade(
                     trade_id=str(uuid4()), symbol=symbol, name=symbol_name, side=side,
@@ -331,7 +378,17 @@ def install(m) -> None:
                 m._record_simulation_symbol_state(run_id, symbol, "executed", detail, name=symbol_name)
                 m._record_simulation_stage(run_id, "execution", "ok", symbol=symbol, detail={"terminal_state": "executed", **detail}, started_at=stage_started_at)
                 executed += 1
-                positions[symbol] = positions.get(symbol, 0.0) + (quantity if side == "BUY" else -quantity)
+                if side == "BUY":
+                    updated = dict(positions.get(symbol) or {})
+                    updated["quantity"] = float(updated.get("quantity") or 0) + quantity
+                    updated["sellable_quantity"] = float(updated.get("sellable_quantity") or 0)
+                    updated["locked_quantity"] = float(updated.get("locked_quantity") or 0) + quantity
+                    positions[symbol] = updated
+                elif position:
+                    updated = dict(position)
+                    updated["quantity"] = max(0.0, float(updated.get("quantity") or 0) - quantity)
+                    updated["sellable_quantity"] = max(0.0, float(updated.get("sellable_quantity") or 0) - quantity)
+                    positions[symbol] = updated
             except ValueError as error:
                 if str(error) != "paper_decision_already_executed":
                     m.store.record_paper_skip(symbol=symbol, name=symbol_name, decision_id=str(report.get("decision_id") or "") or None, reason=str(error), price=price)

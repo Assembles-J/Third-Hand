@@ -1609,19 +1609,26 @@ class PortfolioStore:
 
     def paper_account(self) -> dict[str, object]:
         settings = self.system_settings()
+        now = beijing_now()
         with self._connect() as connection:
             cash_row = connection.execute("SELECT available_cash, updated_at FROM account_cash WHERE account_id='default'").fetchone()
             row = connection.execute("SELECT initial_cash FROM paper_trading_accounts WHERE account_id='default'").fetchone()
             flow_row = connection.execute("SELECT COALESCE(SUM(amount), 0) AS total FROM paper_trading_cash_flows").fetchone()
             positions = [dict(item) for item in connection.execute("SELECT * FROM paper_trading_positions ORDER BY updated_at DESC").fetchall()]
-            lot_totals = {
-                str(item["symbol"]): float(item["sellable_quantity"])
-                for item in connection.execute(
-                    "SELECT symbol, COALESCE(SUM(sellable_quantity), 0) AS sellable_quantity "
-                    "FROM paper_position_lots WHERE quantity > 0 GROUP BY symbol"
-                ).fetchall()
-            }
+            lots = [dict(item) for item in connection.execute(
+                "SELECT * FROM paper_position_lots WHERE quantity > 0"
+            ).fetchall()]
             quotes = {str(item["symbol"]): json.loads(str(item["payload"])) for item in connection.execute("SELECT symbol,payload FROM market_quote_cache").fetchall()}
+        lot_totals: dict[str, float] = {}
+        next_sellable: dict[str, str] = {}
+        for lot in lots:
+            symbol = str(lot["symbol"])
+            if self._lot_is_sellable(lot, now):
+                lot_totals[symbol] = lot_totals.get(symbol, 0.0) + float(lot["quantity"])
+                continue
+            candidate = self._lot_next_sellable_at(lot)
+            if candidate and (symbol not in next_sellable or candidate < next_sellable[symbol]):
+                next_sellable[symbol] = candidate
         enriched_positions = []
         for position in positions:
             price = float((quotes.get(str(position["symbol"]), {}).get("price")) or position["average_cost"])
@@ -1632,6 +1639,7 @@ class PortfolioStore:
                 **position,
                 "sellable_quantity": sellable_quantity,
                 "locked_quantity": max(0.0, float(position["quantity"]) - sellable_quantity),
+                "next_eligible_sell_at": next_sellable.get(str(position["symbol"])),
                 "last_price": price,
                 "market_value": market_value,
                 "unrealized_pnl": market_value - cost_value,
@@ -1681,7 +1689,47 @@ class PortfolioStore:
         args = [str(symbol).strip().upper()] if symbol else []
         with self._connect() as connection:
             rows = connection.execute(query, args).fetchall()
-        return [dict(row) for row in rows]
+        now = beijing_now()
+        return [self._display_lot(dict(row), now) for row in rows]
+
+    @staticmethod
+    def _lot_next_sellable_at(lot: dict[str, object]) -> str | None:
+        value = lot.get("sellable_at")
+        return str(value) if value else None
+
+    @staticmethod
+    def _lot_is_sellable(lot: dict[str, object], now: datetime) -> bool:
+        """Read sellability without mutating the ledger for an account GET."""
+        if float(lot.get("quantity") or 0) <= 0:
+            return False
+        sellable_at = lot.get("sellable_at")
+        if sellable_at:
+            try:
+                parsed = datetime.fromisoformat(str(sellable_at).replace("Z", "+00:00"))
+                if parsed.tzinfo is None:
+                    parsed = parsed.replace(tzinfo=now.tzinfo)
+                return parsed <= now
+            except ValueError:
+                return False
+        # Pre-0017 rows retain the former conservative calendar-date rule until
+        # a later migration can materialize an exchange-calendar timestamp.
+        return str(lot.get("market") or "").upper() != "CN" or str(lot.get("acquired_at") or "")[:10] < now.date().isoformat()
+
+    def _display_lot(self, lot: dict[str, object], now: datetime) -> dict[str, object]:
+        sellable = float(lot.get("quantity") or 0) if self._lot_is_sellable(lot, now) else 0.0
+        return {
+            **lot,
+            "sellable_quantity": sellable,
+            "settlement_state": "SETTLED" if sellable > 0 and str(lot.get("settlement_state")) == "PENDING_T1" else lot.get("settlement_state"),
+        }
+
+    @staticmethod
+    def _new_lot_sellable_at(market: str, acquired_at: datetime) -> str | None:
+        if market != "CN":
+            return acquired_at.isoformat()
+        from app.trading_calendar import TradingCalendarService
+        next_open = TradingCalendarService().next_session_open(market, acquired_at)
+        return next_open.isoformat() if next_open is not None else None
 
     def record_paper_skip(self, *, symbol: str, name: str, decision_id: str | None, reason: str, price: float = 0.0) -> dict[str, object]:
         """Persist a non-execution so simulations can be audited, not just replayed."""
@@ -1692,6 +1740,95 @@ class PortfolioStore:
             item = {"id": f"skip-{uuid4().hex}", "symbol": symbol, "name": name, "side": "SKIP", "quantity": 0.0, "price": price, "fee": 0.0, "cash_before": cash, "cash_after": cash, "decision_id": decision_id, "reason": reason, "status": "skipped", "executed_at": now}
             connection.execute("INSERT INTO paper_trading_logs (id,symbol,name,side,quantity,price,fee,cash_before,cash_after,decision_id,reason,status,executed_at) VALUES (:id,:symbol,:name,:side,:quantity,:price,:fee,:cash_before,:cash_after,:decision_id,:reason,:status,:executed_at)", item)
         return item
+
+    def active_paper_execution_deferral(self, symbol: str, *, now: datetime | None = None) -> dict[str, object] | None:
+        reference = (now or beijing_now()).isoformat()
+        with self._connect() as connection:
+            row = connection.execute(
+                "SELECT * FROM paper_execution_deferrals "
+                "WHERE symbol=? AND state='active' AND next_eligible_at>? "
+                "ORDER BY created_at DESC LIMIT 1",
+                (str(symbol).strip().upper(), reference),
+            ).fetchone()
+        return dict(row) if row else None
+
+    def defer_paper_execution(
+        self, *, decision_id: str, symbol: str, action: str, requested_quantity: float,
+        max_executable_quantity: float, reason_code: str, next_eligible_at: str,
+        detail: dict[str, object] | None = None,
+    ) -> dict[str, object]:
+        """Persist one T+1 deferral without polluting immutable fill/skip logs."""
+        now = beijing_now().isoformat()
+        symbol = str(symbol).strip().upper()
+        with self._connect() as connection:
+            existing_for_decision = connection.execute(
+                "SELECT * FROM paper_execution_deferrals WHERE decision_id=?",
+                (decision_id,),
+            ).fetchone()
+            if existing_for_decision:
+                return dict(existing_for_decision)
+            active = connection.execute(
+                "SELECT * FROM paper_execution_deferrals "
+                "WHERE symbol=? AND state='active' AND next_eligible_at>? "
+                "ORDER BY created_at DESC LIMIT 1",
+                (symbol, now),
+            ).fetchone()
+            if active:
+                connection.execute(
+                    "UPDATE paper_execution_deferrals SET state='superseded', resolved_at=? "
+                    "WHERE decision_id=?",
+                    (now, str(active["decision_id"])),
+                )
+            item = {
+                "decision_id": decision_id, "symbol": symbol, "action": action,
+                "requested_quantity": float(requested_quantity),
+                "max_executable_quantity": float(max_executable_quantity),
+                "reason_code": reason_code, "next_eligible_at": next_eligible_at,
+                "state": "active", "created_at": now, "resolved_at": None,
+                "detail": json.dumps(detail or {}, ensure_ascii=False, default=str),
+            }
+            connection.execute(
+                "INSERT INTO paper_execution_deferrals "
+                "(decision_id,symbol,action,requested_quantity,max_executable_quantity,reason_code,"
+                "next_eligible_at,state,created_at,resolved_at,detail) VALUES "
+                "(:decision_id,:symbol,:action,:requested_quantity,:max_executable_quantity,:reason_code,"
+                ":next_eligible_at,:state,:created_at,:resolved_at,:detail) "
+                "ON CONFLICT(decision_id) DO NOTHING",
+                item,
+            )
+            row = connection.execute(
+                "SELECT * FROM paper_execution_deferrals WHERE decision_id=?", (decision_id,)
+            ).fetchone()
+        return dict(row) if row else item
+
+    def supersede_due_paper_execution_deferrals(self, symbol: str, *, now: datetime | None = None) -> int:
+        """Close elapsed T+1 deferrals before a fresh eligible decision fills."""
+        reference = (now or beijing_now()).isoformat()
+        with self._connect() as connection:
+            cursor = connection.execute(
+                "UPDATE paper_execution_deferrals SET state='superseded', resolved_at=? "
+                "WHERE symbol=? AND state='active' AND next_eligible_at<=?",
+                (reference, str(symbol).strip().upper(), reference),
+            )
+        return int(cursor.rowcount)
+
+    def paper_execution_deferrals(self, symbol: str | None = None, state: str | None = None, limit: int = 100) -> list[dict[str, object]]:
+        clauses: list[str] = []
+        args: list[object] = []
+        if symbol:
+            clauses.append("symbol=?")
+            args.append(str(symbol).strip().upper())
+        if state:
+            clauses.append("state=?")
+            args.append(str(state).strip().lower())
+        query = "SELECT * FROM paper_execution_deferrals"
+        if clauses:
+            query += " WHERE " + " AND ".join(clauses)
+        query += " ORDER BY created_at DESC LIMIT ?"
+        args.append(max(1, limit))
+        with self._connect() as connection:
+            rows = connection.execute(query, args).fetchall()
+        return [dict(row) for row in rows]
 
     @staticmethod
     def _reconcile_legacy_position_lots(connection, *, symbol: str, market: str, currency: str, now: str) -> bool:
@@ -1763,7 +1900,8 @@ class PortfolioStore:
 
     def execute_paper_trade(self, *, trade_id: str, symbol: str, name: str, side: str, quantity: float, price: float, decision_id: str | None, reason: str, execution_quote_at: str | None = None, execution_quote_source: str | None = None, fill_price_mode: str = "NEXT_ELIGIBLE_OBSERVED_QUOTE") -> dict[str, object]:
         if quantity <= 0 or price <= 0: raise ValueError("quantity_and_price_must_be_positive")
-        now = beijing_now().isoformat()
+        now_at = beijing_now()
+        now = now_at.isoformat()
         with self._connect() as connection:
             from app.market_adapter import adapter_for_market, market_for_symbol
 
@@ -1786,12 +1924,13 @@ class PortfolioStore:
             # scheduler from mistaking an unsellable T+1 position for a lot
             # sizing problem.
             if side == "SELL" and adapter.settlement_rule == "CN_A_T1_SELLABILITY":
-                today = beijing_now().date().isoformat()
                 connection.execute(
                     "UPDATE paper_position_lots SET sellable_quantity=quantity, "
                     "settlement_state='SETTLED', updated_at=? "
-                    "WHERE symbol=? AND settlement_state='PENDING_T1' AND substr(acquired_at, 1, 10) < ?",
-                    (now, symbol, today),
+                    "WHERE symbol=? AND settlement_state='PENDING_T1' AND ("
+                    "(sellable_at IS NOT NULL AND sellable_at <= ?) OR "
+                    "(sellable_at IS NULL AND substr(acquired_at, 1, 10) < ?))",
+                    (now, symbol, now, now_at.date().isoformat()),
                 )
                 sellable_for_availability = float(connection.execute(
                     "SELECT COALESCE(SUM(sellable_quantity), 0) AS quantity "
@@ -1830,12 +1969,13 @@ class PortfolioStore:
                 connection.execute("INSERT INTO paper_trading_positions VALUES (?,?,?,?,?) ON CONFLICT(symbol) DO UPDATE SET name=excluded.name,quantity=excluded.quantity,average_cost=excluded.average_cost,updated_at=excluded.updated_at", (symbol, name, new_quantity, average_cost, now))
                 connection.execute(
                     "INSERT INTO paper_position_lots "
-                    "(lot_id,symbol,market,currency,quantity,acquired_at,cost_basis,sellable_quantity,settlement_state,updated_at) "
-                    "VALUES (?,?,?,?,?,?,?,?,?,?)",
+                    "(lot_id,symbol,market,currency,quantity,acquired_at,cost_basis,sellable_quantity,settlement_state,updated_at,sellable_at) "
+                    "VALUES (?,?,?,?,?,?,?,?,?,?,?)",
                     (
                         str(uuid4()), symbol, market, adapter.trading_currency, quantity, now,
                         cost / quantity, 0.0 if adapter.settlement_rule == "CN_A_T1_SELLABILITY" else quantity,
                         "PENDING_T1" if adapter.settlement_rule == "CN_A_T1_SELLABILITY" else "SETTLED", now,
+                        self._new_lot_sellable_at(market, now_at),
                     ),
                 )
             elif side == "SELL":
@@ -1873,6 +2013,12 @@ class PortfolioStore:
             connection.execute("INSERT INTO account_cash (account_id,available_cash,updated_at) VALUES ('default', ?, ?) ON CONFLICT(account_id) DO UPDATE SET available_cash=excluded.available_cash, updated_at=excluded.updated_at", (cash_after, now))
             item = {"id": trade_id, "symbol": symbol, "name": name, "side": side, "quantity": quantity, "price": price, "fee": fee, "cash_before": cash_before, "cash_after": cash_after, "decision_id": decision_id, "reason": reason, "execution_quote_at": execution_quote_at, "execution_quote_source": execution_quote_source, "fill_price_mode": fill_price_mode, "executed_at": now}
             connection.execute("INSERT INTO paper_trading_logs (id,symbol,name,side,quantity,price,fee,cash_before,cash_after,decision_id,reason,status,execution_quote_at,execution_quote_source,fill_price_mode,executed_at) VALUES (:id,:symbol,:name,:side,:quantity,:price,:fee,:cash_before,:cash_after,:decision_id,:reason,'executed',:execution_quote_at,:execution_quote_source,:fill_price_mode,:executed_at)", item)
+            if decision_id:
+                connection.execute(
+                    "UPDATE paper_execution_deferrals SET state='released', resolved_at=? "
+                    "WHERE decision_id=? AND state='active'",
+                    (now, decision_id),
+                )
         return item
 
     def create_simulation_run(self, *, run_id: str, trigger: str, symbols: list[str], message: str) -> dict[str, object]:

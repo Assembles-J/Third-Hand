@@ -49,12 +49,13 @@ PRE_EVENT_BLOCK_SESSIONS = 1
 # v2 fixes A-share execution semantics: OPEN/ADD may fill on a strictly later
 # observed quote in the same trading day, while T+1 remains a SELL-availability
 # constraint enforced by the paper ledger.
-EXECUTION_POLICY_VERSION = "execution-v5-continuity-cooldown-gate"
+EXECUTION_POLICY_VERSION = "execution-v6-session-freshness-gate"
 CANDIDATE_SELECTION_VERSION = "candidate-rotation-v1"
 OPPORTUNITY_SCORING_VERSION = "research-priority-v1"
 # Decision-input freshness stays conservative. Execution is a separate boundary:
 # it may consume a strictly later observed intraday quote under EXECUTION_POLICY_VERSION.
 QUOTE_MAX_AGE_SECONDS = 86_400
+EXECUTION_QUOTE_MAX_AGE_SECONDS = 900
 MARKET_INTELLIGENCE_MAX_AGE_SECONDS = 86_400
 DAILY_BAR_MAX_AGE_DAYS = 2
 RISK_MAX_AGE_DAYS = 2

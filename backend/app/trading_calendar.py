@@ -147,6 +147,26 @@ class TradingCalendarService:
         except ValueError:
             return None
 
+    def next_session_open(self, market: str, moment: datetime) -> datetime | None:
+        """Return the next exchange-session open strictly after ``moment``.
+
+        This is used to materialize a CN lot's T+1 eligibility.  The exchange
+        calendar owns weekends, holidays and early sessions rather than a
+        calendar-date shortcut.
+        """
+        calendar = self._calendars.get(market)
+        if calendar is None:
+            return None
+        local_time = self.normalize_moment(moment)
+        utc_time = pd.Timestamp(local_time).tz_convert("UTC")
+        try:
+            session = calendar.date_to_session(pd.Timestamp(local_time.date()), direction="next")
+            if utc_time >= calendar.session_open(session):
+                session = calendar.next_session(session)
+            return calendar.session_open(session).to_pydatetime().astimezone(BEIJING_TIMEZONE)
+        except ValueError:
+            return None
+
     def is_post_close_maintenance_window(
         self,
         market: str,

@@ -262,6 +262,51 @@ def _create_broker_settlement_receipts(connection: sqlite3.Connection) -> None:
     )
 
 
+def _create_paper_execution_safety_contract(connection: sqlite3.Connection) -> None:
+    """Additive persistence for T+1 display and idempotent deferrals."""
+    columns = {str(row[1]) for row in connection.execute("PRAGMA table_info(paper_position_lots)")}
+    if "sellable_at" not in columns:
+        connection.execute("ALTER TABLE paper_position_lots ADD COLUMN sellable_at TEXT")
+    # Materialize a deterministic timestamp for legacy lots. A malformed legacy
+    # timestamp deliberately remains NULL and therefore non-sellable until the
+    # existing reconciliation path can establish its provenance.
+    from app.trading_calendar import TradingCalendarService
+    calendar = TradingCalendarService()
+    pending_rows = connection.execute(
+        "SELECT lot_id,market,acquired_at FROM paper_position_lots "
+        "WHERE sellable_at IS NULL AND settlement_state='PENDING_T1'"
+    ).fetchall()
+    for lot_id, market, acquired_at in pending_rows:
+        try:
+            acquired = datetime.fromisoformat(str(acquired_at).replace("Z", "+00:00"))
+            if acquired.tzinfo is None:
+                acquired = acquired.replace(tzinfo=timezone.utc)
+            next_open = calendar.next_session_open(str(market).upper(), acquired)
+        except (TypeError, ValueError):
+            next_open = None
+        if next_open is not None:
+            connection.execute(
+                "UPDATE paper_position_lots SET sellable_at=? WHERE lot_id=?",
+                (next_open.isoformat(), str(lot_id)),
+            )
+    connection.execute(
+        "CREATE INDEX IF NOT EXISTS idx_paper_position_lots_sellable_at "
+        "ON paper_position_lots(symbol, sellable_at)"
+    )
+    connection.execute(
+        "CREATE TABLE IF NOT EXISTS paper_execution_deferrals ("
+        "decision_id TEXT PRIMARY KEY, symbol TEXT NOT NULL, action TEXT NOT NULL, "
+        "requested_quantity REAL NOT NULL, max_executable_quantity REAL NOT NULL, "
+        "reason_code TEXT NOT NULL, next_eligible_at TEXT NOT NULL, state TEXT NOT NULL, "
+        "created_at TEXT NOT NULL, resolved_at TEXT, detail TEXT NOT NULL DEFAULT '{}'"
+        ")"
+    )
+    connection.execute(
+        "CREATE INDEX IF NOT EXISTS idx_paper_execution_deferrals_symbol_state_time "
+        "ON paper_execution_deferrals(symbol, state, next_eligible_at)"
+    )
+
+
 MIGRATIONS = (
     Migration("0001_legacy_schema_baseline", _record_legacy_schema_baseline),
     Migration("0002_decision_contexts", _create_decision_contexts),
@@ -279,6 +324,7 @@ MIGRATIONS = (
     Migration("0014_data_provider_health", _create_data_provider_health),
     Migration("0015_fx_rate_cache", _retire_fx_rate_cache),
     Migration("0016_broker_settlement_receipts", _create_broker_settlement_receipts),
+    Migration("0017_paper_execution_safety_contract", _create_paper_execution_safety_contract),
 )
 
 

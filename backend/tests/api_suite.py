@@ -24,11 +24,11 @@ def test_health():
     assert client.get("/health").json() == {"status": "ok"}
 
 
-def test_manual_paper_run_uses_saved_snapshot_when_market_is_closed(monkeypatch):
+def test_manual_paper_run_is_analysis_only_when_market_is_closed(monkeypatch):
     store.add("holding-1", "600519", "test", 100, 10)
     monkeypatch.setattr(main.trading_calendar, "open_symbols", lambda *_args, **_kwargs: [])
-    # Keep the manual bootstrap deterministic: the background pass must use the
-    # saved holding instead of starting a real whole-market provider scan.
+    # Keep the manual bootstrap deterministic. A closed-market request may
+    # inspect the saved holding, but must never dispatch a paper fill cycle.
     monkeypatch.setattr(main, "paper_trading_symbols", lambda: ["600519"])
     calls = []
     monkeypatch.setattr(
@@ -42,10 +42,10 @@ def test_manual_paper_run_uses_saved_snapshot_when_market_is_closed(monkeypatch)
     assert response.status_code == 200
     assert response.json()["status"] == "queued"
     deadline = time.monotonic() + 5
-    while time.monotonic() < deadline and main.paper_trading_state.get("last_status") not in {"completed", "completed_closed_market_snapshot"}:
+    while time.monotonic() < deadline and main.paper_trading_state.get("last_status") != "completed_closed_market_analysis":
         time.sleep(0.01)
-    assert main.paper_trading_state.get("last_status") in {"completed", "completed_closed_market_snapshot"}
-    assert calls == [(["600519"], True, True)]
+    assert main.paper_trading_state.get("last_status") == "completed_closed_market_analysis"
+    assert calls == []
 
 
 def test_paper_dashboard_returns_the_ledger_in_one_request():

@@ -276,7 +276,11 @@ class DecisionContextBuilder:
         market_value = quantity * price if price is not None else None
         cost_value = quantity * cost
         return PositionSnapshot(
-            quantity=quantity, average_cost=cost, opened_at=str(holding.get("created_at") or "") or None, current_price=price, market_value=market_value,
+            quantity=quantity, average_cost=cost,
+            sellable_quantity=float(holding["sellable_quantity"]) if holding.get("sellable_quantity") is not None else None,
+            locked_quantity=float(holding["locked_quantity"]) if holding.get("locked_quantity") is not None else None,
+            next_eligible_sell_at=str(holding.get("next_eligible_sell_at") or "") or None,
+            opened_at=str(holding.get("created_at") or "") or None, current_price=price, market_value=market_value,
             cost_value=cost_value, unrealized_pnl=market_value - cost_value if market_value is not None else None,
             unrealized_pnl_percent=(market_value / cost_value - 1) * 100 if market_value is not None and cost_value else None,
             position_percent=market_value / total_assets * 100 if market_value is not None and total_assets else None,

@@ -236,7 +236,7 @@ class PaperTradingCapitalReconciliation(BaseModel):
 
 
 class PaperTradingPosition(BaseModel):
-    symbol: str; name: str; quantity: float; average_cost: float; last_price: float = 0; market_value: float = 0; unrealized_pnl: float = 0; unrealized_return_percent: float = 0; updated_at: datetime
+    symbol: str; name: str; quantity: float; average_cost: float; last_price: float = 0; market_value: float = 0; unrealized_pnl: float = 0; unrealized_return_percent: float = 0; sellable_quantity: float = 0; locked_quantity: float = 0; next_eligible_sell_at: datetime | None = None; updated_at: datetime
 
 
 class PaperTradingLog(BaseModel):
@@ -259,6 +259,7 @@ class PaperTradingStatus(BaseModel):
     last_finished_at: datetime | None = None; last_status: str; last_message: str
     last_executed: int = 0; last_skipped: int = 0; last_symbols: list[str] = Field(default_factory=list)
     seconds_until_next_run: int = 0; last_run_id: str | None = None
+    state_source: Literal["memory", "persisted"] = "memory"
 
 
 class PaperTradingDashboard(BaseModel):
@@ -958,6 +959,22 @@ def paper_trading_logs(symbol: str | None = None, limit: int = Query(default=100
     return [PaperTradingLog.model_validate(item) for item in store.paper_logs(symbol, limit)]
 
 
+@app.get("/v1/paper-trading/positions/{symbol}/lots")
+def paper_trading_position_lots(symbol: str) -> list[dict[str, object]]:
+    """Expose the read-only lot evidence behind sellable and locked quantities."""
+    return store.paper_position_lots(symbol)
+
+
+@app.get("/v1/paper-trading/execution-deferrals")
+def paper_trading_execution_deferrals(
+    symbol: str | None = None,
+    state: str | None = None,
+    limit: int = Query(default=100, ge=1, le=500),
+) -> list[dict[str, object]]:
+    """List idempotent execution deferrals such as same-day CN T+1 locks."""
+    return store.paper_execution_deferrals(symbol=symbol, state=state, limit=limit)
+
+
 @app.get("/v1/paper-trading/equity-snapshots", response_model=list[PaperEquitySnapshot])
 def paper_trading_equity_snapshots(limit: int = Query(default=120, ge=1, le=500)) -> list[PaperEquitySnapshot]:
     return [PaperEquitySnapshot.model_validate(item) for item in store.paper_equity_snapshots(limit)]
@@ -967,6 +984,21 @@ def paper_trading_equity_snapshots(limit: int = Query(default=120, ge=1, le=500)
 def paper_trading_status() -> PaperTradingStatus:
     with paper_trading_state_lock:
         state = dict(paper_trading_state)
+    state_source = "memory"
+    if state.get("last_status") == "never_run":
+        persisted = store.simulation_runs(1)
+        if persisted:
+            latest = persisted[0]
+            state.update({
+                "last_started_at": latest.get("started_at"),
+                "last_finished_at": latest.get("finished_at"),
+                "last_status": latest.get("status") or "completed",
+                "last_message": latest.get("message") or "",
+                "last_executed": int(latest.get("executed") or 0),
+                "last_skipped": int(latest.get("skipped") or 0),
+                "last_run_id": latest.get("run_id"),
+            })
+            state_source = "persisted"
     settings = store.system_settings()
     interval_seconds = int(settings["paper_trading_interval_seconds"])
     elapsed = max(0.0, time.monotonic() - last_paper_trading_run_at)
@@ -975,6 +1007,7 @@ def paper_trading_status() -> PaperTradingStatus:
         enabled=bool(settings["paper_trading_enabled"]),
         interval_seconds=interval_seconds,
         seconds_until_next_run=seconds_until_next_run,
+        state_source=state_source,
         **state,
     )
 
@@ -1066,7 +1099,22 @@ def _run_paper_trading_now_impl() -> None:
         with paper_trading_state_lock:
             paper_trading_state.update({"last_finished_at": beijing_now(), "last_status": "market_scan_pending", "last_message": "全市场行情池正在建立；候选的日线、风险和新闻数据准备完成后会自动决策。", "last_executed": 0, "last_skipped": 0, "last_symbols": [], "last_run_id": run_id})
         return
-    selected = active or symbols
+    if not active:
+        run_id = _create_simulation_run("manual", symbols, "closed-market manual analysis")
+        _record_simulation_stage(
+            run_id, "execution", "not_due",
+            detail={"reason": "execution_market_closed", "execution_enabled": False},
+        )
+        _finish_simulation_run(run_id, "completed", "Closed-market manual run is analysis-only.")
+        with paper_trading_state_lock:
+            paper_trading_state.update({
+                "running": False, "last_finished_at": beijing_now(),
+                "last_status": "completed_closed_market_analysis",
+                "last_message": "Closed-market manual run is analysis-only.",
+                "last_run_id": run_id,
+            })
+        return
+    selected = active
     result = run_paper_trading_cycle(selected, force=True, allow_when_disabled=True)
     if not active:
         with paper_trading_state_lock:
