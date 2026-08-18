@@ -5,15 +5,16 @@ import os
 
 # v4 makes the effective position-cap authority explicit and shared with sizing.
 EVIDENCE_VERSION = "evidence-v4-effective-position-cap"
-# Phase 2 runs this compact fact representation beside current evidence. v2 adds
-# point-in-time persisted Company Intelligence facts without formal authority.
-ATOMIC_EVIDENCE_VERSION = "atomic-evidence-shadow-v2-company-research"
+# v3 adds deterministic financial report-period currentness while preserving the
+# existing retrieval-freshness field for compatibility.
+ATOMIC_EVIDENCE_VERSION = "atomic-evidence-shadow-v3-financial-currentness"
 # Phase 3 makes evidence aggregation reproducible and auditable. Phase 4 may
 # use only its deterministic adverse new-risk veto; research never upgrades an
 # action or manufactures an exit/reduce recommendation.
 DIMENSION_AGGREGATION_POLICY_VERSION = "dimension-aggregation-v1-fact-polarity"
 FACT_POLARITY_POLICY_VERSION = "fact-polarity-v1-atomic-record-authority"
-FUNDAMENTAL_AGGREGATION_POLICY_VERSION = "fundamental-aggregation-v1-dimension-consensus"
+FINANCIAL_CURRENTNESS_POLICY_VERSION = "financial-currentness-v1-event-aware-report-period"
+FUNDAMENTAL_AGGREGATION_POLICY_VERSION = "fundamental-aggregation-v2-historical-currentness"
 RESEARCH_AGGREGATION_POLICY_VERSION = "research-aggregation-v1-domain-consensus"
 SEMANTIC_INVARIANT_VALIDATOR_VERSION = "research-semantic-invariants-v1"
 DECISION_ARBITER_POLICY_VERSION = "decision-arbiter-v4-adverse-research-new-risk-veto"
@@ -81,6 +82,7 @@ def audit_version_snapshot() -> dict[str, str]:
         "atomic_evidence_version": ATOMIC_EVIDENCE_VERSION,
         "dimension_aggregation_policy_version": DIMENSION_AGGREGATION_POLICY_VERSION,
         "fact_polarity_policy_version": FACT_POLARITY_POLICY_VERSION,
+        "financial_currentness_policy_version": FINANCIAL_CURRENTNESS_POLICY_VERSION,
         "fundamental_aggregation_policy_version": FUNDAMENTAL_AGGREGATION_POLICY_VERSION,
         "research_aggregation_policy_version": RESEARCH_AGGREGATION_POLICY_VERSION,
         "semantic_invariant_validator_version": SEMANTIC_INVARIANT_VALIDATOR_VERSION,
