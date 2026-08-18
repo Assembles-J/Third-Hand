@@ -15,9 +15,15 @@ OPEN_GATE_AUDIT_VERSION = "open-gate-audit-v1"
 # latest-completed-exchange-session semantics. Thresholds are unchanged; the
 # version bump makes the already-deployed behavior auditable in DecisionReport.
 FRESHNESS_POLICY_VERSION = "freshness-v2-session-aware"
-# v1 adds a separate, deterministic cross-source authority layer.  Individually
+# v1 adds a separate, deterministic cross-source authority layer. Individually
 # fresh records can still conflict when their observed market dates disagree.
 CANONICAL_INPUT_POLICY_VERSION = "canonical-input-v1-cross-source-consistency"
+# Instrument metadata is the formal market authority when present. Symbol-shape
+# inference remains a compatibility fallback only.
+MARKET_IDENTITY_POLICY_VERSION = "market-identity-v2-instrument-authority"
+# Market-regime evidence may only apply to the same explicit market. Missing HK/
+# US providers degrade to unknown instead of inheriting A-share benchmarks.
+MARKET_REGIME_POLICY_VERSION = "market-regime-v2-market-scoped"
 # v2 fixes A-share execution semantics: OPEN/ADD may fill on a strictly later
 # observed quote in the same trading day, while T+1 remains a SELL-availability
 # constraint enforced by the paper ledger.
@@ -51,6 +57,8 @@ def audit_version_snapshot() -> dict[str, str]:
         "sizing_version": SIZING_VERSION,
         "freshness_policy_version": FRESHNESS_POLICY_VERSION,
         "canonical_input_policy_version": CANONICAL_INPUT_POLICY_VERSION,
+        "market_identity_policy_version": MARKET_IDENTITY_POLICY_VERSION,
+        "market_regime_policy_version": MARKET_REGIME_POLICY_VERSION,
         "execution_policy_version": EXECUTION_POLICY_VERSION,
         "decision_prompt_version": DECISION_RESEARCH_PROMPT_VERSION,
         "candidate_selection_version": CANDIDATE_SELECTION_VERSION,

@@ -13,6 +13,7 @@ from app.decision_models import (
     PositionSnapshot, QuoteSnapshot, RelativeStrengthSnapshot, RiskSnapshot,
     TechnicalSnapshot, TradePlanSnapshot,
 )
+from app.market_regime import regime_matches_market
 from app.time_utils import beijing_now
 from app.trading_calendar import TradingCalendarService
 
@@ -55,11 +56,11 @@ class DecisionContextBuilder:
         available_cash_override: float | None = None,
     ) -> DecisionContext:
         # The context is a reproducible snapshot assembled from persisted
-        # caches.  Keep upstream fetching and LLM calls out of this boundary so
+        # caches. Keep upstream fetching and LLM calls out of this boundary so
         # a saved decision can be audited against stable input data.
         symbol = self._symbol(symbol)
         # Paper trading must reason from its own ledger, never from the user's
-        # real holdings.  The override keeps the same canonical context schema
+        # real holdings. The override keeps the same canonical context schema
         # while making the simulated account an auditable decision input.
         holdings = holdings_override if holdings_override is not None else self.store.list()
         holding = next((item for item in holdings if str(item["symbol"]).strip().upper() == symbol), None)
@@ -76,6 +77,14 @@ class DecisionContextBuilder:
         plan = self.store.trade_plan(symbol)
         rule = self._selected_rule(self.store.personal_rules(), symbol)
         instrument = self.store.instrument_metadata(symbol)
+        instrument_snapshot = self._instrument(instrument)
+        # Persisted instrument metadata is the formal identity authority. Symbol
+        # shape remains a migration fallback only when metadata is unavailable.
+        market = (
+            instrument_snapshot.market
+            if instrument_snapshot is not None
+            else TradingCalendarService.market_for_symbol(symbol)
+        )
         portfolio_item = self._portfolio_item(symbol)
         events = self._events(symbol)
 
@@ -92,15 +101,14 @@ class DecisionContextBuilder:
         price = float(quote["price"]) if quote and quote.get("price") is not None else None
         position = self._position(holding, price, total_assets)
         technical = self._technical(symbol, bars)
-        market_regime = self._market_regime(portfolio_item)
+        market_regime = self._market_regime(portfolio_item, market)
         market_flow = self._market_flow()
         relative_strength = self._relative_strength(portfolio_item)
-        market = TradingCalendarService.market_for_symbol(symbol)
         quality = summarize_data_quality(
             has_quote=price is not None, daily_bar_count=len(bars), total_assets_available=total_assets is not None,
             plan_enabled=bool(plan and plan.get("enabled")), has_risk=risk is not None,
             has_market_regime=market_regime is not None, has_relative_strength=relative_strength is not None,
-            has_events=bool(events), has_instrument=instrument is not None, has_position=position is not None,
+            has_events=bool(events), has_instrument=instrument_snapshot is not None, has_position=position is not None,
             has_personal_rule=rule is not None, quote_as_of=str((quote or {}).get("as_of") or "") or None,
             quote_retrieved_at=str((quote or {}).get("retrieved_at") or "") or None,
             daily_bar_as_of=str(bars[-1].get("trading_date") or "") if bars else None,
@@ -120,7 +128,7 @@ class DecisionContextBuilder:
             "daily_bars": self._daily_bars(bars), "technical": technical, "risk": self._risk(risk),
             "market_regime": market_regime, "market_flow": market_flow, "relative_strength": relative_strength, "events": events,
             "trade_plan": self._plan(plan, symbol), "personal_rule": self._rule(rule),
-            "instrument": self._instrument(instrument), "data_quality": quality,
+            "instrument": instrument_snapshot, "data_quality": quality,
             "source_versions": self._source_versions(),
         }
         # Reports retain this hash, allowing later comparisons to distinguish a
@@ -135,9 +143,9 @@ class DecisionContextBuilder:
         return next((item for item in payload.get("items", []) if str(item.get("symbol", "")).upper() == symbol), None)
 
     def _events(self, symbol: str) -> tuple[EventSnapshot, ...]:
-        # Cached AI analysis is research-only.  Its directional label must not
+        # Cached AI analysis is research-only. Its directional label must not
         # enter deterministic evidence because ActionPolicy consumes negative
-        # event evidence for ADD/REDUCE decisions.  A future policy event must
+        # event evidence for ADD/REDUCE decisions. A future policy event must
         # be a separately verified, deterministic feature.
         results = []
         for item in self.store.cached_content([symbol], limit=10):
@@ -201,18 +209,41 @@ class DecisionContextBuilder:
         values = {key: item.get(key) for key in RiskSnapshot.model_fields if key != "source"}
         return RiskSnapshot(**values)
 
-    def _market_regime(self, item):
-        persisted = self.store.cached_market_intelligence("market_regime") or {}
+    def _market_regime(self, item, market: str | None = None):
+        # Compatibility path for older direct/private callers. Formal DecisionContext
+        # construction always passes an explicit market resolved from instrument
+        # metadata or, only when absent, the symbol-shape compatibility resolver.
+        if market is None:
+            persisted = self.store.cached_market_intelligence("market_regime") or {}
+            embedded = (item or {}).get("decision_snapshot", {}).get("market_regime") or {}
+            value = persisted if persisted.get("status") == "ready" else embedded
+            if value.get("status") != "ready" or value.get("regime") in {None, "unknown"}:
+                return None
+            return MarketRegimeSnapshot(
+                status="ready",
+                regime=value.get("regime"),
+                source=value.get("source"),
+                as_of=value.get("as_of"),
+            )
+
+        # New data should be persisted by market. The generic key and embedded
+        # portfolio snapshot remain migration fallbacks, but only after an
+        # explicit/recognizable market-identity check.
+        scoped = self.store.cached_market_intelligence(f"market_regime:{market}") or {}
+        legacy = self.store.cached_market_intelligence("market_regime") or {}
         embedded = (item or {}).get("decision_snapshot", {}).get("market_regime") or {}
-        value = persisted if persisted.get("status") == "ready" else embedded
-        if value.get("status") != "ready" or value.get("regime") in {None, "unknown"}:
-            return None
-        return MarketRegimeSnapshot(
-            status="ready",
-            regime=value.get("regime"),
-            source=value.get("source"),
-            as_of=value.get("as_of"),
-        )
+        for value in (scoped, legacy, embedded):
+            if value.get("status") != "ready" or value.get("regime") in {None, "unknown"}:
+                continue
+            if not regime_matches_market(value, market):
+                continue
+            return MarketRegimeSnapshot(
+                status="ready",
+                regime=value.get("regime"),
+                source=value.get("source"),
+                as_of=value.get("as_of"),
+            )
+        return None
 
     def _market_flow(self) -> MarketFlowSnapshot | None:
         payload = self.store.cached_market_intelligence("overview")
@@ -265,8 +296,16 @@ class DecisionContextBuilder:
     def _instrument(item):
         if not item:
             return None
-        return InstrumentSnapshot(symbol=str(item["symbol"]), market=str(item["market"]), currency=str(item["currency"]), lot_size=item.get("lot_size"), price_tick=item.get("price_tick"), source=str(item["source"]), as_of=str(item["as_of"]))
+        return InstrumentSnapshot(
+            symbol=str(item["symbol"]).strip().upper(),
+            market=str(item["market"]).strip().upper(),
+            currency=str(item["currency"]).strip().upper(),
+            lot_size=item.get("lot_size"),
+            price_tick=item.get("price_tick"),
+            source=str(item["source"]),
+            as_of=str(item["as_of"]),
+        )
 
     @staticmethod
     def _source_versions() -> dict[str, str]:
-        return {"context_schema": CONTEXT_SCHEMA_VERSION, "quote": "market_quote_cache-v1", "daily_bars": "daily_price_cache-v1", "risk": "risk_cache-v1", "events": "content_cache-v1", "market_regime": "market_intelligence_cache-v1", "market_flow": "market_intelligence_cache-v1", "trade_plan": "trade_plans-v1"}
+        return {"context_schema": CONTEXT_SCHEMA_VERSION, "quote": "market_quote_cache-v1", "daily_bars": "daily_price_cache-v1", "risk": "risk_cache-v1", "events": "content_cache-v1", "market_regime": "market_intelligence_cache-v2-market-scoped", "market_flow": "market_intelligence_cache-v1", "trade_plan": "trade_plans-v1"}
