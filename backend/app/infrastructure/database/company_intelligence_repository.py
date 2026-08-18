@@ -70,6 +70,17 @@ class CompanyIntelligenceRepository:
             )
         return {**payload, "context_id": context_id, "payload_hash": payload_hash}
 
+    @staticmethod
+    def _context_row(row) -> dict[str, object] | None:
+        if not row:
+            return None
+        payload = json.loads(str(row["payload_json"]))
+        return {
+            **payload,
+            "context_id": str(row["context_id"]),
+            "payload_hash": str(row["payload_hash"]),
+        }
+
     def latest_context(self, symbol: str) -> dict[str, object] | None:
         with self.store._connect() as connection:
             row = connection.execute(
@@ -78,7 +89,36 @@ class CompanyIntelligenceRepository:
                    WHERE symbol=? ORDER BY generated_at DESC LIMIT 1""",
                 (str(symbol).strip().upper(),),
             ).fetchone()
-        if not row:
+        return self._context_row(row)
+
+    def latest_context_at_or_before(self, symbol: str, generated_at: str) -> dict[str, object] | None:
+        """Return the latest research context that existed by an analysis cutoff.
+
+        The timestamps are stored as offset-aware ISO-8601 strings.  We parse in
+        Python rather than relying on lexical SQLite ordering across different
+        offsets, keeping point-in-time replay correct for CN/HK/US contexts.
+        """
+        from datetime import datetime
+
+        cutoff = datetime.fromisoformat(str(generated_at).replace("Z", "+00:00"))
+        if cutoff.tzinfo is None:
+            raise ValueError("company context cutoff must include timezone offset")
+        normalized_symbol = str(symbol).strip().upper()
+        with self.store._connect() as connection:
+            rows = connection.execute(
+                """SELECT context_id,payload_json,payload_hash,generated_at
+                   FROM company_research_snapshots
+                   WHERE symbol=? ORDER BY generated_at DESC""",
+                (normalized_symbol,),
+            ).fetchall()
+        eligible = []
+        for row in rows:
+            observed = datetime.fromisoformat(str(row["generated_at"]).replace("Z", "+00:00"))
+            if observed.tzinfo is None:
+                continue
+            if observed <= cutoff:
+                eligible.append((observed, row))
+        if not eligible:
             return None
-        payload = json.loads(str(row["payload_json"]))
-        return {**payload, "context_id": str(row["context_id"]), "payload_hash": str(row["payload_hash"])}
+        _, row = max(eligible, key=lambda item: item[0])
+        return self._context_row(row)
