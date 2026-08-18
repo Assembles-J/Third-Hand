@@ -45,6 +45,7 @@ class AtomicFactRecord(AtomicModel):
     source_name: str | None = None
     source_reference: str | None = None
     source_timestamp: str | None = None
+    available_at: str | None = None
     observed_at: datetime
     freshness_status: FreshnessStatus
     polarity: AtomicPolarity
