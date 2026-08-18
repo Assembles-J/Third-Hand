@@ -294,6 +294,25 @@ class PortfolioStore:
                 connection.execute("CREATE INDEX IF NOT EXISTS idx_paper_trading_logs_symbol_time ON paper_trading_logs(symbol, executed_at DESC)")
                 connection.execute("CREATE TABLE IF NOT EXISTS paper_trading_equity_snapshots (id INTEGER PRIMARY KEY AUTOINCREMENT, total_equity REAL NOT NULL, available_cash REAL NOT NULL, market_value REAL NOT NULL, total_pnl REAL NOT NULL, recorded_at TEXT NOT NULL)")
                 connection.execute("CREATE INDEX IF NOT EXISTS idx_paper_equity_snapshots_time ON paper_trading_equity_snapshots(recorded_at DESC)")
+                connection.execute("""
+                    CREATE TABLE IF NOT EXISTS feedback_events (
+                        feedback_id TEXT PRIMARY KEY,
+                        decision_id TEXT NOT NULL,
+                        decision_input_hash TEXT NOT NULL,
+                        execution_log_id TEXT,
+                        user_action TEXT NOT NULL,
+                        execution_time TEXT,
+                        quantity REAL,
+                        price REAL,
+                        actual_outcome_json TEXT NOT NULL,
+                        hypothetical_outcome_json TEXT NOT NULL,
+                        explicit_feedback TEXT,
+                        review_label TEXT,
+                        policy_version TEXT NOT NULL,
+                        created_at TEXT NOT NULL
+                    )
+                """)
+                connection.execute("CREATE INDEX IF NOT EXISTS idx_feedback_events_decision_time ON feedback_events(decision_id, created_at DESC)")
                 self._ensure_column(connection, "paper_trading_logs", "status", "TEXT NOT NULL DEFAULT 'executed'")
                 self._ensure_column(connection, "paper_trading_logs", "fee", "REAL NOT NULL DEFAULT 0")
                 self._ensure_column(connection, "paper_trading_logs", "execution_quote_at", "TEXT")
@@ -597,6 +616,7 @@ class PortfolioStore:
             connection.execute("DELETE FROM decision_shadow_reports")
             connection.execute("DELETE FROM decision_ai_runs")
             connection.execute("DELETE FROM decision_reports")
+            connection.execute("DELETE FROM feedback_events")
             connection.execute("DELETE FROM decision_jobs")
             connection.execute("DELETE FROM simulation_runs")
             connection.execute("DELETE FROM simulation_run_stages")
@@ -958,6 +978,113 @@ class PortfolioStore:
             self._purge_invalid_decision_reports(connection, decision_id=decision_id)
             row = connection.execute("SELECT payload FROM decision_reports WHERE decision_id=?", (decision_id,)).fetchone()
         return json.loads(str(row["payload"])) if row else None
+
+    def record_feedback_event(self, item: dict[str, object]) -> dict[str, object]:
+        """Record an audit-only outcome review against one frozen decision.
+
+        This method intentionally has no write path to policy configuration,
+        sizing, or model routing. Feedback is an offline evaluation dataset until
+        a separately governed calibration phase is approved.
+        """
+        decision_id = str(item.get("decision_id") or "").strip()
+        user_action = str(item.get("user_action") or "").strip()
+        if not decision_id or not user_action:
+            raise ValueError("feedback_decision_id_and_user_action_required")
+        actual_outcome = item.get("actual_outcome") or {}
+        hypothetical_outcome = item.get("hypothetical_outcome") or {}
+        if not isinstance(actual_outcome, dict) or not isinstance(hypothetical_outcome, dict):
+            raise ValueError("feedback_outcomes_must_be_objects")
+        now = beijing_now().isoformat()
+        with self._connect() as connection:
+            decision_row = connection.execute(
+                "SELECT input_hash,payload FROM decision_reports WHERE decision_id=?", (decision_id,)
+            ).fetchone()
+            if not decision_row:
+                raise ValueError("feedback_frozen_decision_not_found")
+            execution_log_id = str(item.get("execution_log_id") or "").strip() or None
+            execution = None
+            if execution_log_id:
+                execution = connection.execute(
+                    "SELECT decision_id,executed_at,quantity,price FROM paper_trading_logs WHERE id=? AND status='executed'",
+                    (execution_log_id,),
+                ).fetchone()
+                if not execution:
+                    raise ValueError("feedback_execution_not_found")
+                if str(execution["decision_id"] or "") != decision_id:
+                    raise ValueError("feedback_execution_decision_mismatch")
+            event = {
+                "feedback_id": str(item.get("feedback_id") or uuid4()),
+                "decision_id": decision_id,
+                "decision_input_hash": str(decision_row["input_hash"]),
+                "execution_log_id": execution_log_id,
+                "user_action": user_action,
+                "execution_time": item.get("execution_time") or (execution["executed_at"] if execution else None),
+                "quantity": item.get("quantity") if item.get("quantity") is not None else (execution["quantity"] if execution else None),
+                "price": item.get("price") if item.get("price") is not None else (execution["price"] if execution else None),
+                "actual_outcome_json": json.dumps(actual_outcome, ensure_ascii=False, sort_keys=True),
+                "hypothetical_outcome_json": json.dumps(hypothetical_outcome, ensure_ascii=False, sort_keys=True),
+                "explicit_feedback": item.get("explicit_feedback"),
+                "review_label": item.get("review_label"),
+                "policy_version": str(item.get("policy_version") or "feedback-v1-audit-only-no-auto-tune"),
+                "created_at": now,
+            }
+            connection.execute(
+                "INSERT INTO feedback_events "
+                "(feedback_id,decision_id,decision_input_hash,execution_log_id,user_action,execution_time,quantity,price,actual_outcome_json,hypothetical_outcome_json,explicit_feedback,review_label,policy_version,created_at) "
+                "VALUES (:feedback_id,:decision_id,:decision_input_hash,:execution_log_id,:user_action,:execution_time,:quantity,:price,:actual_outcome_json,:hypothetical_outcome_json,:explicit_feedback,:review_label,:policy_version,:created_at)",
+                event,
+            )
+        return {
+            **event,
+            "actual_outcome": actual_outcome,
+            "hypothetical_outcome": hypothetical_outcome,
+            "automatic_tuning": False,
+        }
+
+    def feedback_events(self, decision_id: str | None = None, limit: int = 200) -> list[dict[str, object]]:
+        query = "SELECT * FROM feedback_events"
+        args: list[object] = []
+        if decision_id:
+            query += " WHERE decision_id=?"
+            args.append(str(decision_id))
+        query += " ORDER BY created_at DESC LIMIT ?"
+        args.append(max(1, limit))
+        with self._connect() as connection:
+            rows = connection.execute(query, args).fetchall()
+        return [{
+            **dict(row),
+            "actual_outcome": json.loads(str(row["actual_outcome_json"])),
+            "hypothetical_outcome": json.loads(str(row["hypothetical_outcome_json"])),
+            "automatic_tuning": False,
+        } for row in rows]
+
+    def feedback_evaluation_dataset(self, policy_version: str | None = None, limit: int = 10_000) -> list[dict[str, object]]:
+        """Return immutable feedback labels for offline policy-version evaluation.
+
+        The result is intentionally read-only. Callers may export it for an
+        offline benchmark, but it cannot calibrate production policy in-process.
+        """
+        query = "SELECT * FROM feedback_events"
+        args: list[object] = []
+        if policy_version:
+            query += " WHERE policy_version=?"
+            args.append(str(policy_version))
+        query += " ORDER BY policy_version, created_at, feedback_id LIMIT ?"
+        args.append(max(1, limit))
+        with self._connect() as connection:
+            rows = connection.execute(query, args).fetchall()
+        return [{
+            "feedback_id": row["feedback_id"],
+            "decision_id": row["decision_id"],
+            "decision_input_hash": row["decision_input_hash"],
+            "execution_log_id": row["execution_log_id"],
+            "user_action": row["user_action"],
+            "actual_outcome": json.loads(str(row["actual_outcome_json"])),
+            "hypothetical_outcome": json.loads(str(row["hypothetical_outcome_json"])),
+            "review_label": row["review_label"],
+            "policy_version": row["policy_version"],
+            "automatic_tuning": False,
+        } for row in rows]
 
     @staticmethod
     def _is_valid_decision_report(item: object) -> bool:

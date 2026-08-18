@@ -182,9 +182,13 @@ settings, usage, validation result and repair retry path. AI output remains
 explanatory and cannot mutate formal actions. Remaining: wire provider-internal
 transport retries into the same audit record when the provider exposes them.
 
-### Phase 8 — Feedback
+### Phase 8 — Feedback — ACTIVE
 
-Link user actions and outcomes to exact frozen decisions. Do not auto-tune production policy until offline labels/evaluation are trustworthy.
+FeedbackEvent now links an exact frozen decision (and, when present, its matching
+paper execution) to user action, actual outcome, hypothetical outcome and review
+label. The storage API verifies the decision/execution lineage, provides a
+read-only policy-version evaluation export, and always marks events as
+`automatic_tuning: false`. Remaining: add UI/API review workflows.
 
 ## 4. Migration guardrails
 
