@@ -16,7 +16,7 @@ FACT_POLARITY_POLICY_VERSION = "fact-polarity-v1-atomic-record-authority"
 FUNDAMENTAL_AGGREGATION_POLICY_VERSION = "fundamental-aggregation-v1-dimension-consensus"
 RESEARCH_AGGREGATION_POLICY_VERSION = "research-aggregation-v1-domain-consensus"
 SEMANTIC_INVARIANT_VALIDATOR_VERSION = "research-semantic-invariants-v1"
-DECISION_ARBITER_POLICY_VERSION = "decision-arbiter-v2-formal-semantic-action"
+DECISION_ARBITER_POLICY_VERSION = "decision-arbiter-v3-state-and-event-gates"
 # v3 is a Day-0 correctness break: REDUCE now requires an existing position.
 # Bumping the version prevents historical v2 empty-position REDUCE reports from
 # remaining eligible for next-session execution after deployment.

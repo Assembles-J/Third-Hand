@@ -17,6 +17,7 @@ if TYPE_CHECKING:
 
 
 FormalDecisionAction = Literal["BUY", "WAIT", "HOLD", "ADD", "REDUCE", "EXIT", "BLOCKED"]
+PositionState = Literal["FLAT", "ENTRY_PENDING", "HOLDING", "REDUCE_PENDING", "EXIT_PENDING", "BLOCKED"]
 
 
 class DecisionSemanticModel(BaseModel):
@@ -26,12 +27,16 @@ class DecisionSemanticModel(BaseModel):
 class EntryDecision(DecisionSemanticModel):
     action: Literal["BUY", "WAIT", "BLOCKED"]
     decision_confidence: float = Field(ge=0, le=1)
+    prior_state: Literal["FLAT"] = "FLAT"
+    next_state: PositionState
     reason_codes: tuple[str, ...] = ()
 
 
 class PositionDecision(DecisionSemanticModel):
     action: Literal["HOLD", "ADD", "REDUCE", "EXIT", "BLOCKED"]
     decision_confidence: float = Field(ge=0, le=1)
+    prior_state: Literal["HOLDING"] = "HOLDING"
+    next_state: PositionState
     reason_codes: tuple[str, ...] = ()
 
 
@@ -51,34 +56,49 @@ class DecisionArbiter:
                 return EntryDecision(
                     action="BLOCKED",
                     decision_confidence=1,
+                    next_state="BLOCKED",
                     reason_codes=("action_candidate_missing",),
                 )
             return PositionDecision(
                 action="BLOCKED",
                 decision_confidence=1,
+                next_state="BLOCKED",
                 reason_codes=("action_candidate_missing",),
             )
         reasons = tuple(dict.fromkeys((*candidate.triggered_rule_ids, *candidate.blocked_reasons)))
         confidence = candidate.policy_score
         if context.position is None:
             if candidate.action == "OPEN":
-                return EntryDecision(action="BUY", decision_confidence=confidence, reason_codes=reasons)
+                return EntryDecision(action="BUY", decision_confidence=confidence, next_state="ENTRY_PENDING", reason_codes=reasons)
             if candidate.action == "BLOCKED":
-                return EntryDecision(action="BLOCKED", decision_confidence=confidence, reason_codes=reasons)
+                return EntryDecision(action="BLOCKED", decision_confidence=confidence, next_state="BLOCKED", reason_codes=reasons)
+            gate_reasons = self._gate_reasons(context, "OPEN")
             return EntryDecision(
                 action="WAIT",
                 decision_confidence=confidence,
-                reason_codes=tuple(dict.fromkeys((*reasons, f"legacy_candidate:{candidate.action}"))),
+                next_state="FLAT",
+                reason_codes=tuple(dict.fromkeys((*reasons, *gate_reasons, f"legacy_candidate:{candidate.action}"))),
             )
         if candidate.action in {"ADD", "REDUCE", "EXIT", "HOLD"}:
-            return PositionDecision(action=candidate.action, decision_confidence=confidence, reason_codes=reasons)
+            next_state = {
+                "ADD": "HOLDING", "HOLD": "HOLDING", "REDUCE": "REDUCE_PENDING", "EXIT": "EXIT_PENDING",
+            }[candidate.action]
+            return PositionDecision(action=candidate.action, decision_confidence=confidence, next_state=next_state, reason_codes=reasons)
         if candidate.action == "BLOCKED":
-            return PositionDecision(action="BLOCKED", decision_confidence=confidence, reason_codes=reasons)
+            return PositionDecision(action="BLOCKED", decision_confidence=confidence, next_state="BLOCKED", reason_codes=reasons)
         return PositionDecision(
             action="HOLD",
             decision_confidence=confidence,
+            next_state="HOLDING",
             reason_codes=tuple(dict.fromkeys((*reasons, f"legacy_candidate:{candidate.action}", "position.no_reduce_without_position_risk_rule"))),
         )
+
+    @staticmethod
+    def _gate_reasons(context: DecisionContext, action: str) -> tuple[str, ...]:
+        quality = getattr(context, "data_quality", None)
+        gates = getattr(quality, "action_gates", ()) if quality is not None else ()
+        gate = next((item for item in gates if item.action == action), None)
+        return tuple(gate.reasons) if gate and gate.permission == "blocked" else ()
 
 
 def formal_action_from_report(report: Mapping[str, object]) -> FormalDecisionAction:
@@ -113,6 +133,6 @@ def action_gate_for(formal_action: FormalDecisionAction) -> Literal["OPEN", "ADD
 
 
 __all__ = [
-    "DecisionArbiter", "EntryDecision", "FormalDecisionAction", "PositionDecision",
+    "DecisionArbiter", "EntryDecision", "FormalDecisionAction", "PositionDecision", "PositionState",
     "action_gate_for", "execution_side", "formal_action_from_report",
 ]

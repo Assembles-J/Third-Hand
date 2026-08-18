@@ -138,8 +138,11 @@ formal action and maps BUY back to the existing OPEN quality gate. Old frozen
 reports safely replay through the same mapping. The arbiter does not consume
 ResearchAssessment or model output.
 
-Remaining: add explicit position states, hard event-gate reason codes and
-multi-timeframe authority.
+Explicit state transitions (`FLAT`, `ENTRY_PENDING`, `HOLDING`,
+`REDUCE_PENDING`, `EXIT_PENDING`, `BLOCKED`) are now emitted with each semantic
+decision. Existing deterministic event gates are copied into a blocked entry's
+reason codes without changing their scope. Remaining: multi-timeframe
+authority.
 
 ### Phase 5 — Market/execution adapters
 
