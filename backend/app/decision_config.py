@@ -3,9 +3,8 @@ import hashlib
 import json
 import os
 
-# v3 changes POLICY evidence authority: technical price/location uses the
-# canonical quote/daily view and stale/conflicted risk evidence is research-only.
-EVIDENCE_VERSION = "evidence-v3-canonical-market-inputs"
+# v4 makes the effective position-cap authority explicit and shared with sizing.
+EVIDENCE_VERSION = "evidence-v4-effective-position-cap"
 # Phase 2 runs this compact fact representation beside current evidence. v2 adds
 # point-in-time persisted Company Intelligence facts without formal authority.
 ATOMIC_EVIDENCE_VERSION = "atomic-evidence-shadow-v2-company-research"
@@ -24,10 +23,9 @@ TIMEFRAME_AUTHORITY_POLICY_VERSION = "timeframe-authority-v2-weekly-context"
 DECISION_CONTINUITY_POLICY_VERSION = "decision-continuity-v3-material-fingerprint"
 MODEL_POLICY_VERSION = "model-policy-v3-compound-structured-recovery"
 FEEDBACK_POLICY_VERSION = "feedback-v1-audit-only-no-auto-tune"
-# v3 is a Day-0 correctness break: REDUCE now requires an existing position.
-# Bumping the version prevents historical v2 empty-position REDUCE reports from
-# remaining eligible for next-session execution after deployment.
-ACTION_POLICY_VERSION = "swing-policy-v4-post-entry-coherence"
+# v5 invalidates historical reports that could have been sized against a looser
+# hard-coded 20% cap than the evidence/personal-rule authority.
+ACTION_POLICY_VERSION = "swing-policy-v5-effective-position-cap"
 OPEN_GATE_AUDIT_VERSION = "open-gate-audit-v1"
 # v2 records the Day-0 shift from wall-clock TTL checks for daily data to
 # latest-completed-exchange-session semantics. Thresholds are unchanged; the
@@ -46,10 +44,9 @@ MARKET_REGIME_POLICY_VERSION = "market-regime-v2-market-scoped"
 # blocks new risk immediately before disclosure; it never infers event direction.
 CORPORATE_EVENT_POLICY_VERSION = "corporate-event-v1-pre-earnings-gate"
 PRE_EVENT_BLOCK_SESSIONS = 1
-# v2 fixes A-share execution semantics: OPEN/ADD may fill on a strictly later
-# observed quote in the same trading day, while T+1 remains a SELL-availability
-# constraint enforced by the paper ledger.
-EXECUTION_POLICY_VERSION = "execution-v6-session-freshness-gate"
+# v7 makes execution consume only an explicit order quantity. A numeric zero can
+# never fall back to the resulting/target position quantity.
+EXECUTION_POLICY_VERSION = "execution-v7-explicit-order-quantity"
 CANDIDATE_SELECTION_VERSION = "candidate-rotation-v1"
 OPPORTUNITY_SCORING_VERSION = "research-priority-v1"
 # Decision-input freshness stays conservative. Execution is a separate boundary:
@@ -62,9 +59,10 @@ RISK_MAX_AGE_DAYS = 2
 DECISION_SHADOW_MODE = os.getenv("DECISION_SHADOW_MODE", "true").lower() not in {"0", "false", "no"}
 DECISION_SIZING_ENABLED = os.getenv("DECISION_SIZING_ENABLED", "false").lower() in {"1", "true", "yes"}
 DECISION_AI_ENABLED = os.getenv("DECISION_AI_ENABLED", "false").lower() in {"1", "true", "yes"}
-SIZING_VERSION = "risk-sizing-v2-market-execution-precheck"
+SIZING_VERSION = "risk-sizing-v3-effective-position-cap"
 DECISION_RESEARCH_PROMPT_VERSION = "decision-research-v1"
 MAX_LIQUIDITY_VOLUME_FRACTION = 0.10
+SYSTEM_HARD_POSITION_CAP_PERCENT = 20.0
 NEAR_POSITION_CAP_RATIO = 0.90
 POSITION_CAP_EXCESS_MILD_PERCENT = 10.0
 
