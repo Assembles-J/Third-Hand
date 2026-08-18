@@ -15,8 +15,7 @@ Goals:
 - research-only news is not fetched by every paper cycle;
 - broad whole-market research scans are low-frequency rather than every few
   minutes;
-- broad-market regime is persisted once per completed CN session and reused by
-  every DecisionContext.
+- market regime is cached per explicit market and completed exchange session.
 """
 from __future__ import annotations
 
@@ -25,6 +24,7 @@ from typing import Iterable
 
 
 MARKET_REGIME_CACHE_KEY = "market_regime"
+MARKET_REGIME_SCOPED_CACHE_PREFIX = "market_regime:"
 MIN_HISTORY_RETRY_SECONDS = 30 * 60
 MIN_UNIVERSE_SCAN_INTERVAL_SECONDS = 30 * 60
 POST_CLOSE_MAINTENANCE_MINUTES = 90
@@ -269,28 +269,53 @@ def install(m) -> None:
         )
         return None
 
-    def assess_market_regime():
-        """Persist/reuse one broad-market regime snapshot per completed CN session."""
+    def _call_original_regime_assess(market: str) -> dict[str, object]:
+        """Call the market-aware service while keeping old injected CN adapters usable."""
+        try:
+            return dict(original_regime_assess(market))
+        except TypeError:
+            if market != "CN":
+                return {
+                    "status": "unavailable",
+                    "regime": "unknown",
+                    "market": market,
+                    "indexes": [],
+                    "source": "market_regime_unconfigured",
+                    "note": f"{market} 市场环境适配器尚未支持显式市场参数。",
+                }
+            return dict(original_regime_assess())
+
+    def assess_market_regime(market: str = "CN"):
+        """Persist/reuse one regime snapshot per explicit market and completed session."""
+        normalized = str(market or "CN").strip().upper()
         now = m.beijing_now()
-        expected = m.trading_calendar.latest_completed_session_date("CN", now)
-        cached = m.store.cached_market_intelligence(MARKET_REGIME_CACHE_KEY) or {}
+        expected = m.trading_calendar.latest_completed_session_date(normalized, now)
+        scoped_key = f"{MARKET_REGIME_SCOPED_CACHE_PREFIX}{normalized}"
+        scoped_cached = m.store.cached_market_intelligence(scoped_key) or {}
+        legacy_cached = m.store.cached_market_intelligence(MARKET_REGIME_CACHE_KEY) or {} if normalized == "CN" else {}
+        cached = scoped_cached or legacy_cached
         if cached.get("status") == "ready" and cached.get("as_of") == expected:
-            return cached
+            value = dict(cached)
+            value.setdefault("market", normalized)
+            return value
 
         can_refresh = (
-            m.trading_calendar.is_market_open("CN", now)
+            m.trading_calendar.is_market_open(normalized, now)
             or m.trading_calendar.is_post_close_maintenance_window(
-                "CN",
+                normalized,
                 now,
                 minutes=POST_CLOSE_MAINTENANCE_MINUTES,
             )
         )
         if not can_refresh:
             if cached:
-                return cached
+                value = dict(cached)
+                value.setdefault("market", normalized)
+                return value
             return {
                 "status": "unavailable",
                 "regime": "unknown",
+                "market": normalized,
                 "indexes": [],
                 "source": "market_regime_local_cache",
                 "as_of": expected,
@@ -298,14 +323,22 @@ def install(m) -> None:
                 "note": "休市期间不自动访问远端；等待下一交易时段或收盘维护窗口刷新。",
             }
 
-        result = dict(original_regime_assess())
+        result = _call_original_regime_assess(normalized)
+        result["market"] = normalized
         result["as_of"] = expected
         result["retrieved_at"] = now.isoformat()
         if result.get("status") == "ready" and result.get("regime") not in {None, "unknown"}:
-            m.store.save_market_intelligence(MARKET_REGIME_CACHE_KEY, result)
+            m.store.save_market_intelligence(scoped_key, result)
+            # Keep the historical generic CN key during the migration so old
+            # diagnostics/snapshots continue to work. Non-CN data is never
+            # written there, preventing cross-market fallback.
+            if normalized == "CN":
+                m.store.save_market_intelligence(MARKET_REGIME_CACHE_KEY, result)
             return result
         if cached:
-            return cached
+            value = dict(cached)
+            value.setdefault("market", normalized)
+            return value
         return result
 
     def startup_market_intelligence() -> None:
