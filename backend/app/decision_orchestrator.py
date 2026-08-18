@@ -33,9 +33,9 @@ class DecisionOrchestrator:
 
     def generate(self, context, *, candidate_audit: dict[str, object] | None = None) -> DecisionReport:
         evidence = self.evidence_engine.build(context)
-        # Formal policy consumes only the existing EvidenceItem pipeline.  Phase-2
-        # Atomic Evidence is deliberately built *after* candidates are frozen, so
-        # it cannot change the current action, gates, sizing inputs or AI prompt.
+        # ActionPolicy consumes only EvidenceItems. Atomic Evidence is built
+        # after candidates freeze; its deterministic aggregate may only veto a
+        # sufficiently evidenced adverse BUY/ADD, and it supplies the AI prompt.
         candidates = self.policy_engine.evaluate(context, evidence)
         atomic_evidence_shadow = self.atomic_evidence_builder.build(context, evidence)
         research_assessment = self.research_aggregator.build(atomic_evidence_shadow)
@@ -48,12 +48,14 @@ class DecisionOrchestrator:
             research_assessment=research_assessment,
         )
         prior_report = self.prior_report_loader(context.symbol) if self.prior_report_loader else None
-        formal_action, decision_memory = self.continuity_policy.assess(context, semantic_decision.action, prior_report)
+        formal_action, decision_memory = self.continuity_policy.assess(
+            context, semantic_decision.action, prior_report, research_assessment,
+        )
         if formal_action != semantic_decision.action:
             semantic_decision = self._with_continuity_action(semantic_decision, formal_action)
         timeframe_authority = self.timeframe_policy.assess(context)
         logger.info(
-            "Atomic evidence shadow context_id=%s symbol=%s snapshot_hash=%s fact_count=%s availability_count=%s conflict_count=%s",
+            "Atomic evidence snapshot context_id=%s symbol=%s snapshot_hash=%s fact_count=%s availability_count=%s conflict_count=%s",
             context.context_id,
             context.symbol,
             atomic_evidence_shadow.snapshot_hash,

@@ -21,8 +21,8 @@ DECISION_ARBITER_POLICY_VERSION = "decision-arbiter-v4-adverse-research-new-risk
 RESEARCH_DECISION_POLICY_VERSION = "research-decision-v1-adverse-new-risk-veto"
 RESEARCH_ADVERSE_MIN_EVIDENCE_CONFIDENCE = 0.60
 TIMEFRAME_AUTHORITY_POLICY_VERSION = "timeframe-authority-v2-weekly-context"
-DECISION_CONTINUITY_POLICY_VERSION = "decision-continuity-v2-runtime-cooldown-and-review"
-MODEL_POLICY_VERSION = "model-policy-v1-atomic-complexity-routing"
+DECISION_CONTINUITY_POLICY_VERSION = "decision-continuity-v3-material-fingerprint"
+MODEL_POLICY_VERSION = "model-policy-v2-adaptive-structured-recovery"
 FEEDBACK_POLICY_VERSION = "feedback-v1-audit-only-no-auto-tune"
 # v3 is a Day-0 correctness break: REDUCE now requires an existing position.
 # Bumping the version prevents historical v2 empty-position REDUCE reports from

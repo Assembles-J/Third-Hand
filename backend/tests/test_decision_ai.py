@@ -73,19 +73,62 @@ def test_ai_service_accepts_a_fenced_json_response_and_canonicalizes_a_unique_ti
     assert result.assessment.supporting_evidence_ids == ("position.above_max",)
 
 
-def test_ai_service_does_not_repeat_a_truncated_request():
+def test_ai_service_recovers_a_truncated_thinking_request_with_larger_structured_pass():
     class TruncatingClient(Client):
         def chat_json(self, *_args, **_kwargs):
             self.calls += 1
-            raise LlmClientError("truncated", code="output_truncated", retryable=False)
+            if self.calls == 1:
+                raise LlmClientError("truncated", code="output_truncated", retryable=False)
+            return LlmResponse(
+                content=json.dumps({
+                    "thesis_status": "weakened", "preferred_action": "REDUCE",
+                    "supporting_evidence_ids": [], "opposing_evidence_ids": [],
+                    "missing_evidence": [], "reasoning_steps": [],
+                    "uncertainty": "medium", "summary": "recovered",
+                }),
+                model="test", latency_ms=1, usage=LlmUsage(),
+            )
 
     store = Store()
     client = TruncatingClient("")
     result = DecisionAiService(store, client).assess(Context(), _evidence(), (_candidate(),))
 
-    assert result.status == "failed"
-    assert result.error_code == "output_truncated"
-    assert client.calls == 1
+    assert result.status == "succeeded"
+    assert client.calls == 2
+    metadata = store.runs[-1]["metadata"]
+    assert metadata["model_tier"] == "PRO_STRUCTURED_RECOVERY"
+    assert metadata["thinking"] is False
+    assert metadata["max_tokens"] >= 2400
+    assert metadata["retry_fallback_path"][0]["reason"] == "output_truncated"
+
+
+def test_ai_service_promotes_flash_validation_failure_to_reasoning_model():
+    valid = json.dumps({
+        "thesis_status": "weakened", "preferred_action": "REDUCE",
+        "supporting_evidence_ids": [], "opposing_evidence_ids": [],
+        "missing_evidence": [], "reasoning_steps": [], "uncertainty": "medium", "summary": "recovered",
+    })
+
+    class RepairingClient(Client):
+        def chat_json(self, *_args, **kwargs):
+            self.calls += 1
+            self.last_kwargs = kwargs
+            return LlmResponse(
+                content="not-json" if self.calls == 1 else valid,
+                model="test", latency_ms=1, usage=LlmUsage(),
+            )
+
+    store = Store()
+    client = RepairingClient("")
+    result = DecisionAiService(store, client).assess(Context(), _evidence(), (_candidate(),))
+
+    assert result.status == "succeeded"
+    assert client.calls == 2
+    metadata = store.runs[-1]["metadata"]
+    assert metadata["model_tier"] == "PRO_ESCALATION"
+    assert metadata["thinking"] is True
+    assert metadata["retry_fallback_path"][0]["from_tier"] == "FLASH_DEFAULT"
+    assert metadata["retry_fallback_path"][0]["to_tier"] == "PRO_ESCALATION"
 
 
 def test_guard_rejects_ai_action_outside_policy_candidates():

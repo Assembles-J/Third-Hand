@@ -1,9 +1,10 @@
-"""Build compact, deterministic Atomic Evidence beside the current engine.
+"""Build compact, deterministic Atomic Evidence after policy candidates freeze.
 
-Phase 2 is intentionally shadow-only.  This module may read DecisionContext and
-existing EvidenceItems, but no ActionPolicy, sizing, execution or AI component
-may read its output yet.  Availability and conflicts mirror the existing
-DecisionQualitySummary rather than creating a second data-quality truth system.
+Raw Atomic Evidence never directly controls ActionPolicy, sizing or execution.
+Its deterministic aggregation may supply the bounded adverse-new-risk veto and
+the AI research prompt; it cannot upgrade an action, create REDUCE/EXIT, or
+bypass a hard gate. Availability and conflicts mirror DecisionQualitySummary
+rather than creating a second data-quality truth system.
 """
 from __future__ import annotations
 

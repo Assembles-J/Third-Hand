@@ -42,5 +42,46 @@ class ModelPolicy:
             max_tokens=default_max_tokens,
         )
 
+    def recover(
+        self,
+        previous: ModelSelection,
+        *,
+        reason: str,
+        reasoning_model: str | None,
+    ) -> ModelSelection:
+        """Return the one bounded recovery route for a failed structured reply.
+
+        A retry is deliberately not a blind replay: schema/semantic failures
+        promote Flash to the configured reasoning model, while a length-limited
+        thinking reply switches to a larger non-thinking structured pass so
+        internal reasoning cannot consume the entire JSON output budget.
+        """
+        reasons = tuple(dict.fromkeys((*previous.escalation_reasons, reason)))
+        if reason == "output_truncated":
+            return ModelSelection(
+                tier="PRO_STRUCTURED_RECOVERY",
+                model=reasoning_model or previous.model,
+                thinking=False,
+                max_tokens=min(4800, max(2400, previous.max_tokens * 2)),
+                escalation_reasons=reasons,
+            )
+        if reason == "schema_or_semantic_validation_failed":
+            if previous.tier == "FLASH_DEFAULT":
+                return ModelSelection(
+                    tier="PRO_ESCALATION",
+                    model=reasoning_model or previous.model,
+                    thinking=True,
+                    max_tokens=min(3200, max(1200, previous.max_tokens)),
+                    escalation_reasons=reasons,
+                )
+            return ModelSelection(
+                tier="PRO_STRUCTURED_RECOVERY",
+                model=reasoning_model or previous.model,
+                thinking=False,
+                max_tokens=min(4800, max(2400, previous.max_tokens)),
+                escalation_reasons=reasons,
+            )
+        return previous
+
 
 __all__ = ["ModelPolicy", "ModelSelection"]

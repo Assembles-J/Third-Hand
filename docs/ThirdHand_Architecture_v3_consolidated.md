@@ -5,6 +5,13 @@ This is the single authoritative v3 architecture document. It defines both the
 target authority boundaries and the current implementation conformance; it
 supersedes all earlier v1/v2 designs, amendments and duplicate v3 documents.
 
+The paired `ThirdHand_v3_Roadmap_and_Ledger.md` is the authoritative delivery
+ledger. A production observation is not considered a design change until both
+documents are updated with the evidence, the intended authority boundary, and
+acceptance tests. If a README, code comment, UI label, or deployment variable
+conflicts with these two documents, these two documents win and the conflicting
+text must be corrected in the same change.
+
 The current repository already has strong production invariants around DataHub quality, provider lineage, DecisionPackage hashing, AI isolation, and unified freeze. v3 extends those mechanisms; it does not replace them with a parallel stack.
 
 ## 0.1 Current implementation conformance
@@ -14,18 +21,37 @@ The current repository already has strong production invariants around DataHub q
 | Data, identity, events and canonical price/time | Complete | Instrument metadata, market-scoped regime, canonical snapshot and event gates are formal inputs. |
 | Atomic evidence and deterministic aggregation | Complete | Fact/availability/conflict provenance, point-in-time Company Intelligence, versioned aggregation and semantic validation are persisted. |
 | Decision semantics | Partial | Entry/Position actions and formal action authority exist. High-confidence deterministic adverse research may veto new BUY/ADD risk only; it never upgrades an action or creates REDUCE/EXIT. A traceable weekly snapshot is aggregated from completed daily bars; 60m/15m/5m inputs remain explicitly unavailable and ActionPolicy remains daily-only. |
-| Market/execution adapters | Complete at the CNY-only scope | CN lot/T+1/fee and PositionLot FIFO are formal in the CNY-only paper account. HK Stock Connect retains HKD trading-price metadata and actual RMB broker-settlement receipts as audit facts. HK/US have no paper-execution path; a generic FX cache, multi-currency cash ledger and inferred broker-fee schedule are deliberately out of scope. |
-| Decision continuity | Complete | Prior decision, episode, material change, cooldown/review fields and position age are persisted. ExecutionPrecheck rejects fills before `cooldown_until`; the deterministic runtime promotes `review_after` into a separately audited decision-refresh obligation. |
-| Model policy and audit | Complete for the configured DeepSeek provider | Atomic prompt projection, Flash/Pro routing, schema/semantic checks, hashes, usage and retry traces are persisted. A generic multi-provider capability registry is not implemented. |
+| Market/execution adapters | Partial at the CNY-only scope | CN lot/T+1/fee and PositionLot FIFO are enforced correctly at the ledger boundary. However, sellable quantity is not yet a formal DecisionContext/sizing/pre-execution input, and account/API observability does not yet expose lot-level sellability. HK Stock Connect retains HKD trading-price metadata and actual RMB broker-settlement receipts as audit facts. HK/US have no paper-execution path. |
+| Decision continuity | Complete | Prior decision, episode, full-input audit change, versioned material fingerprint, cooldown/review fields and position age are persisted. Only a strategic fingerprint transition or a hard gate/position-state transition may replace the prior formal action. ExecutionPrecheck rejects fills before `cooldown_until`; the deterministic runtime promotes `review_after` into a separately audited decision-refresh obligation. |
+| Model policy and audit | Complete for configured-provider bounded recovery | Atomic prompt projection, Flash/Pro routing, schema/semantic checks, hashes, usage and retry traces are persisted. A schema/semantic Flash failure promotes one corrected retry to Pro; a truncated thinking reply receives one larger non-thinking structured recovery pass. A generic multi-provider capability registry and a provider-specific maximum-reasoning capability tier are deliberately not implemented. |
 | Feedback | Complete as an audit dataset | Frozen decision/execution lineage, actual-vs-hypothetical outcomes and read-only policy-version export exist; there is no automatic tuning. |
 
 The target diagram below is deliberately broader than the current formal action
 path. The current path is `DecisionContext -> EvidenceEngine -> ActionPolicy ->
-DecisionArbiter -> DecisionContinuity -> formal_action`; Atomic Evidence,
-ResearchAssessment and AI are deterministic/auditable research inputs beside
-that path. `ResearchAssessment` has one explicit, bounded authority: sufficiently
+Atomic Evidence -> ResearchAssessment -> DecisionArbiter -> DecisionContinuity
+-> formal_action`. Candidates are frozen before Atomic Evidence is built;
+the snapshot has no direct sizing or execution authority. `ResearchAssessment`
+has one explicit, bounded authority: sufficiently
 evidenced ADVERSE research can veto a new BUY/ADD risk. It cannot upgrade an
 action, create REDUCE/EXIT, or bypass a hard gate; AI has no formal action path.
+
+## 0.2 Production verification record and current execution gap
+
+On 2026-08-18, an isolated SQLite test was executed inside the deployed API
+container for artifact `GIT_COMMIT=1b7bc47b3a49a5f4e5eaed1a5c8cb17d94299592`.
+It proved the ledger contract: a same-day CN BUY creates a `PENDING_T1` lot with
+zero sellable quantity; a same-day SELL is rejected with
+`paper_t1_unsellable_quantity`; the same SELL succeeds on the next trading day.
+This is a verification of the deployed artifact, not a production-account write.
+
+The production paper ledger from the same session also showed the gap that this
+document now governs: after morning CN buys, the scheduler repeatedly generated
+REDUCE/EXIT execution attempts during the same day and the ledger rejected them
+at the final boundary. The final ledger result is correct, but the preceding
+decision, sizing, scheduling and UI behavior is not conformant with this
+architecture. A historical after-session paper fill was also observed. Until
+the requirements in section 6.1 are met, paper execution is an active safety
+gap, not a completed Phase 5 capability.
 
 ## 1. Existing foundations to preserve
 
@@ -204,8 +230,18 @@ Split:
 ### Decision memory
 Store:
 `prior_decision_id`, `episode_id`, `last_action`, `position_age`,
+`input_changed`, `material_fingerprint`, `material_change_components`,
 `material_change`, `material_change_reason`, `cooldown_until`, `review_after`,
 and invalidation conditions.
+
+`input_changed` records a complete frozen-input hash difference for audit; it is
+not itself permission to replace an existing formal action. The versioned
+`material_fingerprint` contains only strategic state: hard action gates,
+position state/quantity, enabled plan contract, invalidation threshold crossing,
+daily technical state, risk and market-regime state, policy-eligible events and
+the bounded adverse-research veto. Quote refresh timestamps and price movement
+within the same threshold state therefore preserve continuity. The precise
+changed fingerprint components are persisted whenever a new episode is allowed.
 
 `cooldown_until` is enforced at `ExecutionPrecheck` against the independently
 observed fill quote. `review_after` is not a trade: when due, it authorizes a
@@ -260,6 +296,207 @@ ratio. They are audit evidence, not a formula for later orders and not an
 alternate execution path.
 
 Existing A-share quality invariants remain the CN_A contract and must not be weakened while generalizing.
+
+### 6.1 Paper-execution safety contract (active remediation)
+
+The paper ledger is the final, transactional enforcement boundary. It is not the
+first place at which an impossible order may be discovered. For every executable
+CN position decision, the following rules are mandatory:
+
+1. `DecisionContext.PositionSnapshot` must contain total quantity,
+   `sellable_quantity`, `locked_quantity`, and the earliest next eligible sell
+   time derived from `PositionLot`. These values are deterministic ledger facts;
+   they are never LLM inputs with authority.
+2. `ExecutionPrecheck` runs before sizing and returns structured reason codes.
+   It must validate instrument market, exchange calendar, market session,
+   independently observed quote timestamp, quote freshness, cooldown and
+   sellability. `execute_paper_trade` repeats the essential checks
+   transactionally as defence in depth.
+3. For `REDUCE` and `EXIT`, sizing may propose no more than sellable quantity.
+   If sellable quantity is zero, the report is non-executable with a T+1 reason
+   and `next_eligible_sell_at`; it must not create a zero-quantity SELL attempt.
+4. A T+1-deferred decision is a scheduled deferral, not a skipped execution. It
+   may be reconsidered at the next eligible CN session, after a fresh decision
+   and a fresh in-session quote. It must not write duplicate skip logs each
+   scheduler interval.
+5. A BUY/ADD may fill later in the same CN session only when all execution
+   checks pass. T+1 limits the newly acquired lot's sellability; it does not
+   impose a universal next-day BUY rule. Existing settled lots remain sellable.
+6. Closed-market manual runs may generate research, reports and snapshots, but
+   may not create a paper fill. A fill requires a trading day, the instrument's
+   open session and an in-session, fresh observed quote.
+7. Account and API output must expose aggregate sellable/locked quantity and
+   read-only PositionLot details. A date rollover must be reflected in the
+   derived display without requiring a failed or successful SELL to mutate the
+   lot first.
+8. Scheduler status is operational audit data and must be recoverable from
+   persisted runs after process restart. `paper_trading_enabled` gates every
+   automatic paper fill; `DECISION_SHADOW_MODE` is a research-report setting and
+   is not a paper-trading safety switch.
+
+The product boundary is equally explicit: ThirdHand does not connect to a
+broker, submit a real order, hold broker credentials, or promise returns.
+Paper execution is a simulated CNY ledger only. Any UI, README or deployment
+text that says "no automatic order" must state whether it refers to real orders,
+paper fills, or both.
+
+Release acceptance for this contract requires:
+
+- a same-day BUY followed by REDUCE/EXIT produces one explainable T+1 deferral,
+  no paper SELL attempt and no duplicate skip logs;
+- a mixed inventory sells only its already-settled lots on the same day;
+- the next eligible session recalculates sellability before the UI, sizing and
+  scheduler read it;
+- closed-session, stale-quote and out-of-session-quote executions are blocked;
+- restart recovery reports the latest persisted paper run instead of `never_run`;
+- deployed-container tests cover all of the above without touching production
+  account data.
+
+### 6.2 Approved implementation design for the paper-execution remediation
+
+This section is the coding contract for the active remediation. Implementations
+may refactor internal names, but may not change the data ownership, state
+transitions or externally visible semantics below without first amending this
+document and the paired ledger.
+
+#### Read models and ownership
+
+`PortfolioStore` remains the owner of the transactional paper ledger. Add a
+read-only `PaperPositionState` projection, built from `paper_trading_positions`,
+`paper_position_lots`, `InstrumentMetadata` and the market calendar:
+
+```text
+symbol, market, total_quantity, sellable_quantity, locked_quantity,
+next_eligible_sell_at, lots[], calculated_at
+```
+
+`PositionLot` gains a persisted `sellable_at` timestamp. A CN BUY writes it as
+the next CN trading session open after `acquired_at`; non-CN values remain
+unsupported for paper execution. The projection derives current sellability
+from `sellable_at <= calculated_at`; a GET request must never need to mutate a
+lot merely to display the next-day state. Migration/backfill derives
+`sellable_at` from each existing CN lot's `acquired_at` and `market`; an
+unreconcilable historical lot remains explicitly non-sellable.
+
+`DecisionContext.PositionSnapshot` adds nullable, backward-compatible fields:
+`sellable_quantity`, `locked_quantity` and `next_eligible_sell_at`. The context
+builder obtains them only from `PaperPositionState`; generic research contexts
+without a paper account retain `None`. `PositionSizingResult` adds
+`execution_disposition` (`ready`, `deferred_t1`, `blocked`, or
+`not_applicable`) and `max_executable_quantity`. Existing `status` remains for
+wire compatibility during the migration.
+
+#### Precheck and sizing interfaces
+
+Split the present boolean precheck into two deterministic calls:
+
+```text
+preflight_for_sizing(context, action, position_state, now)
+    -> ExecutionConstraint(disposition, reason_codes, max_quantity,
+                           next_eligible_at)
+
+precheck_fill(report, action, quote, live_position_state, now, calendar)
+    -> ExecutionConstraint(disposition, reason_codes, max_quantity,
+                           next_eligible_at, quote_observed_at)
+```
+
+`ExecutionConstraint` is the single typed result used by sizing, scheduler
+audit and API serialization. `allowed` is represented by `disposition=ready`;
+T+1 is represented by `deferred_t1`, not by an exception. `blocked` is reserved
+for a permanent or currently non-deferrable failure (metadata, currency, lot,
+missing/stale quote, cooldown, closed session, or action gate). The old
+`validate_daily_execution` becomes a compatibility wrapper over
+`precheck_fill` and is removed only after all callers migrate.
+
+The orchestrator invokes `preflight_for_sizing` before `PositionSizingEngine`.
+For `REDUCE` and `EXIT`, the sizing engine uses
+`min(total_quantity, constraint.max_quantity)` as its only sellable inventory.
+Zero sellable inventory returns `deferred_t1` with a zero suggested quantity;
+it does not create an executable operation item. Immediately before a fill, the
+scheduler obtains a fresh live projection and re-runs `precheck_fill`; the
+storage transaction independently enforces the same maximum as defence in
+depth. This protects against a stale report, concurrent scheduler cycle or
+position change.
+
+#### Calendar and quote gate
+
+`TradingCalendarService` is injected into `precheck_fill` using the instrument
+market, not a global CN assumption. A paper fill requires all of:
+
+1. the current instant is an open exchange trading minute;
+2. the quote has an aware observed timestamp inside that same session;
+3. the quote is strictly later than the report's input quote and no older than
+   the configured execution freshness limit;
+4. cooldown, action gate, lot, currency, fee and live sellability checks pass.
+
+The manual endpoint may still force analysis and report generation when closed,
+but it passes `execution_enabled=False` to the runtime. It must not use
+`active or symbols` to bypass the fill gate. The scheduler cannot bypass this
+gate, regardless of trigger or `allow_when_disabled` compatibility arguments.
+
+#### Deferral persistence and idempotency
+
+Add migration `0017_paper_execution_safety_contract` with:
+
+```text
+paper_position_lots.sellable_at TEXT NULL
+
+paper_execution_deferrals(
+  decision_id TEXT PRIMARY KEY,
+  symbol TEXT NOT NULL,
+  action TEXT NOT NULL,
+  requested_quantity REAL NOT NULL,
+  max_executable_quantity REAL NOT NULL,
+  reason_code TEXT NOT NULL,
+  next_eligible_at TEXT NOT NULL,
+  state TEXT NOT NULL,              -- active | released | superseded | cancelled
+  created_at TEXT NOT NULL,
+  resolved_at TEXT NULL,
+  detail TEXT NOT NULL
+)
+```
+
+Creation is idempotent by `decision_id`. A scheduler records one simulation
+stage with terminal state `deferred_t1` and upserts this table; it does not call
+`record_paper_skip`. The pending-execution query selects only transaction
+actions and excludes active deferrals until `next_eligible_at`. A newer formal
+decision for the same symbol marks an older active deferral `superseded`.
+Successful fills mark it `released`; an explicit cancellation marks it
+`cancelled`. Existing `paper_trading_logs` preserve immutable historical skip
+records and are not rewritten.
+
+#### API and operational state
+
+Extend the existing account response position with `sellable_quantity`,
+`locked_quantity` and `next_eligible_sell_at`; add read-only endpoints:
+
+```text
+GET /v1/paper-trading/positions/{symbol}/lots
+GET /v1/paper-trading/execution-deferrals?symbol=&state=
+```
+
+The paper status endpoint reads the newest persisted `simulation_runs` record
+at startup and whenever its in-memory state is empty. It may expose
+`state_source` (`memory` or `persisted`) so a restart cannot appear as
+`never_run` when the audit database contains prior runs.
+
+#### Delivery order and tests
+
+1. Add pure calendar/lot projection helpers and their tests; do not change
+   runtime behavior yet.
+2. Add the additive migration, API response fields and read-only lots/deferral
+   routes; verify legacy database backfill and no GET-side writes.
+3. Add `ExecutionConstraint`, preflight-before-sizing and report serialization;
+   keep the old runtime precheck as a wrapper.
+4. Migrate scheduler and manual execution to live fill precheck plus idempotent
+   deferral persistence; remove the closed-market fill fallback.
+5. Enable the new path only after a deployed-container test confirms no
+   production database mutation outside an intentional paper run.
+
+Required regression cases include: same-day full lock, mixed old/new lots,
+Friday-to-next-session settlement, closed market, lunch break, stale quote,
+quote outside session, restart status recovery, repeated scheduler cycles,
+superseded deferral, legacy lot backfill and concurrent fill attempts.
 
 ## 7. Corporate events
 Corporate events become first-class evidence:

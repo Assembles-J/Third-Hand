@@ -39,10 +39,11 @@ class DecisionAiService:
         # it may choose only among candidates already produced by hard rules.
         run = {"run_id": str(uuid4()), "context_id": context.context_id, "input_hash": context.input_hash, "prompt_version": config.DECISION_RESEARCH_PROMPT_VERSION, "created_at": beijing_now().isoformat()}
         settings = getattr(self.client, "settings", None)
+        reasoning_model = getattr(settings, "reasoning_model", None)
         selection = self.model_policy.select(
             atomic_evidence,
             default_model=getattr(settings, "model", None),
-            reasoning_model=getattr(settings, "reasoning_model", None),
+            reasoning_model=reasoning_model,
             default_max_tokens=_decision_ai_max_tokens(),
         )
         evidence_hash = atomic_evidence.snapshot_hash if atomic_evidence is not None else _hash_json([
@@ -65,9 +66,27 @@ class DecisionAiService:
                 logger.info("Decision AI succeeded context_id=%s symbol=%s model=%s latency_ms=%s tokens=%s", context.context_id, context.symbol, response.model, response.latency_ms, response.usage.total_tokens)
                 return DecisionAiOutcome(assessment, "succeeded", model=response.model)
             except (LlmClientError, ValidationError, ValueError, json.JSONDecodeError) as error:
-                if attempt == 0 and not isinstance(error, LlmClientError):
-                    retry_path.append({"attempt": attempt + 1, "reason": "schema_or_semantic_validation_failed", "error_type": type(error).__name__})
-                    messages = [*messages, {"role": "user", "content": _repair_instruction(error, evidence, candidates)}]
+                recovery_reason = (
+                    error.code
+                    if isinstance(error, LlmClientError) and error.code == "output_truncated"
+                    else "schema_or_semantic_validation_failed"
+                    if not isinstance(error, LlmClientError)
+                    else None
+                )
+                if attempt == 0 and recovery_reason:
+                    next_selection = self.model_policy.recover(
+                        selection, reason=recovery_reason, reasoning_model=reasoning_model,
+                    )
+                    retry_path.append({
+                        "attempt": attempt + 1,
+                        "reason": recovery_reason,
+                        "error_type": type(error).__name__,
+                        "from_tier": selection.tier,
+                        "to_tier": next_selection.tier,
+                    })
+                    selection = next_selection
+                    if recovery_reason == "schema_or_semantic_validation_failed":
+                        messages = [*messages, {"role": "user", "content": _repair_instruction(error, evidence, candidates)}]
                     prompt_hash = _hash_json(messages)
                     continue
                 code = error.code if isinstance(error, LlmClientError) else "invalid_ai_output"
@@ -152,7 +171,7 @@ def _repair_instruction(error: Exception, evidence: tuple[EvidenceItem, ...], ca
 def _decision_ai_max_tokens() -> int:
     """Keep the structured response concise, while leaving room for evidence citations."""
     try:
-        return min(max(int(os.getenv("DECISION_AI_MAX_TOKENS", "1200")), 700), 2400)
+        return min(max(int(os.getenv("DECISION_AI_MAX_TOKENS", "1200")), 700), 4800)
     except ValueError:
         logger.warning("DECISION_AI_MAX_TOKENS is invalid; using 1200")
         return 1200

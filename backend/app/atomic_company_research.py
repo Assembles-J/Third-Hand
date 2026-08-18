@@ -1,4 +1,4 @@
-"""Point-in-time Company Intelligence enrichment for Atomic Evidence shadow mode.
+"""Point-in-time Company Intelligence enrichment for Atomic Evidence.
 
 This source reads only persisted Research Local-First snapshots. It never calls
 providers and is invoked only after formal ActionPolicy candidates are frozen.
@@ -89,7 +89,7 @@ def _fact_id(dataset_key: str, report_date: str, metric: str) -> str:
 
 
 class CompanyResearchAtomicSource:
-    """Read persisted company contexts and emit shadow-only fundamental facts."""
+    """Read persisted company contexts and emit action-free fundamental facts."""
 
     def __init__(self, store) -> None:
         self.store = store

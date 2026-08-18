@@ -23,3 +23,18 @@ def test_high_severity_conflict_escalates_to_reasoning_model():
     assert selected.model == "pro"
     assert selected.thinking is True
     assert selected.escalation_reasons == ("high_severity_evidence_conflict",)
+
+
+def test_truncation_recovery_reserves_output_budget_for_json():
+    recovered = ModelPolicy().recover(
+        ModelPolicy().select(
+            SimpleNamespace(conflicts=(SimpleNamespace(severity="high"),), facts=()),
+            default_model="flash", reasoning_model="pro", default_max_tokens=1200,
+        ),
+        reason="output_truncated", reasoning_model="pro",
+    )
+
+    assert recovered.tier == "PRO_STRUCTURED_RECOVERY"
+    assert recovered.model == "pro"
+    assert recovered.thinking is False
+    assert recovered.max_tokens == 2400

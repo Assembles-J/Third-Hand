@@ -1,8 +1,10 @@
-"""Strict schemas for v3 Atomic Evidence shadow mode.
+"""Strict schemas for v3 Atomic Evidence.
 
 These records describe source-linked facts, deterministic data availability and
-cross-source conflicts. They are deliberately action-free: Phase 2 may observe
-and persist them, but ActionPolicy and execution must not consume them yet.
+cross-source conflicts. They remain deliberately action-free: direct
+ActionPolicy, sizing and execution consumers are forbidden. ``shadow_mode`` is
+a persisted wire-compatibility marker, not a claim that aggregation or the AI
+research prompt cannot consume the snapshot.
 """
 from __future__ import annotations
 

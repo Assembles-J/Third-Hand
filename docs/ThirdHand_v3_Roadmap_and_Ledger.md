@@ -4,8 +4,12 @@
 > ledger. `ThirdHand_Architecture_v3_consolidated.md` is the paired authority
 > contract. All other files formerly under `docs/` are historical and removed.
 >
-> **Completed:** Phases 1–3 and Phases 5–8. **Active gap:** Phase 4
-> intraday 60m/15m/5m ingestion and a versioned multi-timeframe action policy.
+> **Completed:** Phases 1–3 and most Phase 5 ledger enforcement. **Active gaps:**
+> Phase 4 intraday 60m/15m/5m ingestion and a versioned multi-timeframe action
+> policy; and the Phase 5 paper-execution remediation defined in the paired
+> architecture section 6.1. A final ledger T+1 rejection is not sufficient
+> conformance when decision, sizing, scheduler, UI or session gates allow an
+> impossible paper order to reach that final boundary.
 > The paper account is intentionally CNY-only: HK/US remain research/audit
 > markets, not a deferred multi-currency execution project.
 > No gap is hidden behind a fallback or delegated to an LLM.
@@ -96,6 +100,11 @@ Legend:
 | EntryDecision vs PositionDecision | KEEP | core semantics |
 | Position state machine | KEEP | decision phase |
 | PositionLot/T+1/sellable qty | KEEP | MarketAdapter + execution |
+| TH-EXEC-20260818 T+1 observed after morning buys | KEEP P1 | PositionLot ledger enforcement passed deployed-container verification; promote sellable/locked quantity and next eligible sell time into DecisionContext, precheck, sizing, API and scheduler deferral state. |
+| TH-EXEC-20260818 repeated T+1 retry logs | KEEP P1 | A T+1 deferral is one scheduled state, not a zero-quantity SELL attempt or a new skip row every review interval. |
+| TH-EXEC-20260818 after-session paper fill | KEEP P1 | Require instrument calendar/session plus an in-session fresh observed quote before every paper fill; closed-market manual runs are analysis-only. |
+| TH-OPS-20260818 volatile paper runtime status | KEEP P2 | Rebuild API status from persisted simulation runs after restart; do not report `never_run` while run audit exists. |
+| TH-DOC-20260818 paper-vs-real boundary | KEEP P2 | README, UI and deployment comments must distinguish no real broker order from optional simulated paper-ledger fills. |
 | DecisionMemory/MaterialChange/cooldown | KEEP | continuity phase |
 | FeedbackEvent | KEEP | feedback phase; no auto-tune first |
 | A/HK/US MarketAdapter | KEEP | platform boundary |
@@ -110,6 +119,14 @@ Legend:
 4. Model policy/audit is complete for the configured DeepSeek client, while a generic provider-capability registry remains out of scope.
 5. Feedback is immutable audit data and has no policy/sizing/model-routing write path.
 6. Repository quality, time and freeze invariants remain the migration anchors.
+7. Production verification on 2026-08-18 confirmed that the deployed ledger
+   correctly blocks same-day CN sells, but also exposed repeated same-day
+   REDUCE/EXIT attempts after morning buys and a historical after-session paper
+   fill. These are active Phase 5 remediation items, not accepted behavior.
+8. `DECISION_SHADOW_MODE` controls research/decision shadow output; it is not a
+   switch for the simulated ledger. Automatic paper fills are governed by the
+   persisted paper-trading setting and every execution entry point must honor
+   the paper-execution safety contract.
 
 Therefore v3 is an evolution of the present architecture, not a rewrite.
 
@@ -150,7 +167,7 @@ Acceptance:
 - market metadata is explicit
 - current A-share golden output is unchanged
 
-### Phase 2 — Atomic Evidence shadow mode
+### Phase 2 — Atomic Evidence foundation
 Implement:
 - AtomicFactRecord
 - FactExtractor
@@ -158,7 +175,9 @@ Implement:
 - deterministic availability/conflict list
 - fact-level provenance/materiality/comparison adequacy
 
-Run beside legacy Evidence; do not change action yet.
+Build after ActionPolicy candidates freeze. The raw snapshot does not directly
+change action, sizing or execution; later deterministic aggregation may only
+exercise the explicitly bounded research authority defined in this document.
 
 Acceptance:
 - one source can produce multiple facts with different polarity
@@ -205,6 +224,7 @@ Implement:
 - PositionLot and sellable quantity
 - single-CNY paper-execution boundary
 - execution precheck before sizing
+- T+1 deferral state, calendar/session/freshness gate, and persisted runtime status
 
 Acceptance:
 - no global 100-share rule
@@ -213,6 +233,13 @@ Acceptance:
 - a foreign-currency quote can never create a paper-execution conversion path
 - Stock Connect broker receipts preserve the actual RMB settlement and fee as
   audit evidence only; no general FX ledger or broker-fee formula is inferred
+- `REDUCE`/`EXIT` can never size or submit more than `sellable_quantity`; a
+  same-day lot produces one explainable T+1 deferral with its next eligible
+  sell time, not repeated skipped SELL attempts
+- manual or scheduler execution outside the instrument's open session, on a
+  non-trading day, or with stale/out-of-session quotes cannot write a paper fill
+- account/API exposes sellable and locked quantity plus read-only lot evidence,
+  and status survives a process restart by reading persisted runs
 
 ### Phase 6 — Decision continuity
 Implement:
@@ -225,6 +252,9 @@ Implement:
 Acceptance:
 - changed recommendation states what changed
 - repeated analyses cannot flip without material change unless a hard gate changed
+- a full `input_hash` difference is retained for audit, while only a versioned
+  strategic material fingerprint can permit an action flip; ordinary quote
+  refreshes inside the same threshold state preserve the prior action
 - execution rejects a fill before `cooldown_until`
 - due `review_after` produces a separately auditable decision-refresh obligation,
   never an implied trade
@@ -233,14 +263,18 @@ Acceptance:
 Implement:
 - compact atomic research prompt
 - configured-provider ModelPolicy (generic capability registry deferred)
-- Flash/default vs Pro/escalation
+- Flash/default vs Pro/escalation plus one bounded structured recovery
 - schema + semantic validation
 - observable runtime audit
 
 Acceptance:
 - every model run auditable by hashes/settings/usage
 - invalid output never mutates formal decision
-- retry/fallback path recorded
+- a Flash schema/semantic failure retries once on Pro with a correction prompt;
+  a truncated thinking reply retries once with a larger non-thinking structured
+  budget, and every tier transition is recorded
+- provider-specific maximum-reasoning tiers remain out of scope until the
+  configured provider exposes a stable, tested capability contract
 
 ### Phase 8 — Feedback
 Implement:
