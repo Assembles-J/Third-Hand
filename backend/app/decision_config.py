@@ -6,6 +6,9 @@ import os
 # v3 changes POLICY evidence authority: technical price/location uses the
 # canonical quote/daily view and stale/conflicted risk evidence is research-only.
 EVIDENCE_VERSION = "evidence-v3-canonical-market-inputs"
+# Phase 2 runs this compact fact representation beside current evidence. It is
+# persisted for audit only and has no action authority yet.
+ATOMIC_EVIDENCE_VERSION = "atomic-evidence-shadow-v1"
 # v3 is a Day-0 correctness break: REDUCE now requires an existing position.
 # Bumping the version prevents historical v2 empty-position REDUCE reports from
 # remaining eligible for next-session execution after deployment.
@@ -24,7 +27,7 @@ MARKET_IDENTITY_POLICY_VERSION = "market-identity-v2-instrument-authority"
 # Market-regime evidence may only apply to the same explicit market. Missing HK/
 # US providers degrade to unknown instead of inheriting A-share benchmarks.
 MARKET_REGIME_POLICY_VERSION = "market-regime-v2-market-scoped"
-# Scheduled earnings are deterministic neutral-material facts.  The policy only
+# Scheduled earnings are deterministic neutral-material facts. The policy only
 # blocks new risk immediately before disclosure; it never infers event direction.
 CORPORATE_EVENT_POLICY_VERSION = "corporate-event-v1-pre-earnings-gate"
 PRE_EVENT_BLOCK_SESSIONS = 1
@@ -56,6 +59,7 @@ def audit_version_snapshot() -> dict[str, str]:
         "git_commit": os.getenv("GIT_COMMIT", "unknown"),
         "context_schema_version": "context-v1",
         "evidence_version": EVIDENCE_VERSION,
+        "atomic_evidence_version": ATOMIC_EVIDENCE_VERSION,
         "action_policy_version": ACTION_POLICY_VERSION,
         "open_gate_audit_version": OPEN_GATE_AUDIT_VERSION,
         "sizing_version": SIZING_VERSION,
