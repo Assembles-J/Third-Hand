@@ -67,8 +67,23 @@ def test_paper_ledger_rejects_cash_and_position_overruns(tmp_path: Path) -> None
         store.execute_paper_trade(trade_id=str(uuid4()), symbol="000001", name="平安", side="BUY", quantity=100, price=2, decision_id=None, reason="test")
     with pytest.raises(ValueError, match="paper_t1_unsellable_quantity"):
         store.execute_paper_trade(trade_id=str(uuid4()), symbol="000001", name="平安", side="SELL", quantity=1, price=2, decision_id=None, reason="test")
-    with pytest.raises(ValueError, match="100_share_lot"):
+    with pytest.raises(ValueError, match="market_lot"):
         store.execute_paper_trade(trade_id=str(uuid4()), symbol="000001", name="平安", side="BUY", quantity=101, price=1, decision_id=None, reason="test")
+
+
+def test_non_cn_paper_trade_never_inherits_cn_lot_or_fee_rules(tmp_path: Path) -> None:
+    store = PortfolioStore(tmp_path / "hk-paper-rules.db")
+    store.save_paper_account(10_000)
+    store.save_instrument_metadata({
+        "symbol": "01810", "market": "HK", "currency": "HKD", "lot_size": 200,
+        "price_tick": "0.02", "source": "test", "as_of": "2026-08-17",
+    })
+
+    with pytest.raises(ValueError, match="fee_schedule_unconfigured"):
+        store.execute_paper_trade(
+            trade_id=str(uuid4()), symbol="01810", name="Xiaomi", side="BUY", quantity=200,
+            price=20, decision_id="hk-buy", reason="must not use CN paper fees",
+        )
 
 
 def test_paper_interval_is_persisted_and_has_a_safe_minimum(tmp_path: Path) -> None:

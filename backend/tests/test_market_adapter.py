@@ -27,12 +27,14 @@ def test_market_adapter_exposes_explicit_market_rules():
     assert hk is not None
     assert hk.trading_currency == "HKD"
     assert hk.default_lot_size == 0
+    assert hk.paper_fee_schedule == "UNCONFIGURED"
     assert hk.exchange_calendar == "XHKG"
     assert hk.benchmark_symbols == ("HSI", "HSTECH")
 
     assert us is not None
     assert us.trading_currency == "USD"
     assert us.default_lot_size == 1
+    assert us.paper_fee_schedule == "UNCONFIGURED"
     assert us.exchange_calendar == "XNYS"
 
 

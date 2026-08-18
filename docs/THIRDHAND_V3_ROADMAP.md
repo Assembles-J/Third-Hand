@@ -149,7 +149,13 @@ timeframes before granting them authority.
 
 ### Phase 5 — Market/execution adapters
 
-Formalize CN/HK/US lot, tick, fee, currency, settlement and sellability rules; add PositionLot and FX boundaries.
+ACTIVE. Paper execution now resolves lot, settlement and fee rules from
+InstrumentMetadata/MarketAdapter. CN retains its existing T+1 and fee schedule;
+HK/US are conservatively blocked until their own fee/FX schedules and account
+currency boundary exist, rather than inheriting CN's 100-share lot, T+1 or fees.
+
+Remaining: PositionLot persistence, market-specific HK/US fee schedules, FX
+boundary and execution precheck before sizing.
 
 ### Phase 6 — Decision continuity
 

@@ -1476,9 +1476,50 @@ class PortfolioStore:
 
     def execute_paper_trade(self, *, trade_id: str, symbol: str, name: str, side: str, quantity: float, price: float, decision_id: str | None, reason: str, execution_quote_at: str | None = None, execution_quote_source: str | None = None, fill_price_mode: str = "NEXT_ELIGIBLE_OBSERVED_QUOTE") -> dict[str, object]:
         if quantity <= 0 or price <= 0: raise ValueError("quantity_and_price_must_be_positive")
-        if side == "BUY" and quantity % 100 != 0: raise ValueError("paper_buy_requires_100_share_lot")
         now = beijing_now().isoformat()
         with self._connect() as connection:
+            from app.market_adapter import adapter_for_market, market_for_symbol
+
+            metadata = connection.execute(
+                "SELECT market,lot_size FROM instrument_metadata WHERE symbol=?",
+                (str(symbol).strip().upper(),),
+            ).fetchone()
+            market = str(metadata["market"]).upper() if metadata else market_for_symbol(symbol)
+            adapter = adapter_for_market(market)
+            if adapter is None:
+                raise ValueError("paper_market_rule_unavailable")
+            if adapter.paper_fee_schedule != "CN_A_STANDARD":
+                raise ValueError("paper_fee_schedule_unconfigured")
+            # For a CN sell, report the substantive availability failure before
+            # rejecting a malformed order quantity.  This keeps a retrying
+            # scheduler from mistaking an unsellable T+1 position for a lot
+            # sizing problem.
+            if side == "SELL" and adapter.settlement_rule == "CN_A_T1_SELLABILITY":
+                position_for_availability = connection.execute(
+                    "SELECT quantity FROM paper_trading_positions WHERE symbol=?", (symbol,)
+                ).fetchone()
+                today = beijing_now().date().isoformat()
+                bought_today_for_availability = connection.execute(
+                    "SELECT COALESCE(SUM(quantity), 0) AS quantity FROM paper_trading_logs "
+                    "WHERE symbol=? AND side='BUY' AND status='executed' AND substr(executed_at, 1, 10)=?",
+                    (symbol, today),
+                ).fetchone()
+                position_quantity_for_availability = (
+                    float(position_for_availability["quantity"])
+                    if position_for_availability
+                    else 0.0
+                )
+                sellable_for_availability = max(
+                    0.0,
+                    position_quantity_for_availability - float(bought_today_for_availability["quantity"]),
+                )
+                if quantity > sellable_for_availability + 1e-9:
+                    raise ValueError("paper_t1_unsellable_quantity")
+            lot_size = int(metadata["lot_size"]) if metadata and metadata["lot_size"] else adapter.default_lot_size
+            if lot_size <= 0:
+                raise ValueError("paper_instrument_lot_size_required")
+            if quantity % lot_size != 0:
+                raise ValueError("paper_quantity_violates_market_lot")
             # The scheduler may wake more than once or restart during an hour.
             # One normalized decision may therefore change this ledger once only.
             if decision_id and connection.execute(
@@ -1508,7 +1549,11 @@ class PortfolioStore:
                     "SELECT COALESCE(SUM(quantity), 0) AS quantity FROM paper_trading_logs WHERE symbol=? AND side='BUY' AND status='executed' AND substr(executed_at, 1, 10)=?",
                     (symbol, today),
                 ).fetchone()
-                sellable_quantity = max(0.0, existing_quantity - float(bought_today["quantity"]))
+                sellable_quantity = (
+                    max(0.0, existing_quantity - float(bought_today["quantity"]))
+                    if adapter.settlement_rule == "CN_A_T1_SELLABILITY"
+                    else existing_quantity
+                )
                 if quantity > sellable_quantity + 1e-9: raise ValueError("paper_t1_unsellable_quantity")
                 gross = quantity * price
                 fee = max(5.0, gross * 0.0003) + gross * 0.001

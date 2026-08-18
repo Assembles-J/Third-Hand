@@ -22,6 +22,7 @@ class MarketAdapter:
     trading_currency: str
     default_lot_size: int
     settlement_rule: str
+    paper_fee_schedule: str
     benchmark_symbols: tuple[str, ...]
 
 
@@ -33,6 +34,7 @@ MARKET_ADAPTERS: dict[MarketCode, MarketAdapter] = {
         trading_currency="CNY",
         default_lot_size=100,
         settlement_rule="CN_A_T1_SELLABILITY",
+        paper_fee_schedule="CN_A_STANDARD",
         benchmark_symbols=("sh000001", "sh000300", "sz399006"),
     ),
     "HK": MarketAdapter(
@@ -44,6 +46,9 @@ MARKET_ADAPTERS: dict[MarketCode, MarketAdapter] = {
         # obtain explicit instrument metadata before sizing/execution.
         default_lot_size=0,
         settlement_rule="HK_INSTRUMENT_SPECIFIC",
+        # Do not silently apply CN fees to HK trades. A configured HK paper
+        # schedule is required before the simulated ledger may execute them.
+        paper_fee_schedule="UNCONFIGURED",
         benchmark_symbols=("HSI", "HSTECH"),
     ),
     "US": MarketAdapter(
@@ -53,6 +58,8 @@ MARKET_ADAPTERS: dict[MarketCode, MarketAdapter] = {
         trading_currency="USD",
         default_lot_size=1,
         settlement_rule="US_T1_SETTLEMENT",
+        # The single-CNY paper ledger has no FX/US fee model yet.
+        paper_fee_schedule="UNCONFIGURED",
         benchmark_symbols=("SPX", "NDX"),
     ),
 }

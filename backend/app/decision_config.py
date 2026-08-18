@@ -43,7 +43,7 @@ PRE_EVENT_BLOCK_SESSIONS = 1
 # v2 fixes A-share execution semantics: OPEN/ADD may fill on a strictly later
 # observed quote in the same trading day, while T+1 remains a SELL-availability
 # constraint enforced by the paper ledger.
-EXECUTION_POLICY_VERSION = "execution-v3-formal-semantic-action"
+EXECUTION_POLICY_VERSION = "execution-v4-market-scoped-paper-rules"
 CANDIDATE_SELECTION_VERSION = "candidate-rotation-v1"
 OPPORTUNITY_SCORING_VERSION = "research-priority-v1"
 # Decision-input freshness stays conservative. Execution is a separate boundary:
