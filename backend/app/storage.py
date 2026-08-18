@@ -1376,6 +1376,97 @@ class PortfolioStore:
             ).fetchone()
         return dict(row) if row else None
 
+    def record_broker_settlement_receipt(self, item: dict[str, object]) -> dict[str, object]:
+        """Persist an exact broker settlement fact without inferring a fee rule.
+
+        This is deliberately audit-only. A receipt can establish what a specific
+        Stock Connect fill settled for in CNY, including the broker's actual fee
+        breakdown, but it cannot by itself authorize a new paper trade.
+        """
+        symbol = str(item.get("symbol") or "").strip().upper()
+        market = str(item.get("market") or "").strip().upper()
+        side = str(item.get("side") or "").strip().upper()
+        trade_currency = str(item.get("trade_currency") or "").strip().upper()
+        settlement_currency = str(item.get("settlement_currency") or "").strip().upper()
+        broker = str(item.get("broker") or "").strip()
+        occurred_at = str(item.get("occurred_at") or "").strip()
+        try:
+            quantity = float(item.get("quantity"))
+            trade_price = float(item.get("trade_price"))
+            gross_settlement_amount = float(item.get("gross_settlement_amount"))
+            total_fee = float(item.get("total_fee"))
+            net_settlement_amount = float(item.get("net_settlement_amount"))
+        except (TypeError, ValueError) as error:
+            raise ValueError("broker_receipt_amount_invalid") from error
+        if not symbol or market not in {"CN", "HK", "US"} or side not in {"BUY", "SELL"}:
+            raise ValueError("broker_receipt_identity_invalid")
+        if not trade_currency or not settlement_currency or not broker or not occurred_at:
+            raise ValueError("broker_receipt_identity_missing")
+        if not all(math.isfinite(value) and value >= 0 for value in (quantity, trade_price, gross_settlement_amount, total_fee, net_settlement_amount)):
+            raise ValueError("broker_receipt_amount_invalid")
+        if quantity <= 0 or trade_price <= 0 or gross_settlement_amount <= 0:
+            raise ValueError("broker_receipt_amount_invalid")
+        expected_net = gross_settlement_amount + total_fee if side == "BUY" else gross_settlement_amount - total_fee
+        if not math.isclose(net_settlement_amount, expected_net, abs_tol=.02):
+            raise ValueError("broker_receipt_net_settlement_mismatch")
+        breakdown: dict[str, float | None] = {}
+        for field in ("commission", "stamp_duty", "other_fee"):
+            value = item.get(field)
+            if value is None:
+                breakdown[field] = None
+                continue
+            try:
+                number = float(value)
+            except (TypeError, ValueError) as error:
+                raise ValueError("broker_receipt_fee_invalid") from error
+            if not math.isfinite(number) or number < 0:
+                raise ValueError("broker_receipt_fee_invalid")
+            breakdown[field] = number
+        known_fees = [value for value in breakdown.values() if value is not None]
+        if len(known_fees) == 3 and not math.isclose(sum(known_fees), total_fee, abs_tol=.02):
+            raise ValueError("broker_receipt_fee_breakdown_mismatch")
+        implied_fx_rate = gross_settlement_amount / (quantity * trade_price)
+        receipt = {
+            "receipt_id": str(item.get("receipt_id") or uuid4()),
+            "decision_id": str(item.get("decision_id") or "") or None,
+            "symbol": symbol, "market": market, "side": side,
+            "quantity": quantity, "trade_price": trade_price,
+            "trade_currency": trade_currency, "settlement_currency": settlement_currency,
+            "gross_settlement_amount": gross_settlement_amount,
+            **breakdown,
+            "total_fee": total_fee, "net_settlement_amount": net_settlement_amount,
+            "implied_fx_rate": implied_fx_rate, "broker": broker,
+            "occurred_at": occurred_at,
+            "source_reference": str(item.get("source_reference") or "") or None,
+            "created_at": beijing_now().isoformat(),
+        }
+        receipt["payload"] = json.dumps(receipt, ensure_ascii=False, sort_keys=True, default=str)
+        with self._connect() as connection:
+            connection.execute(
+                "INSERT INTO broker_settlement_receipts "
+                "(receipt_id,decision_id,symbol,market,side,quantity,trade_price,trade_currency,settlement_currency,"
+                "gross_settlement_amount,commission,stamp_duty,other_fee,total_fee,net_settlement_amount,"
+                "implied_fx_rate,broker,occurred_at,source_reference,payload,created_at) "
+                "VALUES (:receipt_id,:decision_id,:symbol,:market,:side,:quantity,:trade_price,:trade_currency,"
+                ":settlement_currency,:gross_settlement_amount,:commission,:stamp_duty,:other_fee,:total_fee,"
+                ":net_settlement_amount,:implied_fx_rate,:broker,:occurred_at,:source_reference,:payload,:created_at)",
+                receipt,
+            )
+        receipt.pop("payload")
+        return receipt
+
+    def broker_settlement_receipts(self, symbol: str | None = None, limit: int = 100) -> list[dict[str, object]]:
+        query = "SELECT * FROM broker_settlement_receipts"
+        args: list[object] = []
+        if symbol:
+            query += " WHERE symbol=?"
+            args.append(str(symbol).strip().upper())
+        query += " ORDER BY occurred_at DESC LIMIT ?"
+        args.append(max(1, limit))
+        with self._connect() as connection:
+            rows = connection.execute(query, args).fetchall()
+        return [{key: value for key, value in dict(row).items() if key != "payload"} for row in rows]
+
     def intraday_prices(self, symbol: str, limit: int = 500) -> list[dict[str, object]]:
         with self._connect() as connection:
             rows = connection.execute("SELECT bar_time,open,close,high,low,volume,amount,average_price,source,updated_at FROM intraday_price_cache WHERE symbol=? ORDER BY bar_time DESC LIMIT ?", (symbol, limit)).fetchall()

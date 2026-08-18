@@ -103,7 +103,7 @@ Legend:
 ## B. Current-code conformance findings
 
 1. The former held `NO_TRADE -> REDUCE` behavior is removed from formal semantics; held WATCH resolves to HOLD.
-2. Market regime, lot and settlement selection are market-scoped. HK Stock Connect explicitly uses HKD trading and CNY settlement, with a directed observed HKD→CNY context quote; CN remains executable, while HK/US stay blocked until their broker fee and multi-currency cash-ledger rules are configured.
+2. Market regime, lot and settlement selection are market-scoped. HK Stock Connect explicitly uses HKD trading and CNY settlement, with a directed observed HKD→CNY context quote. Exact broker receipts preserve actual settlement/fee facts without inventing a future fee formula; CN remains executable, while HK/US stay blocked until their broker fee and multi-currency cash-ledger rules are configured.
 3. Atomic Evidence and ResearchAssessment are deterministic and persisted. The DecisionArbiter consumes only high-confidence ADVERSE research as a new-risk veto; it never lets research upgrade an action or produce REDUCE/EXIT. Additional technical timeframe ingestion remains the Phase 4 gap.
 4. Model policy/audit is complete for the configured DeepSeek client, while a generic provider-capability registry remains out of scope.
 5. Feedback is immutable audit data and has no policy/sizing/model-routing write path.

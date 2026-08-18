@@ -246,6 +246,23 @@ def _create_fx_rate_cache(connection: sqlite3.Connection) -> None:
     )
 
 
+def _create_broker_settlement_receipts(connection: sqlite3.Connection) -> None:
+    """Keep broker-reported Stock Connect settlement facts separate from rules."""
+    connection.execute(
+        "CREATE TABLE IF NOT EXISTS broker_settlement_receipts ("
+        "receipt_id TEXT PRIMARY KEY, decision_id TEXT, symbol TEXT NOT NULL, market TEXT NOT NULL, "
+        "side TEXT NOT NULL, quantity REAL NOT NULL, trade_price REAL NOT NULL, trade_currency TEXT NOT NULL, "
+        "settlement_currency TEXT NOT NULL, gross_settlement_amount REAL NOT NULL, commission REAL, "
+        "stamp_duty REAL, other_fee REAL, total_fee REAL NOT NULL, net_settlement_amount REAL NOT NULL, "
+        "implied_fx_rate REAL NOT NULL, broker TEXT NOT NULL, occurred_at TEXT NOT NULL, "
+        "source_reference TEXT, payload TEXT NOT NULL, created_at TEXT NOT NULL)"
+    )
+    connection.execute(
+        "CREATE INDEX IF NOT EXISTS idx_broker_settlement_receipts_symbol_time "
+        "ON broker_settlement_receipts(symbol, occurred_at DESC)"
+    )
+
+
 MIGRATIONS = (
     Migration("0001_legacy_schema_baseline", _record_legacy_schema_baseline),
     Migration("0002_decision_contexts", _create_decision_contexts),
@@ -262,6 +279,7 @@ MIGRATIONS = (
     Migration("0013_simulation_run_audit", _create_simulation_run_audit),
     Migration("0014_data_provider_health", _create_data_provider_health),
     Migration("0015_fx_rate_cache", _create_fx_rate_cache),
+    Migration("0016_broker_settlement_receipts", _create_broker_settlement_receipts),
 )
 
 
