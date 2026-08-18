@@ -14,7 +14,7 @@ The current repository already has strong production invariants around DataHub q
 | Data, identity, events and canonical price/time | Complete | Instrument metadata, market-scoped regime, canonical snapshot and event gates are formal inputs. |
 | Atomic evidence and deterministic aggregation | Complete | Fact/availability/conflict provenance, point-in-time Company Intelligence, versioned aggregation and semantic validation are persisted. |
 | Decision semantics | Partial | Entry/Position actions and formal action authority exist. High-confidence deterministic adverse research may veto new BUY/ADD risk only; it never upgrades an action or creates REDUCE/EXIT. A traceable weekly snapshot is aggregated from completed daily bars; 60m/15m/5m inputs remain explicitly unavailable and ActionPolicy remains daily-only. |
-| Market/execution adapters | Partial | CN lot/T+1/fee and PositionLot FIFO are formal. HK Stock Connect declares HKD trading with CNY settlement and requires an observed directed HKD→CNY rate in the DecisionContext. Exact broker receipts are persisted as audit-only settlement facts; HK/US remain blocked until their broker fee schedules and multi-currency cash ledger exist. |
+| Market/execution adapters | Complete at the CNY-only scope | CN lot/T+1/fee and PositionLot FIFO are formal in the CNY-only paper account. HK Stock Connect retains HKD trading-price metadata and actual RMB broker-settlement receipts as audit facts. HK/US have no paper-execution path; a generic FX cache, multi-currency cash ledger and inferred broker-fee schedule are deliberately out of scope. |
 | Decision continuity | Complete | Prior decision, episode, material change, cooldown/review fields and position age are persisted. ExecutionPrecheck rejects fills before `cooldown_until`; the deterministic runtime promotes `review_after` into a separately audited decision-refresh obligation. |
 | Model policy and audit | Complete for the configured DeepSeek provider | Atomic prompt projection, Flash/Pro routing, schema/semantic checks, hashes, usage and retry traces are persisted. A generic multi-provider capability registry is not implemented. |
 | Feedback | Complete as an audit dataset | Frozen decision/execution lineage, actual-vs-hypothetical outcomes and read-only policy-version export exist; there is no automatic tuning. |
@@ -100,7 +100,7 @@ Raw Providers
                       Execution Precheck
                                |
                                v
-                   Sizing / Lot / FX / Fees
+                     Sizing / Lot / Fees
                                |
                                v
                         DecisionPackage
@@ -249,15 +249,15 @@ Initial adapters:
 - US
 
 For mainland-broker Stock Connect, HK securities trade/quote in HKD while cash
-settles in CNY. The context therefore carries an explicit, directed HKD→CNY
-snapshot. Reciprocal or implicit conversion is forbidden. The rate alone does
-not enable a trade: a broker-specific fee schedule and a multi-currency cash
-ledger are still required at execution.
+settles in CNY. ThirdHand's paper account remains CNY-only and does not model
+FX rates, foreign-currency balances or a conversion workflow. A foreign-currency
+quote is therefore not paper-executable, even when the broker settles cash in
+RMB. This is an intentional scope boundary, not a missing fallback.
 
 Broker settlement receipts preserve the actual foreign-currency price, RMB gross
-settlement, total/broken-out fee, net cash impact and implied per-fill FX rate.
-They are audit evidence, not a formula for later orders and not an alternate
-execution path.
+settlement, total/broken-out fee, net cash impact and implied per-fill settlement
+ratio. They are audit evidence, not a formula for later orders and not an
+alternate execution path.
 
 Existing A-share quality invariants remain the CN_A contract and must not be weakened while generalizing.
 

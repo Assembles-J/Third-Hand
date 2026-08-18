@@ -68,8 +68,8 @@ class PositionSizingEngine:
         """Check market execution prerequisites before deriving a trade size.
 
         This is intentionally stricter than research eligibility: an instrument
-        can be researched without a paper ledger capable of settling its
-        currency.  The guard prevents a numeric sizing result from suggesting a
+        can be researched without being executable in the single-CNY paper
+        ledger. The guard prevents a numeric sizing result from suggesting a
         trade that the execution boundary must reject anyway.
         """
         if action not in {"OPEN", "ADD", "REDUCE", "EXIT"}:
@@ -82,17 +82,11 @@ class PositionSizingEngine:
             return ("execution_market_rule_unavailable",)
         if instrument.currency != adapter.trading_currency:
             return ("execution_instrument_currency_conflict",)
-        if context.account.account_currency != instrument.currency:
-            if adapter.settlement_currency != context.account.account_currency:
-                return ("execution_account_currency_mismatch",)
-            fx_rate = context.fx_rate
-            if (
-                fx_rate is None
-                or fx_rate.from_currency != instrument.currency
-                or fx_rate.to_currency != context.account.account_currency
-                or fx_rate.rate <= 0
-            ):
-                return ("execution_fx_rate_missing",)
+        if instrument.currency != context.account.account_currency:
+            # A Stock Connect receipt may record HKD price and CNY settlement,
+            # but that is an audit fact, not a generic FX/multi-currency paper
+            # ledger. Do not silently turn it into an executable conversion.
+            return ("execution_foreign_currency_quote_unsupported",)
         if adapter.paper_fee_schedule == "UNCONFIGURED":
             return ("execution_fee_schedule_unconfigured",)
         return ()

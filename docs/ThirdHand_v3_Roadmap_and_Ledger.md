@@ -4,10 +4,10 @@
 > ledger. `ThirdHand_Architecture_v3_consolidated.md` is the paired authority
 > contract. All other files formerly under `docs/` are historical and removed.
 >
-> **Completed:** Phases 1–3, Phase 6, Phase 7 and Phase 8. **Active gaps:** Phase 4
-> intraday 60m/15m/5m ingestion and a versioned multi-timeframe action policy;
-> Phase 5 HK/US fee + multi-currency FX cash
-> ledger and broker fee schedules.
+> **Completed:** Phases 1–3 and Phases 5–8. **Active gap:** Phase 4
+> intraday 60m/15m/5m ingestion and a versioned multi-timeframe action policy.
+> The paper account is intentionally CNY-only: HK/US remain research/audit
+> markets, not a deferred multi-currency execution project.
 > No gap is hidden behind a fallback or delegated to an LLM.
 
 ## Current implementation decision
@@ -104,7 +104,7 @@ Legend:
 ## B. Current-code conformance findings
 
 1. The former held `NO_TRADE -> REDUCE` behavior is removed from formal semantics; held WATCH resolves to HOLD.
-2. Market regime, lot and settlement selection are market-scoped. HK Stock Connect explicitly uses HKD trading and CNY settlement, with a directed observed HKD→CNY context quote. Exact broker receipts preserve actual settlement/fee facts without inventing a future fee formula; CN remains executable, while HK/US stay blocked until their broker fee and multi-currency cash-ledger rules are configured.
+2. Market regime, lot and settlement selection are market-scoped. The formal paper account is CNY-only. HK Stock Connect instruments retain HKD trading-price metadata and broker receipts retain the actual RMB settlement/fee facts, but neither creates an FX quote cache, currency balance, fee formula, nor an execution path. CN remains executable; HK/US are intentionally research/audit-only.
 3. Atomic Evidence and ResearchAssessment are deterministic and persisted. The DecisionArbiter consumes only high-confidence ADVERSE research as a new-risk veto; it never lets research upgrade an action or produce REDUCE/EXIT. Completed daily bars also create a frozen weekly technical snapshot; intraday 60m/15m/5m ingestion and its action policy remain the Phase 4 gap.
 4. Model policy/audit is complete for the configured DeepSeek client, while a generic provider-capability registry remains out of scope.
 5. Feedback is immutable audit data and has no policy/sizing/model-routing write path.
@@ -202,15 +202,16 @@ Implement:
 - CN_A/HK/US market adapter interface
 - lot/tick/fees/currency/settlement
 - PositionLot and sellable quantity
-- FX boundary
+- single-CNY paper-execution boundary
 - execution precheck before sizing
 
 Acceptance:
 - no global 100-share rule
 - no global A-share T+1 rule
 - HK/US rules are selected by instrument market
-- Stock Connect HKD→CNY conversion is explicit and directed; no reciprocal or
-  implicit FX conversion may enable a trade
+- a foreign-currency quote can never create a paper-execution conversion path
+- Stock Connect broker receipts preserve the actual RMB settlement and fee as
+  audit evidence only; no general FX ledger or broker-fee formula is inferred
 
 ### Phase 6 — Decision continuity
 Implement:

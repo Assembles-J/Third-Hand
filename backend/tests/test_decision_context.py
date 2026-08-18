@@ -220,19 +220,6 @@ def test_hk_context_rejects_cn_regime_and_accepts_market_scoped_hk_regime(tmp_pa
     assert with_hk_regime.market_regime.regime == "mixed"
     assert with_hk_regime.market_regime.source == "test"
 
-    store.save_fx_rates([{
-        "from_currency": "HKD", "to_currency": "CNY", "rate": .93,
-        "source": "broker_settlement_quote", "as_of": completed,
-        "retrieved_at": now.isoformat(),
-    }])
-    with_fx_rate = DecisionContextBuilder(store).build("01810")
-
-    assert with_fx_rate.fx_rate is not None
-    assert with_fx_rate.fx_rate.from_currency == "HKD"
-    assert with_fx_rate.fx_rate.to_currency == "CNY"
-    assert with_fx_rate.fx_rate.rate == .93
-
-
 def test_instrument_metadata_market_is_context_authority_over_symbol_shape(tmp_path):
     store = PortfolioStore(tmp_path / "instrument-authority.db")
     store.save_available_cash(1000)

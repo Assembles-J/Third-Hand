@@ -22,18 +22,10 @@ class AccountSnapshot(DecisionModel):
     total_market_value: float | None
     total_assets: float | None
     cash_percent: float | None
-    account_currency: str = "CNY"
-
-
-class FxRateSnapshot(DecisionModel):
-    """One observed quote-currency to account-currency conversion rate."""
-
-    from_currency: str
-    to_currency: str
-    rate: float = Field(gt=0)
-    source: str
-    as_of: str | None = None
-    retrieved_at: str | None = None
+    # ThirdHand has one RMB cash account. Foreign-currency quote prices remain
+    # instrument metadata/audit facts; they do not create currency balances or
+    # a conversion path in the formal decision or paper-execution models.
+    account_currency: Literal["CNY"] = "CNY"
 
 
 class PositionSnapshot(DecisionModel):
@@ -409,7 +401,7 @@ class DecisionReport(DecisionModel):
     sizing: PositionSizingResult | None = None
     policy_version: str
     prompt_version: str | None = None
-    schema_version: str = "context-v3-weekly-timeframe"
+    schema_version: str = "context-v4-single-cny"
     audit_versions: dict[str, str] = {}
     candidate_selection_version: str | None = None
     candidate_pool_hash: str | None = None
@@ -430,7 +422,6 @@ class DecisionContext(DecisionModel):
     generated_at: datetime
     decision_horizon: Literal["intraday", "swing", "position"]
     account: AccountSnapshot
-    fx_rate: FxRateSnapshot | None = None
     position: PositionSnapshot | None
     quote: QuoteSnapshot | None
     daily_bars: DailyBarSummary

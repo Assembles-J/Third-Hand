@@ -236,14 +236,13 @@ def _create_data_provider_health(connection: sqlite3.Connection) -> None:
     """)
 
 
-def _create_fx_rate_cache(connection: sqlite3.Connection) -> None:
-    """Persist observed conversion quotes without assuming a settlement rate."""
-    connection.execute(
-        "CREATE TABLE IF NOT EXISTS fx_rate_cache ("
-        "from_currency TEXT NOT NULL, to_currency TEXT NOT NULL, rate REAL NOT NULL, "
-        "source TEXT NOT NULL, as_of TEXT, retrieved_at TEXT, updated_at TEXT NOT NULL, "
-        "PRIMARY KEY(from_currency, to_currency))"
-    )
+def _retire_fx_rate_cache(_: sqlite3.Connection) -> None:
+    """Keep migration ordering stable after retiring the unused FX cache.
+
+    Older local databases may retain the table created by the original 0015
+    migration. It is deliberately ignored rather than dropped, so upgrading is
+    non-destructive and no historical decision data is altered.
+    """
 
 
 def _create_broker_settlement_receipts(connection: sqlite3.Connection) -> None:
@@ -278,7 +277,7 @@ MIGRATIONS = (
     Migration("0012_research_theses", _create_research_theses),
     Migration("0013_simulation_run_audit", _create_simulation_run_audit),
     Migration("0014_data_provider_health", _create_data_provider_health),
-    Migration("0015_fx_rate_cache", _create_fx_rate_cache),
+    Migration("0015_fx_rate_cache", _retire_fx_rate_cache),
     Migration("0016_broker_settlement_receipts", _create_broker_settlement_receipts),
 )
 
