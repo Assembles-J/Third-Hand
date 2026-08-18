@@ -338,3 +338,7 @@ No automatic production policy tuning until labels and offline evaluation are re
 8. Global A-share T+1/100-share assumptions.
 9. Auto-tuning from one Xiaomi benchmark.
 10. Persisting raw hidden reasoning.
+11. A generic backtest or Stock Connect fee formula inside the CNY-only paper
+    ledger; actual broker receipts remain audit facts.
+12. Legacy portfolio decision snapshots, future-close calibration, or impact
+    graphs as alternate evidence/freeze/feedback authority.

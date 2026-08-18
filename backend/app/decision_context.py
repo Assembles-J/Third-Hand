@@ -11,7 +11,7 @@ from app.data_quality import summarize_data_quality
 from app.decision_models import (
     AccountSnapshot, DailyBarSummary, DecisionContext, EventSnapshot,
     InstrumentSnapshot, MarketFlowSnapshot, MarketRegimeSnapshot, PersonalRuleSnapshot,
-    PositionSnapshot, QuoteSnapshot, RelativeStrengthSnapshot, RiskSnapshot,
+    PositionSnapshot, QuoteSnapshot, RiskSnapshot,
     TechnicalSnapshot, TimeframeTechnicalSnapshot, TradePlanSnapshot,
 )
 from app.market_regime import regime_matches_market
@@ -314,8 +314,7 @@ class DecisionContextBuilder:
         # metadata or, only when absent, the symbol-shape compatibility resolver.
         if market is None:
             persisted = self.store.cached_market_intelligence("market_regime") or {}
-            embedded = (item or {}).get("decision_snapshot", {}).get("market_regime") or {}
-            value = persisted if persisted.get("status") == "ready" else embedded
+            value = persisted
             if value.get("status") != "ready" or value.get("regime") in {None, "unknown"}:
                 return None
             return MarketRegimeSnapshot(
@@ -325,13 +324,11 @@ class DecisionContextBuilder:
                 as_of=value.get("as_of"),
             )
 
-        # New data should be persisted by market. The generic key and embedded
-        # portfolio snapshot remain migration fallbacks, but only after an
-        # explicit/recognizable market-identity check.
+        # New data should be persisted by market. The generic key remains a
+        # migration fallback, but only after an explicit market-identity check.
         scoped = self.store.cached_market_intelligence(f"market_regime:{market}") or {}
         legacy = self.store.cached_market_intelligence("market_regime") or {}
-        embedded = (item or {}).get("decision_snapshot", {}).get("market_regime") or {}
-        for value in (scoped, legacy, embedded):
+        for value in (scoped, legacy):
             if value.get("status") != "ready" or value.get("regime") in {None, "unknown"}:
                 continue
             if not regime_matches_market(value, market):
@@ -363,11 +360,10 @@ class DecisionContextBuilder:
         )
 
     @staticmethod
-    def _relative_strength(item):
-        value = (item or {}).get("decision_snapshot", {}).get("relative_strength")
-        if not value:
-            return None
-        return RelativeStrengthSnapshot(status=str(value.get("status", "unknown")), benchmark_symbol=value.get("benchmark_symbol"), benchmark_name=value.get("benchmark_name"), label=value.get("label"))
+    def _relative_strength(_item):
+        # Relative strength is not yet a canonical formal input. The retired
+        # legacy portfolio snapshot must not act as an alternate data source.
+        return None
 
     @staticmethod
     def _plan(item, symbol: str):

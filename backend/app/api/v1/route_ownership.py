@@ -26,7 +26,6 @@ _PREFIX_OWNERS: tuple[tuple[str, str], ...] = (
     ("/v1/feed", "research"),
     ("/v1/announcements", "research"),
     ("/v1/research/", "research"),
-    ("/v1/research-recommendations", "research"),
     ("/v1/research-reports", "research"),
     ("/v1/research-theses", "research"),
     ("/v1/opportunity-scan", "research"),

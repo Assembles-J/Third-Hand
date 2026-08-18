@@ -36,13 +36,9 @@ from app.llm_client import LlmClientError
 from app.portfolio_analysis import assess_holdings
 from app.technical_analysis import TechnicalAnalysisService
 from app.price_history import PriceHistoryService, PriceHistoryUnavailable
-from app.impact_graph import build_impact_graph
-from app.decision_snapshot import build_decision_snapshot
-from app.calibration import summarize_calibration
 from app.market_regime import MarketRegimeService
 from app.relative_strength import RelativeStrengthService
 from app.trading_calendar import TradingCalendarService
-from app.recommendations import candidate as build_candidate, first_fill, evaluations
 from app.opportunity_scoring import score_opportunity
 from app.decision_context import DecisionContextBuilder
 from app.execution_precheck import validate_daily_execution
@@ -366,10 +362,6 @@ class MarketHistoryRefreshRequest(BaseModel):
     end_date: date | None = None
 
 
-class RecommendationRequest(BaseModel):
-    symbols: list[str] = Field(min_length=1, max_length=50)
-
-
 class DecisionGenerateRequest(BaseModel):
     symbols: list[str] = Field(min_length=1, max_length=50)
     force: bool = False
@@ -381,16 +373,6 @@ class AvailableCashInput(BaseModel):
 
 class AvailableCash(AvailableCashInput):
     updated_at: datetime
-
-
-class ResearchRecommendation(BaseModel):
-    id: str; symbol: str; status: str; action: str | None = None
-    price_zone: dict[str, float] | None = None; invalidation_price: float | None = None
-    suggested_quantity: float | None = None; quantity_status: str | None = None
-    conditions: list[dict[str, object]] = Field(default_factory=list); blocked_reasons: list[str] = Field(default_factory=list)
-    automatic_execution: bool = False; evaluation_version: str | None = None
-    generated_at: datetime | None = None; generated_trading_date: str | None = None
-    evaluation_status: str | None = None
 
 
 class OpportunityScanItem(BaseModel):
@@ -643,7 +625,7 @@ class RiskAssessment(BaseModel):
     disclaimer: str = "基于历史价格的风险统计，不构成对未来价格的预测或任何投资建议。"
 
 class PortfolioAnalysisItem(BaseModel):
-    symbol: str; name: str; action: str; reason: str; evidence: list[str]; confidence_percent: int = Field(ge=0, le=100); rule_snapshot: dict[str, object] | None = None; technical_snapshot: dict[str, object] | None = None; decision_snapshot: dict[str, object] = Field(default_factory=dict); analysis_trace: list[dict[str, str]] = Field(default_factory=list); disclaimer: str
+    symbol: str; name: str; action: str; reason: str; evidence: list[str]; confidence_percent: int = Field(ge=0, le=100); rule_snapshot: dict[str, object] | None = None; technical_snapshot: dict[str, object] | None = None; analysis_trace: list[dict[str, str]] = Field(default_factory=list); disclaimer: str
 class PortfolioAnalysis(BaseModel):
     id: str; generated_at: datetime; items: list[PortfolioAnalysisItem]
 class LearningCaseInput(BaseModel):
@@ -1393,27 +1375,8 @@ def refresh_derived_cache(symbols: list[str], trigger: str, force_history: bool 
         holdings = store.list()
         symbols = [str(item["symbol"]) for item in holdings]
         quotes = store.cached_quotes(symbols)
-        quote_by_symbol = {str(item["symbol"]): item for item in quotes}
         payload = assess_holdings(holdings, quotes, store, technical_analysis_service)
-        content_items = store.cached_content(symbols)
-        holding_by_symbol = {str(item["symbol"]): item for item in holdings}
-        market_regime = market_regime_service.assess()
-        for review in payload["items"]:
-            symbol = str(review["symbol"])
-            plan = store.trade_plan(symbol)
-            relative_strength = relative_strength_service.assess(store.daily_prices(symbol), plan.get("benchmark_symbol") if plan else None, plan.get("benchmark_name") if plan else None)
-            review["decision_snapshot"] = build_decision_snapshot(
-                holding_by_symbol[symbol], quote_by_symbol.get(symbol), store.cached_risk(symbol),
-                review.get("rule_snapshot"), content_items, str(review["action"]), plan, market_regime, relative_strength,
-            )
         payload["generated_at"] = beijing_now().isoformat()
-        store.save_calibration_observations(payload)
-        for review in payload["items"]:
-            symbol = str(review["symbol"])
-            review["decision_snapshot"]["historical_calibration"] = summarize_calibration(
-                [item for item in store.calibration_observations(symbol) if item["action"] == review["action"]],
-                store.daily_prices(symbol), str(review["action"]),
-            )
         store.save_portfolio_analysis(payload)
         store.save_analysis_run(payload)
     finally:
@@ -2272,13 +2235,6 @@ def decision_shadow_report(symbol: str) -> ShadowDecisionReport:
     return report
 
 
-@app.get("/v1/portfolio/impact-graph")
-def portfolio_impact_graph(symbol: str | None = None) -> dict[str, object]:
-    """Return a source-linked topology of current holding influences."""
-    holdings = store.list()
-    symbols = [str(item["symbol"]) for item in holdings]
-    return build_impact_graph(holdings, store.cached_quotes(symbols), store, symbol=symbol)
-
 @app.get("/v1/learning-cases", response_model=list[LearningCase])
 def list_learning_cases(symbol: str | None = None) -> list[LearningCase]:
     return [LearningCase.model_validate(item) for item in store.learning_cases(symbol)]
@@ -2778,25 +2734,6 @@ def evaluate_daily_review(review_id: str) -> DailyReview:
     return DailyReview.model_validate(store.save_daily_review(review))
 
 
-@app.post("/v1/research-recommendations/generate", response_model=list[ResearchRecommendation])
-def generate_recommendations(payload: RecommendationRequest) -> list[ResearchRecommendation]:
-    holdings = {str(item["symbol"]): item for item in store.list()}
-    quotes = {str(item["symbol"]): item for item in store.cached_quotes(payload.symbols)}
-    results = []
-    for symbol in dict.fromkeys(item.strip().upper() for item in payload.symbols):
-        bars = store.daily_prices(symbol)
-        item = {"id": str(uuid4()), "generated_at": beijing_now().isoformat(), "generated_trading_date": str(bars[-1]["trading_date"]) if bars else None, "evaluation_status": "pending", **build_candidate(symbol, holdings.get(symbol), quotes.get(symbol), bars, store.trade_plan(symbol), float(store.available_cash()["available_cash"]))}
-        store.save_recommendation(item)
-        store.save_recommendation_events(str(item["id"]), list(item.get("trigger_events", [])))
-        results.append(item)
-    return [ResearchRecommendation.model_validate(item) for item in results]
-
-
-@app.get("/v1/research-recommendations", response_model=list[ResearchRecommendation])
-def list_recommendations(symbol: str | None = None) -> list[ResearchRecommendation]:
-    return [ResearchRecommendation.model_validate(item) for item in store.recommendations(symbol)]
-
-
 @app.get("/v1/opportunity-scan", response_model=OpportunityScan)
 def opportunity_scan(limit: int = Query(default=15, ge=1, le=15)) -> OpportunityScan:
     """Rank holdings, watchlist, and market candidates in one explainable daily pool."""
@@ -2893,37 +2830,6 @@ def refresh_opportunity_scan(limit: int = Query(default=15, ge=1, le=15)) -> Opp
             "next_step": "请稍后重试；若持续失败，请检查 AKShare 网络连接和 Tushare Token 配置。",
         }) from error
     return opportunity_scan(limit)
-
-
-@app.post("/v1/research-recommendations/evaluate")
-def evaluate_recommendations() -> dict[str, int]:
-    evaluated = untriggered = legacy_unverifiable = 0
-    for item in store.recommendations():
-        if item.get("status") != "ready" or item.get("suggested_quantity") is None: continue
-        bars = store.daily_prices(str(item["symbol"]))
-        if not item.get("generated_trading_date"):
-            if store.set_recommendation_evaluation_status(str(item["id"]), "legacy_unverifiable"):
-                store.save_recommendation_events(str(item["id"]), [{"event_type": "legacy_unverifiable", "trading_date": None, "trigger_price": None}])
-            legacy_unverifiable += 1
-            continue
-        fill, index = first_fill(item, bars)
-        if fill is None:
-            if store.set_recommendation_evaluation_status(str(item["id"]), "untriggered"):
-                store.save_recommendation_events(str(item["id"]), [{"event_type": "untriggered", "trading_date": bars[-1]["trading_date"] if bars else None, "trigger_price": None}])
-            untriggered += 1
-            continue
-        items = evaluations(fill, index, bars, float(item["suggested_quantity"]), str(item.get("action")))
-        store.save_evaluations(str(item["id"]), items)
-        store.save_paper_tracking(str(item["id"]), str(item["symbol"]), fill, float(item["suggested_quantity"]), str(item.get("action")), bars[index:])
-        if store.set_recommendation_evaluation_status(str(item["id"]), "filled"):
-            store.save_recommendation_events(str(item["id"]), [{"event_type": "filled", "trading_date": fill["date"], "trigger_price": fill["price"]}])
-        evaluated += 1
-    return {"evaluated": evaluated, "untriggered": untriggered, "legacy_unverifiable": legacy_unverifiable}
-
-
-@app.get("/v1/research-recommendations/{recommendation_id}/evaluations")
-def recommendation_evaluations(recommendation_id: str) -> list[dict[str, object]]:
-    return store.recommendation_evaluations(recommendation_id)
 
 
 def run_ai_job(job_id: str) -> None:

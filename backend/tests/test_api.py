@@ -25,17 +25,18 @@ _spec.loader.exec_module(_suite)
 setup_function = _suite.setup_function
 
 _REPLACED = {
-    "test_decision_shadow_endpoint_persists_policy_candidates_without_replacing_recommendations",
+    "test_decision_shadow_endpoint_persists_policy_candidates_without_legacy_recommendations",
     "test_derived_refresh_uses_sufficient_local_history_without_remote_fetch",
     "test_paper_run_persists_run_stages_and_symbol_terminal_state",
     "test_paper_run_records_skipped_data_unavailable_when_history_missing",
+    "test_recommendation_evaluation_uses_only_future_bars_and_marks_legacy_or_untriggered_records",
 }
 for _name, _value in vars(_suite).items():
     if _name.startswith("test_") and callable(_value) and _name not in _REPLACED:
         globals()[_name] = _value
 
 
-def test_decision_shadow_endpoint_persists_policy_candidates_without_replacing_recommendations():
+def test_decision_shadow_endpoint_persists_policy_candidates_without_legacy_recommendations():
     _suite.client.post("/v1/holdings", json={"symbol": "600519", "name": "test", "quantity": 100, "average_cost": 10})
     _suite.store.save_quotes([{
         "symbol": "600519", "price": 12, "currency": "CNY", "source": "test",
@@ -60,7 +61,6 @@ def test_decision_shadow_endpoint_persists_policy_candidates_without_replacing_r
     assert response.json()["sizing"] is None
     assert response.json()["policy_version"] == config.ACTION_POLICY_VERSION
     assert _suite.store.shadow_reports("600519")[0]["shadow_id"] == response.json()["shadow_id"]
-    assert _suite.client.get("/v1/research-recommendations").json() == []
 
 
 def test_derived_refresh_uses_sufficient_local_history_without_remote_fetch(monkeypatch):

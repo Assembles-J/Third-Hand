@@ -352,7 +352,7 @@ def test_decision_evidence_endpoint_returns_evidence_but_no_action():
     assert all("action" not in item for item in response.json())
 
 
-def test_decision_shadow_endpoint_persists_policy_candidates_without_replacing_recommendations():
+def test_decision_shadow_endpoint_persists_policy_candidates_without_legacy_recommendations():
     client.post("/v1/holdings", json={"symbol": "600519", "name": "test", "quantity": 100, "average_cost": 10})
     store.save_quotes([{ "symbol": "600519", "price": 12, "currency": "CNY", "source": "test", "as_of": "2026-07-31", "retrieved_at": "2026-07-31T10:00:00+08:00"}])
     store.save_daily_prices("600519", [{"trading_date": f"2026-07-{index + 1:02d}", "open": 10, "close": 12, "high": 13, "low": 9, "source": "test"} for index in range(60)])
@@ -366,26 +366,6 @@ def test_decision_shadow_endpoint_persists_policy_candidates_without_replacing_r
     assert response.json()["sizing"] is None
     assert response.json()["policy_version"] == "swing-policy-v1"
     assert store.shadow_reports("600519")[0]["shadow_id"] == response.json()["shadow_id"]
-    assert client.get("/v1/research-recommendations").json() == []
-
-
-def test_recommendation_evaluation_uses_only_future_bars_and_marks_legacy_or_untriggered_records():
-    bars = [
-        {"trading_date": "2026-07-30", "open": 10, "high": 11, "low": 9, "close": 10, "source": "test"},
-        {"trading_date": "2026-07-31", "open": 10, "high": 11, "low": 9, "close": 10, "source": "test"},
-    ]
-    store.save_daily_prices("600519", bars)
-    store.save_recommendation({"id": "current", "symbol": "600519", "status": "ready", "action": "add", "suggested_quantity": 100, "price_zone": {"low": 9, "high": 11}, "generated_trading_date": "2026-07-30", "evaluation_status": "pending"})
-    store.save_recommendation({"id": "legacy", "symbol": "600519", "status": "ready", "action": "add", "suggested_quantity": 100, "price_zone": {"low": 9, "high": 11}})
-    store.save_recommendation({"id": "untriggered", "symbol": "600519", "status": "ready", "action": "add", "suggested_quantity": 100, "price_zone": {"low": 1, "high": 2}, "generated_trading_date": "2026-07-30", "evaluation_status": "pending"})
-
-    response = client.post("/v1/research-recommendations/evaluate")
-    statuses = {item["id"]: item.get("evaluation_status") for item in store.recommendations()}
-
-    assert response.json() == {"evaluated": 1, "untriggered": 1, "legacy_unverifiable": 1}
-    assert statuses == {"current": "filled", "legacy": "legacy_unverifiable", "untriggered": "untriggered"}
-
-
 def test_daily_review_closes_the_plan_execution_outcome_loop():
     client.post("/v1/holdings", json={"symbol": "600519", "name": "test", "quantity": 100, "average_cost": 10})
     store.save_available_cash(10000)

@@ -44,7 +44,8 @@ Legend:
 | TH-HK-001 HK metadata missing | KEEP | MarketAdapter/InstrumentMetadata |
 | TH-HK-002 HK regime contaminated by CN regime | KEEP | market-specific regime adapter |
 | TH-MARKET-002 HK context provider failure | KEEP | provider redundancy + quality, not Yahoo-specific logic |
-| TH-FX-001 account/instrument currency mismatch | KEEP | execution/currency adapter |
+| TH-FX-001 account/instrument currency mismatch | MERGE | single-CNY execution precheck; foreign-currency quotes are research/audit-only |
+| generic backtest/Stock Connect fee formula | CLOSE | removed; actual broker receipts are audit facts, never fee-policy defaults |
 | TH-EXPECT-002 consensus/valuation missing | KEEP optional | Expectation Evidence; optional by default |
 | TH-RESEARCH-001 Xiaomi research DB empty | CLOSE | data-coverage incident represented by deterministic availability |
 | TH-RESEARCH-002 research bias mixed with action | KEEP | ResearchAssessment vs DecisionArbiter |
@@ -98,7 +99,7 @@ Legend:
 | DecisionMemory/MaterialChange/cooldown | KEEP | continuity phase |
 | FeedbackEvent | KEEP | feedback phase; no auto-tune first |
 | A/HK/US MarketAdapter | KEEP | platform boundary |
-| DecisionSnapshot | MERGE initially | extend DecisionPackage/PlanAnalysisRun first; add table when memory requires it |
+| legacy DecisionSnapshot/calibration/impact graph | CLOSE | removed; DecisionContext/DecisionPackage and FeedbackEvent are the only v3 authority boundaries |
 | separate EvidenceAvailabilitySnapshot service | MERGE | keep inside EvidenceSnapshot/quality snapshot |
 
 ## B. Current-code conformance findings

@@ -260,12 +260,7 @@ class PortfolioStore:
                     )
                 """)
                 connection.execute("CREATE INDEX IF NOT EXISTS idx_sale_records_symbol_time ON sale_records(symbol, sold_at DESC)")
-                connection.execute("CREATE TABLE IF NOT EXISTS research_recommendations (id TEXT PRIMARY KEY, symbol TEXT NOT NULL, payload TEXT NOT NULL, created_at TEXT NOT NULL)")
                 connection.execute("CREATE TABLE IF NOT EXISTS daily_reviews (id TEXT PRIMARY KEY, review_date TEXT NOT NULL UNIQUE, payload TEXT NOT NULL, created_at TEXT NOT NULL, updated_at TEXT NOT NULL)")
-                connection.execute("CREATE TABLE IF NOT EXISTS recommendation_evaluations (recommendation_id TEXT NOT NULL, horizon INTEGER NOT NULL, payload TEXT NOT NULL, PRIMARY KEY(recommendation_id, horizon))")
-                connection.execute("CREATE TABLE IF NOT EXISTS recommendation_events (id INTEGER PRIMARY KEY AUTOINCREMENT, recommendation_id TEXT NOT NULL, event_type TEXT NOT NULL, trading_date TEXT, trigger_price REAL, payload TEXT NOT NULL)")
-                connection.execute("CREATE TABLE IF NOT EXISTS paper_positions (recommendation_id TEXT PRIMARY KEY, symbol TEXT NOT NULL, action TEXT NOT NULL, quantity REAL NOT NULL, fill_price REAL NOT NULL, fill_date TEXT NOT NULL, status TEXT NOT NULL, updated_at TEXT NOT NULL)")
-                connection.execute("CREATE TABLE IF NOT EXISTS paper_daily_pnl (recommendation_id TEXT NOT NULL, trading_date TEXT NOT NULL, close_price REAL NOT NULL, gross_pnl REAL NOT NULL, net_pnl REAL NOT NULL, quantity REAL NOT NULL, PRIMARY KEY(recommendation_id, trading_date))")
                 connection.execute("CREATE TABLE IF NOT EXISTS ai_jobs (id TEXT PRIMARY KEY, target_id TEXT NOT NULL, input_hash TEXT NOT NULL UNIQUE, status TEXT NOT NULL, attempts INTEGER NOT NULL, max_attempts INTEGER NOT NULL, payload TEXT NOT NULL, error_message TEXT, created_at TEXT NOT NULL, updated_at TEXT NOT NULL)")
                 connection.execute("CREATE TABLE IF NOT EXISTS account_cash (account_id TEXT PRIMARY KEY, available_cash REAL NOT NULL, updated_at TEXT NOT NULL)")
                 connection.execute("CREATE TABLE IF NOT EXISTS paper_trading_accounts (account_id TEXT PRIMARY KEY, available_cash REAL NOT NULL, initial_cash REAL NOT NULL DEFAULT 0, enabled INTEGER NOT NULL DEFAULT 0, updated_at TEXT NOT NULL)")
@@ -319,20 +314,6 @@ class PortfolioStore:
                 self._ensure_column(connection, "paper_trading_logs", "execution_quote_source", "TEXT")
                 self._ensure_column(connection, "paper_trading_logs", "fill_price_mode", "TEXT")
                 self._ensure_column(connection, "paper_trading_accounts", "initial_cash", "REAL NOT NULL DEFAULT 0")
-                connection.execute("""
-                    CREATE TABLE IF NOT EXISTS calibration_observations (
-                        id TEXT PRIMARY KEY,
-                        analysis_run_id TEXT NOT NULL,
-                        symbol TEXT NOT NULL,
-                        action TEXT NOT NULL,
-                        entry_date TEXT NOT NULL,
-                        entry_price REAL NOT NULL,
-                        payload TEXT NOT NULL,
-                        created_at TEXT NOT NULL,
-                        UNIQUE(symbol, action, entry_date)
-                    )
-                """)
-                connection.execute("CREATE INDEX IF NOT EXISTS idx_calibration_observations_symbol_date ON calibration_observations(symbol, entry_date DESC)")
                 self._ensure_column(connection, "learning_cases", "position_band", "TEXT NOT NULL DEFAULT ''")
                 self._ensure_column(connection, "learning_cases", "planned_action", "TEXT NOT NULL DEFAULT ''")
                 self._ensure_column(connection, "learning_cases", "confidence", "REAL NOT NULL DEFAULT 0.5")
@@ -599,14 +580,8 @@ class PortfolioStore:
             connection.execute("DELETE FROM portfolio_analysis_cache")
             connection.execute("DELETE FROM analysis_runs")
             connection.execute("DELETE FROM sale_records")
-            connection.execute("DELETE FROM research_recommendations")
-            connection.execute("DELETE FROM recommendation_evaluations")
-            connection.execute("DELETE FROM recommendation_events")
-            connection.execute("DELETE FROM paper_positions")
-            connection.execute("DELETE FROM paper_daily_pnl")
             connection.execute("DELETE FROM ai_jobs")
             connection.execute("DELETE FROM account_cash")
-            connection.execute("DELETE FROM calibration_observations")
             connection.execute("DELETE FROM ai_analysis_cache")
             connection.execute("DELETE FROM ai_analysis_cache_v2")
             connection.execute("DELETE FROM content_cache")
@@ -1580,43 +1555,6 @@ class PortfolioStore:
         with self._connect() as connection:
             connection.execute("INSERT INTO analysis_runs (id, payload, created_at) VALUES (?, ?, ?)", (str(item["id"]), json.dumps(item, ensure_ascii=False, default=str), beijing_now().isoformat()))
 
-    def save_calibration_observations(self, analysis_run: dict[str, object]) -> None:
-        """Keep one source snapshot per symbol/action/trading date for later calibration."""
-        rows = []
-        for item in analysis_run.get("items", []):
-            snapshot = item.get("decision_snapshot") or {}
-            quote = snapshot.get("quote") or {}
-            price = quote.get("price")
-            entry_date = str(quote.get("as_of") or analysis_run.get("generated_at", ""))[:10]
-            if price is None or not entry_date:
-                continue
-            rows.append((
-                f"{item['symbol']}:{item['action']}:{entry_date}", str(analysis_run["id"]), str(item["symbol"]),
-                str(item["action"]), entry_date, float(price), json.dumps(snapshot, ensure_ascii=False, default=str),
-                beijing_now().isoformat(),
-            ))
-        if not rows:
-            return
-        with self._connect() as connection:
-            connection.executemany(
-                "INSERT OR IGNORE INTO calibration_observations "
-                "(id, analysis_run_id, symbol, action, entry_date, entry_price, payload, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
-                rows,
-            )
-
-    def calibration_observations(self, symbol: str | None = None) -> list[dict[str, object]]:
-        query, params = (
-            ("SELECT symbol, action, entry_date, entry_price, payload FROM calibration_observations WHERE symbol=? ORDER BY entry_date", [symbol])
-            if symbol else ("SELECT symbol, action, entry_date, entry_price, payload FROM calibration_observations ORDER BY entry_date", [])
-        )
-        with self._connect() as connection:
-            rows = connection.execute(query, params).fetchall()
-        return [{**dict(row), "payload": json.loads(str(row["payload"]))} for row in rows]
-
-    def save_recommendation(self, item: dict[str, object]) -> None:
-        with self._connect() as connection:
-            connection.execute("INSERT INTO research_recommendations VALUES (?, ?, ?, ?)", (item["id"], item["symbol"], json.dumps(item, ensure_ascii=False), beijing_now().isoformat()))
-
     def save_daily_review(self, item: dict[str, object]) -> dict[str, object]:
         """Persist one immutable end-of-day plan with later execution and outcome updates."""
         now = beijing_now().isoformat()
@@ -2146,57 +2084,6 @@ class PortfolioStore:
         for item in symbols:
             item["detail"] = json.loads(str(item["detail"]))
         return {**dict(row), "stages": stages, "symbols": symbols}
-
-    def recommendations(self, symbol: str | None = None) -> list[dict[str, object]]:
-        query, args = ("SELECT payload FROM research_recommendations WHERE symbol=? ORDER BY created_at DESC", [symbol]) if symbol else ("SELECT payload FROM research_recommendations ORDER BY created_at DESC", [])
-        with self._connect() as connection: rows = connection.execute(query, args).fetchall()
-        return [json.loads(str(row["payload"])) for row in rows]
-
-    def set_recommendation_evaluation_status(self, recommendation_id: str, evaluation_status: str) -> bool:
-        with self._connect() as connection:
-            row = connection.execute("SELECT payload FROM research_recommendations WHERE id=?", (recommendation_id,)).fetchone()
-            if not row:
-                return False
-            payload = json.loads(str(row["payload"]))
-            if payload.get("evaluation_status") == evaluation_status:
-                return False
-            payload["evaluation_status"] = evaluation_status
-            connection.execute("UPDATE research_recommendations SET payload=? WHERE id=?", (json.dumps(payload, ensure_ascii=False), recommendation_id))
-        return True
-
-    def save_evaluations(self, recommendation_id: str, items: list[dict[str, object]]) -> None:
-        with self._connect() as connection:
-            connection.executemany("INSERT OR REPLACE INTO recommendation_evaluations VALUES (?, ?, ?)", [(recommendation_id, int(item["horizon"]), json.dumps(item, ensure_ascii=False)) for item in items])
-
-    def recommendation_evaluations(self, recommendation_id: str) -> list[dict[str, object]]:
-        with self._connect() as connection: rows = connection.execute("SELECT payload FROM recommendation_evaluations WHERE recommendation_id=? ORDER BY horizon", (recommendation_id,)).fetchall()
-        return [json.loads(str(row["payload"])) for row in rows]
-
-    def save_recommendation_events(self, recommendation_id: str, events: list[dict[str, object]]) -> None:
-        if not events:
-            return
-        with self._connect() as connection:
-            connection.executemany(
-                "INSERT INTO recommendation_events (recommendation_id,event_type,trading_date,trigger_price,payload) VALUES (?, ?, ?, ?, ?)",
-                [(recommendation_id, str(event.get("event_type", "condition_checked")), event.get("trading_date"), event.get("trigger_price"), json.dumps(event, ensure_ascii=False, default=str)) for event in events],
-            )
-
-    def save_paper_tracking(self, recommendation_id: str, symbol: str, fill: dict[str, object], quantity: float, action: str, bars: list[dict[str, object]]) -> None:
-        entry = float(fill["price"])
-        sign = -1 if action == "trim" else 1
-        now = beijing_now().isoformat()
-        rows = []
-        for bar in bars:
-            close = float(bar["close"])
-            gross = (close - entry) * quantity * sign
-            fees = (entry + close) * quantity * 0.0003
-            rows.append((recommendation_id, str(bar["trading_date"]), close, gross, gross - fees, quantity))
-        with self._connect() as connection:
-            connection.execute(
-                "INSERT OR REPLACE INTO paper_positions VALUES (?, ?, ?, ?, ?, ?, 'open', ?)",
-                (recommendation_id, symbol, action, quantity, entry, str(fill["date"]), now),
-            )
-            connection.executemany("INSERT OR REPLACE INTO paper_daily_pnl VALUES (?, ?, ?, ?, ?, ?)", rows)
 
     def enqueue_ai_job(self, job: dict[str, object]) -> dict[str, object]:
         now = beijing_now().isoformat()
