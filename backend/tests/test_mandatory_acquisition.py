@@ -3,7 +3,7 @@ from __future__ import annotations
 from datetime import datetime, timezone
 from types import SimpleNamespace
 
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 from app.mandatory_acquisition import (
     ACQUISITION_LATEST_KEY_PREFIX,
@@ -192,6 +192,7 @@ def test_acquisition_fetches_registered_miss_and_preserves_unregistered_gap():
     assert by_key["daily_bars"]["post_state"] == "fresh"
     assert by_key["risk"]["post_state"] == "fresh"
     assert by_key["market_regime"]["action"] == "UNAVAILABLE"
+    assert manifest["status"] == "degraded"
 
     latest = store.market[f"{ACQUISITION_LATEST_KEY_PREFIX}01810"]
     assert latest["manifest_id"] == manifest["manifest_id"]
@@ -232,12 +233,30 @@ def test_fresh_market_and_company_data_are_reused_without_remote_fetch():
     assert by_key["quote"]["action"] == "REUSE"
 
 
+class _FakeGate(BaseModel):
+    action: str
+    permission: str = "allowed"
+    reasons: tuple[str, ...] = ()
+    unavailable_fields: tuple[str, ...] = ()
+
+
+class _FakeQuality(BaseModel):
+    status: str = "ready"
+    warnings: tuple[str, ...] = ()
+    action_gates: tuple[_FakeGate, ...] = Field(default_factory=lambda: (
+        _FakeGate(action="OPEN"),
+        _FakeGate(action="ADD"),
+        _FakeGate(action="WATCH", permission="research_only"),
+    ))
+
+
 class _FakeContext(BaseModel):
     context_id: str = "context-1"
     generated_at: str = "2026-08-18T19:40:00+08:00"
     input_hash: str = "before"
     timeframe_technicals: tuple = ()
-    source_versions: dict[str, str] = {"context_schema": "context-v4-single-cny"}
+    source_versions: dict[str, str] = Field(default_factory=lambda: {"context_schema": "context-v4-single-cny"})
+    data_quality: _FakeQuality = Field(default_factory=_FakeQuality)
     symbol: str = "01810"
     value: int = 1
 
@@ -249,7 +268,7 @@ class _FakeDelegate:
 
 def test_context_manifest_link_is_request_scoped_and_changes_input_hash():
     builder = AcquisitionAwareContextBuilder(_FakeDelegate())
-    manifest = {"manifest_id": "manifest-1", "manifest_hash": "hash-1"}
+    manifest = {"manifest_id": "manifest-1", "manifest_hash": "hash-1", "status": "ready", "items": []}
 
     unbound = builder.build("01810")
     assert "acquisition_manifest_id" not in unbound.source_versions
@@ -264,3 +283,35 @@ def test_context_manifest_link_is_request_scoped_and_changes_input_hash():
 
     after = builder.build("01810")
     assert "acquisition_manifest_id" not in after.source_versions
+
+
+def test_action_critical_acquisition_gap_blocks_open_add_but_research_only_gap_does_not():
+    builder = AcquisitionAwareContextBuilder(_FakeDelegate())
+    manifest = {
+        "manifest_id": "manifest-2",
+        "manifest_hash": "hash-2",
+        "status": "degraded",
+        "items": [
+            {
+                "requirement_key": "corporate_events",
+                "mandatory_for": ["OPEN", "ADD", "research"],
+                "post_state": "UNAVAILABLE",
+            },
+            {
+                "requirement_key": "risks_catalysts",
+                "mandatory_for": ["research"],
+                "post_state": "LOCAL_MISS",
+            },
+        ],
+    }
+
+    with bind_acquisition_manifests({"01810": manifest}):
+        context = builder.build("01810")
+
+    gates = {gate.action: gate for gate in context.data_quality.action_gates}
+    assert gates["OPEN"].permission == "blocked"
+    assert gates["ADD"].permission == "blocked"
+    assert "mandatory_acquisition.degraded" in gates["OPEN"].reasons
+    assert gates["OPEN"].unavailable_fields == ("mandatory_acquisition.corporate_events",)
+    assert gates["WATCH"].permission == "research_only"
+    assert "mandatory_acquisition.risks_catalysts" not in gates["OPEN"].unavailable_fields
