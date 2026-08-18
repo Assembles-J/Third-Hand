@@ -748,7 +748,10 @@ action_policy_engine = ActionPolicyEngine()
 position_sizing_engine = PositionSizingEngine()
 decision_ai_service = DecisionAiService(store)
 decision_guard = DecisionGuard()
-decision_orchestrator = DecisionOrchestrator(evidence_engine, action_policy_engine, position_sizing_engine, decision_ai_service, decision_guard)
+decision_orchestrator = DecisionOrchestrator(
+    evidence_engine, action_policy_engine, position_sizing_engine, decision_ai_service, decision_guard,
+    prior_report_loader=lambda symbol: (store.decision_reports(symbol, 1) or [None])[0],
+)
 research_report_builder = ResearchReportBuilder(evidence_engine)
 research_thesis_service = ResearchThesisService()
 from app.research_chat.routes import build_router

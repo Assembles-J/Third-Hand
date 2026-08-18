@@ -162,7 +162,13 @@ logs into lots; any aggregate/log mismatch is explicitly blocked for manual
 reconciliation. Remaining: market-specific HK/US fee schedules and a
 multi-currency cash/FX ledger before enabling non-CN paper execution.
 
-### Phase 6 — Decision continuity
+### Phase 6 — Decision continuity — ACTIVE
+
+The formal decision path now records `DecisionMemory`: the prior decision,
+episode, material-change reason, review time and an action cooldown. Identical
+inputs and hard gates preserve the prior formal action; an input, position-state
+or hard-gate change is an explicit material-change reason. Remaining: persist
+position age and make review/cooldown scheduling observable in the paper runtime.
 
 Add DecisionMemory, episode id, material-change detector, cooldown/review-after and prior-decision references.
 

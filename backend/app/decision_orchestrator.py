@@ -11,6 +11,7 @@ from app.decision_ai import DecisionAiOutcome
 from app.decision_models import DecisionReport, OperationItem
 from app.research_assessment import ResearchAggregator, SemanticInvariantValidator
 from app.decision_semantics import DecisionArbiter
+from app.decision_continuity import DecisionContinuityPolicy
 from app.timeframe_authority import TimeframeAuthorityPolicy
 from app.time_utils import beijing_now
 from app.trading_calendar import TradingCalendarService
@@ -19,7 +20,7 @@ logger = logging.getLogger(__name__)
 
 
 class DecisionOrchestrator:
-    def __init__(self, evidence_engine, policy_engine, sizing_engine, ai_service, guard, atomic_evidence_builder=None, research_aggregator=None, research_validator=None, decision_arbiter=None, timeframe_policy=None) -> None:
+    def __init__(self, evidence_engine, policy_engine, sizing_engine, ai_service, guard, atomic_evidence_builder=None, research_aggregator=None, research_validator=None, decision_arbiter=None, timeframe_policy=None, prior_report_loader=None, continuity_policy=None) -> None:
         self.evidence_engine, self.policy_engine = evidence_engine, policy_engine
         self.sizing_engine, self.ai_service, self.guard = sizing_engine, ai_service, guard
         self.atomic_evidence_builder = atomic_evidence_builder or AtomicEvidenceSnapshotBuilder()
@@ -27,6 +28,8 @@ class DecisionOrchestrator:
         self.research_validator = research_validator or SemanticInvariantValidator()
         self.decision_arbiter = decision_arbiter or DecisionArbiter()
         self.timeframe_policy = timeframe_policy or TimeframeAuthorityPolicy()
+        self.prior_report_loader = prior_report_loader
+        self.continuity_policy = continuity_policy or DecisionContinuityPolicy()
 
     def generate(self, context, *, candidate_audit: dict[str, object] | None = None) -> DecisionReport:
         evidence = self.evidence_engine.build(context)
@@ -40,6 +43,10 @@ class DecisionOrchestrator:
         if not research_validation.valid:
             raise ValueError(f"invalid deterministic research assessment: {research_validation.violations}")
         semantic_decision = self.decision_arbiter.arbitrate(context, candidates)
+        prior_report = self.prior_report_loader(context.symbol) if self.prior_report_loader else None
+        formal_action, decision_memory = self.continuity_policy.assess(context, semantic_decision.action, prior_report)
+        if formal_action != semantic_decision.action:
+            semantic_decision = self._with_continuity_action(semantic_decision, formal_action)
         timeframe_authority = self.timeframe_policy.assess(context)
         logger.info(
             "Atomic evidence shadow context_id=%s symbol=%s snapshot_hash=%s fact_count=%s availability_count=%s conflict_count=%s",
@@ -68,7 +75,7 @@ class DecisionOrchestrator:
             )
             ai_outcome = DecisionAiOutcome(None, "disabled", "feature_disabled")
         assessment = self.guard.guard(candidates, ai_outcome.assessment)
-        action = candidates[0].action
+        action = self._legacy_action(formal_action)
         ai_shadow_action = assessment.preferred_action if assessment else None
         sizing = self.sizing_engine.size(context, action) if config.DECISION_SIZING_ENABLED else None
         status = "BLOCKED" if context.data_quality.status == "blocked" else "DEGRADED" if context.data_quality.status == "degraded" else "READY"
@@ -93,7 +100,8 @@ class DecisionOrchestrator:
             research_assessment_validation=research_validation,
             entry_decision=semantic_decision if context.position is None else None,
             position_decision=semantic_decision if context.position is not None else None,
-            formal_action=semantic_decision.action,
+            formal_action=formal_action,
+            decision_memory=decision_memory,
             timeframe_authority=timeframe_authority,
             action_candidates=candidates,
             operation_items=self._operation_items(context, action, candidates[0].blocked_reasons, sizing, canonical.display_price),
@@ -158,6 +166,28 @@ class DecisionOrchestrator:
             target_quantity=getattr(sizing, "target_quantity", None),
             status="ready",
         ),)
+
+    @staticmethod
+    def _legacy_action(formal_action: str) -> str:
+        return {
+            "BUY": "OPEN", "WAIT": "WATCH", "HOLD": "HOLD", "ADD": "ADD",
+            "REDUCE": "REDUCE", "EXIT": "EXIT", "BLOCKED": "BLOCKED",
+        }[formal_action]
+
+    @staticmethod
+    def _with_continuity_action(decision, formal_action: str):
+        if decision.prior_state == "FLAT":
+            next_state = {"BUY": "ENTRY_PENDING", "WAIT": "FLAT", "BLOCKED": "BLOCKED"}[formal_action]
+        else:
+            next_state = {
+                "HOLD": "HOLDING", "ADD": "HOLDING", "REDUCE": "REDUCE_PENDING",
+                "EXIT": "EXIT_PENDING", "BLOCKED": "BLOCKED",
+            }[formal_action]
+        return decision.model_copy(update={
+            "action": formal_action,
+            "next_state": next_state,
+            "reason_codes": tuple(dict.fromkeys((*decision.reason_codes, "continuity.no_material_change"))),
+        })
 
     @staticmethod
     def _summary(action, blocked_reasons) -> str:

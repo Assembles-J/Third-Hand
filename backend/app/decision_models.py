@@ -9,6 +9,7 @@ from pydantic import BaseModel, ConfigDict, Field
 from app.atomic_models import AtomicEvidenceSnapshot
 from app.research_assessment import ResearchAssessment, ResearchAssessmentValidation
 from app.decision_semantics import EntryDecision, FormalDecisionAction, PositionDecision
+from app.decision_continuity import DecisionMemory
 from app.timeframe_authority import TimeframeAuthority
 
 
@@ -368,6 +369,7 @@ class DecisionReport(DecisionModel):
     entry_decision: EntryDecision | None = None
     position_decision: PositionDecision | None = None
     formal_action: FormalDecisionAction
+    decision_memory: DecisionMemory | None = None
     timeframe_authority: TimeframeAuthority | None = None
     action_candidates: tuple[ActionCandidate, ...]
     operation_items: tuple[OperationItem, ...] = ()
