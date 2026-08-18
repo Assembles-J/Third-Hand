@@ -121,8 +121,10 @@ missing capability and source conflict remain explicit states; no LLM output or
 Xiaomi-specific weighting is consulted. The assessment is persisted on the
 decision report for audit, but has no action authority until Phase 4.
 
-Remaining: expand the domain policies beyond the initial fundamental/technical/
-event/market partitions, define semantic invariants, and introduce the formal
+Semantic invariants now validate fact references, mutually exclusive polarity
+buckets, conflict propagation, snapshot identity, and the Phase-4 boundary for
+decision confidence. Remaining: expand domain policies beyond the initial
+fundamental/technical/event/market partitions and introduce the formal
 DecisionArbiter with separate decision confidence.
 
 ### Phase 4 — Decision semantics/state machine

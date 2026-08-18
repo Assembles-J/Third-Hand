@@ -7,7 +7,7 @@ from app.atomic_models import (
     EvidenceAvailabilityRecord,
     EvidenceConflictRecord,
 )
-from app.research_assessment import ResearchAggregator
+from app.research_assessment import ResearchAggregator, SemanticInvariantValidator
 
 
 BJ = timezone(timedelta(hours=8))
@@ -72,6 +72,7 @@ def test_research_assessment_is_order_independent_and_keeps_mixed_facts_separate
     assert first.decision_confidence is None
     assert first.model_run_ids == ()
     assert first.aggregation_policy_versions["dimension"] == "dimension-aggregation-v1-fact-polarity"
+    assert SemanticInvariantValidator().validate(_snapshot(*facts), first).valid is True
 
 
 def test_research_assessment_treats_conflict_and_missing_data_as_deterministic_unresolved_state():
@@ -98,3 +99,17 @@ def test_research_assessment_treats_conflict_and_missing_data_as_deterministic_u
     assert assessment.unresolved_fact_ids == ("availability:company_dataset.valuation_framework",)
     assert "unavailable:company_dataset.valuation_framework" in assessment.invalidation_conditions
     assert "conflict:company_dataset_payload_hash_mismatch:profit_cashflow_drivers" in assessment.invalidation_conditions
+
+    invalid = assessment.model_copy(update={"research_bias": "SUPPORTIVE"})
+    validation = SemanticInvariantValidator().validate(_snapshot(
+        fact,
+        conflicts=(EvidenceConflictRecord(
+            conflict_id="conflict.profit",
+            code="company_dataset_payload_hash_mismatch:profit_cashflow_drivers",
+            affected_sources=("research_snapshot:fixture",),
+            severity="high",
+            policy_effect="shadow_only_no_formal_authority",
+        ),),
+    ), invalid)
+    assert validation.valid is False
+    assert "snapshot_conflict_requires_conflict_research_bias" in validation.violations

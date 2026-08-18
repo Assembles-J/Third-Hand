@@ -61,6 +61,11 @@ class ResearchAssessment(ResearchModel):
     model_run_ids: tuple[str, ...] = ()
 
 
+class ResearchAssessmentValidation(ResearchModel):
+    valid: bool
+    violations: tuple[str, ...] = ()
+
+
 _FUNDAMENTAL_DIMENSIONS = {
     "growth": frozenset({
         "revenue", "revenue_yoy_percent", "gross_profit", "gross_profit_yoy_percent",
@@ -215,7 +220,44 @@ class ResearchAggregator:
         return "INSUFFICIENT"
 
 
+class SemanticInvariantValidator:
+    """Reject internally contradictory deterministic research assessments."""
+
+    version = config.SEMANTIC_INVARIANT_VALIDATOR_VERSION
+
+    def validate(
+        self,
+        snapshot: AtomicEvidenceSnapshot,
+        assessment: ResearchAssessment,
+    ) -> ResearchAssessmentValidation:
+        violations: list[str] = []
+        known_fact_ids = {item.fact_id for item in snapshot.facts}
+        top_level_buckets = (
+            assessment.supportive_fact_ids,
+            assessment.adverse_fact_ids,
+            assessment.neutral_material_fact_ids,
+        )
+        for fact_id in {item for bucket in top_level_buckets for item in bucket}:
+            if fact_id not in known_fact_ids:
+                violations.append(f"unknown_fact_id:{fact_id}")
+        if any(set(left).intersection(right) for index, left in enumerate(top_level_buckets) for right in top_level_buckets[index + 1:]):
+            violations.append("fact_bucket_overlap")
+        if snapshot.conflicts and assessment.research_bias != "CONFLICT":
+            violations.append("snapshot_conflict_requires_conflict_research_bias")
+        if not snapshot.conflicts and assessment.research_bias == "CONFLICT":
+            violations.append("conflict_research_bias_requires_snapshot_conflict")
+        if assessment.decision_confidence is not None:
+            violations.append("decision_confidence_requires_phase4_decision_arbiter")
+        if assessment.evidence_snapshot_hash != snapshot.snapshot_hash:
+            violations.append("evidence_snapshot_hash_mismatch")
+        return ResearchAssessmentValidation(
+            valid=not violations,
+            violations=tuple(sorted(violations)),
+        )
+
+
 __all__ = [
     "DimensionAggregator", "DimensionAssessment", "FundamentalVector",
-    "ResearchAssessment", "ResearchAggregator",
+    "ResearchAssessment", "ResearchAssessmentValidation", "ResearchAggregator",
+    "SemanticInvariantValidator",
 ]
