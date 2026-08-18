@@ -23,6 +23,11 @@ TIMEFRAME_AUTHORITY_POLICY_VERSION = "timeframe-authority-v2-weekly-context"
 DECISION_CONTINUITY_POLICY_VERSION = "decision-continuity-v3-material-fingerprint"
 MODEL_POLICY_VERSION = "model-policy-v3-compound-structured-recovery"
 FEEDBACK_POLICY_VERSION = "feedback-v1-audit-only-no-auto-tune"
+# Formal Decision correctness must not depend on a scheduler having warmed the
+# same caches first. This policy turns missing/stale mandatory requirements into
+# one bounded acquisition attempt before immutable Decision inputs are frozen.
+MANDATORY_ACQUISITION_POLICY_VERSION = "mandatory-acquisition-v1-pre-decision"
+MANDATORY_ACQUISITION_BUDGET_POLICY_VERSION = "mandatory-acquisition-budget-v1-bounded"
 # v5 invalidates historical reports that could have been sized against a looser
 # hard-coded 20% cap than the evidence/personal-rule authority.
 ACTION_POLICY_VERSION = "swing-policy-v5-effective-position-cap"
@@ -85,6 +90,8 @@ def audit_version_snapshot() -> dict[str, str]:
         "decision_continuity_policy_version": DECISION_CONTINUITY_POLICY_VERSION,
         "model_policy_version": MODEL_POLICY_VERSION,
         "feedback_policy_version": FEEDBACK_POLICY_VERSION,
+        "mandatory_acquisition_policy_version": MANDATORY_ACQUISITION_POLICY_VERSION,
+        "mandatory_acquisition_budget_policy_version": MANDATORY_ACQUISITION_BUDGET_POLICY_VERSION,
         "action_policy_version": ACTION_POLICY_VERSION,
         "open_gate_audit_version": OPEN_GATE_AUDIT_VERSION,
         "sizing_version": SIZING_VERSION,
