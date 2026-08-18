@@ -112,7 +112,7 @@ Promotion boundary: Phase 3 may consume Atomic Evidence only through versioned,
 deterministic aggregation policies. It must not promote the Xiaomi fixture's
 weights or a model-produced research label into formal action authority.
 
-### Phase 3 — Deterministic research aggregation — ACTIVE
+### Phase 3 — Deterministic research aggregation — COMPLETE
 
 The first aggregation slice is implemented: versioned Fact Polarity, Dimension,
 Fundamental and Research policies build a `FundamentalVector` and
@@ -123,11 +123,11 @@ LLM output or Xiaomi-specific weighting is consulted. The assessment is
 persisted on the decision report for audit, but has no action authority until
 Phase 4.
 
-Semantic invariants now validate fact references, mutually exclusive polarity
-buckets, conflict propagation, snapshot identity, and the Phase-4 boundary for
-decision confidence. Remaining: expand domain policies beyond the initial
-fundamental/technical/event/expectation/market policies and introduce the formal
-DecisionArbiter with separate decision confidence.
+Acceptance is complete: the same snapshot and policy versions reproduce the
+same assessment; model output is not an aggregation input; no Xiaomi benchmark
+weights exist in production policy; and semantic invariants validate fact
+references, mutually exclusive polarity buckets, conflict propagation, snapshot
+identity, and the Phase-4 boundary for decision confidence.
 
 ### Phase 4 — Decision semantics/state machine — ACTIVE
 
