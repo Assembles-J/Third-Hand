@@ -20,6 +20,8 @@ class MarketAdapter:
     exchange_calendar: str
     timezone: str
     trading_currency: str
+    settlement_currency: str
+    settlement_channel: str
     default_lot_size: int
     settlement_rule: str
     paper_fee_schedule: str
@@ -32,6 +34,8 @@ MARKET_ADAPTERS: dict[MarketCode, MarketAdapter] = {
         exchange_calendar="XSHG",
         timezone="Asia/Shanghai",
         trading_currency="CNY",
+        settlement_currency="CNY",
+        settlement_channel="CN_A_CASH",
         default_lot_size=100,
         settlement_rule="CN_A_T1_SELLABILITY",
         paper_fee_schedule="CN_A_STANDARD",
@@ -42,6 +46,11 @@ MARKET_ADAPTERS: dict[MarketCode, MarketAdapter] = {
         exchange_calendar="XHKG",
         timezone="Asia/Hong_Kong",
         trading_currency="HKD",
+        # Mainland brokers settle Stock Connect cash in RMB while the security
+        # itself is quoted/traded in HKD. An observed HKD->CNY rate is therefore
+        # required at the execution boundary; it must never be inferred.
+        settlement_currency="CNY",
+        settlement_channel="SH_HK_CONNECT_RMB",
         # HK board lots are instrument-specific.  Zero means callers must
         # obtain explicit instrument metadata before sizing/execution.
         default_lot_size=0,
@@ -56,6 +65,8 @@ MARKET_ADAPTERS: dict[MarketCode, MarketAdapter] = {
         exchange_calendar="XNYS",
         timezone="America/New_York",
         trading_currency="USD",
+        settlement_currency="USD",
+        settlement_channel="US_LOCAL_CASH",
         default_lot_size=1,
         settlement_rule="US_T1_SETTLEMENT",
         # The single-CNY paper ledger has no FX/US fee model yet.

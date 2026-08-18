@@ -1,4 +1,5 @@
 from app.decision_context import DecisionContextBuilder
+from app.decision_models import FxRateSnapshot
 from app.position_sizing import PositionSizingEngine
 from app.storage import PortfolioStore
 
@@ -62,14 +63,14 @@ def test_watch_does_not_produce_a_quantity(tmp_path):
     assert result.suggested_quantity is None
 
 
-def test_market_execution_precheck_blocks_currency_mismatch_before_sizing(tmp_path):
+def test_hk_rmb_settlement_requires_an_observed_hkd_to_cny_rate_before_sizing(tmp_path):
     context = _context(tmp_path)
     hk_instrument = context.instrument.model_copy(update={"market": "HK", "currency": "HKD", "lot_size": 200})
     result = PositionSizingEngine().size(context.model_copy(update={"instrument": hk_instrument}), "ADD")
 
     assert result.status == "blocked"
     assert result.suggested_quantity is None
-    assert result.blocked_reasons == ("execution_account_currency_mismatch",)
+    assert result.blocked_reasons == ("execution_fx_rate_missing",)
 
 
 def test_market_execution_precheck_never_sizes_unconfigured_fee_market(tmp_path):
@@ -82,4 +83,20 @@ def test_market_execution_precheck_never_sizes_unconfigured_fee_market(tmp_path)
 
     assert result.status == "blocked"
     assert result.suggested_quantity is None
+    assert result.blocked_reasons == ("execution_fee_schedule_unconfigured",)
+
+
+def test_hk_rmb_settlement_reaches_fee_guard_when_exact_fx_rate_is_present(tmp_path):
+    context = _context(tmp_path)
+    hk_instrument = context.instrument.model_copy(update={"market": "HK", "currency": "HKD", "lot_size": 200})
+    fx_rate = FxRateSnapshot(
+        from_currency="HKD", to_currency="CNY", rate=.93, source="broker_settlement_quote",
+        as_of="2026-08-13T14:00:00+08:00", retrieved_at="2026-08-13T14:00:01+08:00",
+    )
+
+    result = PositionSizingEngine().size(
+        context.model_copy(update={"instrument": hk_instrument, "fx_rate": fx_rate}), "ADD"
+    )
+
+    assert result.status == "blocked"
     assert result.blocked_reasons == ("execution_fee_schedule_unconfigured",)

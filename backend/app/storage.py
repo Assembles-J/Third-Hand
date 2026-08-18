@@ -1329,6 +1329,53 @@ class PortfolioStore:
         with self._connect() as connection:
             connection.executemany("INSERT OR REPLACE INTO intraday_price_cache VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)", rows)
 
+    def save_fx_rates(self, rates: list[dict[str, object]]) -> None:
+        """Upsert observed FX quotes used by a cross-currency decision context."""
+        if not rates:
+            return
+        now = beijing_now().isoformat()
+        rows = []
+        for item in rates:
+            from_currency = str(item.get("from_currency") or "").strip().upper()
+            to_currency = str(item.get("to_currency") or "").strip().upper()
+            source = str(item.get("source") or "").strip()
+            try:
+                rate = float(item.get("rate"))
+            except (TypeError, ValueError):
+                continue
+            if not from_currency or not to_currency or from_currency == to_currency or not source or not math.isfinite(rate) or rate <= 0:
+                continue
+            rows.append((
+                from_currency, to_currency, rate, source,
+                str(item.get("as_of") or "") or None,
+                str(item.get("retrieved_at") or "") or None,
+                now,
+            ))
+        if not rows:
+            raise ValueError("no_valid_fx_rates")
+        with self._connect() as connection:
+            connection.executemany(
+                "INSERT INTO fx_rate_cache (from_currency,to_currency,rate,source,as_of,retrieved_at,updated_at) "
+                "VALUES (?,?,?,?,?,?,?) ON CONFLICT(from_currency,to_currency) DO UPDATE SET "
+                "rate=excluded.rate,source=excluded.source,as_of=excluded.as_of,"
+                "retrieved_at=excluded.retrieved_at,updated_at=excluded.updated_at",
+                rows,
+            )
+
+    def fx_rate(self, from_currency: str, to_currency: str) -> dict[str, object] | None:
+        """Read an exact directed rate; reciprocal inference is intentionally forbidden."""
+        source = str(from_currency or "").strip().upper()
+        target = str(to_currency or "").strip().upper()
+        if not source or not target or source == target:
+            return None
+        with self._connect() as connection:
+            row = connection.execute(
+                "SELECT from_currency,to_currency,rate,source,as_of,retrieved_at,updated_at "
+                "FROM fx_rate_cache WHERE from_currency=? AND to_currency=?",
+                (source, target),
+            ).fetchone()
+        return dict(row) if row else None
+
     def intraday_prices(self, symbol: str, limit: int = 500) -> list[dict[str, object]]:
         with self._connect() as connection:
             rows = connection.execute("SELECT bar_time,open,close,high,low,volume,amount,average_price,source,updated_at FROM intraday_price_cache WHERE symbol=? ORDER BY bar_time DESC LIMIT ?", (symbol, limit)).fetchall()

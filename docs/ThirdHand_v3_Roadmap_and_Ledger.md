@@ -5,7 +5,8 @@
 > contract. All other files formerly under `docs/` are historical and removed.
 >
 > **Completed:** Phases 1–3, Phase 6, Phase 7 and Phase 8. **Active gaps:** Phase 4
-> additional timeframe ingestion; Phase 5 HK/US fee + multi-currency FX ledger.
+> additional timeframe ingestion; Phase 5 HK/US fee + multi-currency FX cash
+> ledger and broker fee schedules.
 > No gap is hidden behind a fallback or delegated to an LLM.
 
 ## Current implementation decision
@@ -102,7 +103,7 @@ Legend:
 ## B. Current-code conformance findings
 
 1. The former held `NO_TRADE -> REDUCE` behavior is removed from formal semantics; held WATCH resolves to HOLD.
-2. Market regime, lot and settlement selection are market-scoped. CN remains executable; HK/US are intentionally blocked, not defaulted to CN behavior.
+2. Market regime, lot and settlement selection are market-scoped. HK Stock Connect explicitly uses HKD trading and CNY settlement, with a directed observed HKD→CNY context quote; CN remains executable, while HK/US stay blocked until their broker fee and multi-currency cash-ledger rules are configured.
 3. Atomic Evidence and ResearchAssessment are deterministic and persisted. The DecisionArbiter consumes only high-confidence ADVERSE research as a new-risk veto; it never lets research upgrade an action or produce REDUCE/EXIT. Additional technical timeframe ingestion remains the Phase 4 gap.
 4. Model policy/audit is complete for the configured DeepSeek client, while a generic provider-capability registry remains out of scope.
 5. Feedback is immutable audit data and has no policy/sizing/model-routing write path.
@@ -205,6 +206,8 @@ Acceptance:
 - no global 100-share rule
 - no global A-share T+1 rule
 - HK/US rules are selected by instrument market
+- Stock Connect HKD→CNY conversion is explicit and directed; no reciprocal or
+  implicit FX conversion may enable a trade
 
 ### Phase 6 — Decision continuity
 Implement:

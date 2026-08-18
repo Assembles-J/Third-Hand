@@ -26,6 +26,8 @@ def test_market_adapter_exposes_explicit_market_rules():
 
     assert hk is not None
     assert hk.trading_currency == "HKD"
+    assert hk.settlement_currency == "CNY"
+    assert hk.settlement_channel == "SH_HK_CONNECT_RMB"
     assert hk.default_lot_size == 0
     assert hk.paper_fee_schedule == "UNCONFIGURED"
     assert hk.exchange_calendar == "XHKG"

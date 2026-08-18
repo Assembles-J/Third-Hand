@@ -236,6 +236,16 @@ def _create_data_provider_health(connection: sqlite3.Connection) -> None:
     """)
 
 
+def _create_fx_rate_cache(connection: sqlite3.Connection) -> None:
+    """Persist observed conversion quotes without assuming a settlement rate."""
+    connection.execute(
+        "CREATE TABLE IF NOT EXISTS fx_rate_cache ("
+        "from_currency TEXT NOT NULL, to_currency TEXT NOT NULL, rate REAL NOT NULL, "
+        "source TEXT NOT NULL, as_of TEXT, retrieved_at TEXT, updated_at TEXT NOT NULL, "
+        "PRIMARY KEY(from_currency, to_currency))"
+    )
+
+
 MIGRATIONS = (
     Migration("0001_legacy_schema_baseline", _record_legacy_schema_baseline),
     Migration("0002_decision_contexts", _create_decision_contexts),
@@ -251,6 +261,7 @@ MIGRATIONS = (
     Migration("0012_research_theses", _create_research_theses),
     Migration("0013_simulation_run_audit", _create_simulation_run_audit),
     Migration("0014_data_provider_health", _create_data_provider_health),
+    Migration("0015_fx_rate_cache", _create_fx_rate_cache),
 )
 
 

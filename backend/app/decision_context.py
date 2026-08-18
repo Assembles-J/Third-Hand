@@ -10,6 +10,7 @@ from app.corporate_events import pre_event_policy_blockers
 from app.data_quality import summarize_data_quality
 from app.decision_models import (
     AccountSnapshot, DailyBarSummary, DecisionContext, EventSnapshot,
+    FxRateSnapshot,
     InstrumentSnapshot, MarketFlowSnapshot, MarketRegimeSnapshot, PersonalRuleSnapshot,
     PositionSnapshot, QuoteSnapshot, RelativeStrengthSnapshot, RiskSnapshot,
     TechnicalSnapshot, TradePlanSnapshot,
@@ -19,7 +20,7 @@ from app.time_utils import beijing_now
 from app.trading_calendar import TradingCalendarService
 
 
-CONTEXT_SCHEMA_VERSION = "context-v1"
+CONTEXT_SCHEMA_VERSION = "context-v2-fx-settlement"
 
 
 def _canonical_hash(value: object) -> str:
@@ -129,10 +130,11 @@ class DecisionContextBuilder:
             available_cash=cash, total_market_value=total_market_value, total_assets=total_assets,
             cash_percent=round(cash / total_assets * 100, 4) if total_assets else None,
         )
+        fx_rate = self._fx_rate(instrument_snapshot, account)
         payload = {
             "symbol": symbol, "name": str(holding["name"]) if holding else str(research_target["name"]) if research_target else symbol,
             "decision_horizon": str(plan.get("horizon", "swing")) if plan else "swing",
-            "account": account, "position": position, "quote": self._quote(quote),
+            "account": account, "fx_rate": fx_rate, "position": position, "quote": self._quote(quote),
             "daily_bars": self._daily_bars(bars), "technical": technical, "risk": self._risk(risk),
             "market_regime": market_regime, "market_flow": market_flow, "relative_strength": relative_strength, "events": events,
             "trade_plan": self._plan(plan, symbol), "personal_rule": self._rule(rule),
@@ -221,6 +223,22 @@ class DecisionContextBuilder:
             item = self.technical_service.assess(symbol, bars)
             return TechnicalSnapshot(**{key: item.get(key) for key in TechnicalSnapshot.model_fields})
         except Exception:
+            return None
+
+    def _fx_rate(self, instrument: InstrumentSnapshot | None, account: AccountSnapshot) -> FxRateSnapshot | None:
+        if instrument is None or instrument.currency == account.account_currency:
+            return None
+        item = self.store.fx_rate(instrument.currency, account.account_currency)
+        if not item:
+            return None
+        try:
+            return FxRateSnapshot(
+                from_currency=str(item["from_currency"]), to_currency=str(item["to_currency"]),
+                rate=float(item["rate"]), source=str(item["source"]),
+                as_of=str(item.get("as_of") or "") or None,
+                retrieved_at=str(item.get("retrieved_at") or "") or None,
+            )
+        except (KeyError, TypeError, ValueError):
             return None
 
     @staticmethod

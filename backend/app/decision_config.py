@@ -72,7 +72,7 @@ def audit_version_snapshot() -> dict[str, str]:
     """Non-secret immutable identity recorded with each Day-0 observation report."""
     values = {
         "git_commit": os.getenv("GIT_COMMIT", "unknown"),
-        "context_schema_version": "context-v1",
+        "context_schema_version": "context-v2-fx-settlement",
         "evidence_version": EVIDENCE_VERSION,
         "atomic_evidence_version": ATOMIC_EVIDENCE_VERSION,
         "dimension_aggregation_policy_version": DIMENSION_AGGREGATION_POLICY_VERSION,

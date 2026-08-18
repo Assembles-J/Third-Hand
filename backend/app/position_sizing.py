@@ -83,7 +83,16 @@ class PositionSizingEngine:
         if instrument.currency != adapter.trading_currency:
             return ("execution_instrument_currency_conflict",)
         if context.account.account_currency != instrument.currency:
-            return ("execution_account_currency_mismatch",)
+            if adapter.settlement_currency != context.account.account_currency:
+                return ("execution_account_currency_mismatch",)
+            fx_rate = context.fx_rate
+            if (
+                fx_rate is None
+                or fx_rate.from_currency != instrument.currency
+                or fx_rate.to_currency != context.account.account_currency
+                or fx_rate.rate <= 0
+            ):
+                return ("execution_fx_rate_missing",)
         if adapter.paper_fee_schedule == "UNCONFIGURED":
             return ("execution_fee_schedule_unconfigured",)
         return ()
