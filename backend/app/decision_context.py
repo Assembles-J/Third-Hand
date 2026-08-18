@@ -209,9 +209,23 @@ class DecisionContextBuilder:
         values = {key: item.get(key) for key in RiskSnapshot.model_fields if key != "source"}
         return RiskSnapshot(**values)
 
-    def _market_regime(self, item, market: str | None):
-        if not market:
-            return None
+    def _market_regime(self, item, market: str | None = None):
+        # Compatibility path for older direct/private callers. Formal DecisionContext
+        # construction always passes an explicit market resolved from instrument
+        # metadata or, only when absent, the symbol-shape compatibility resolver.
+        if market is None:
+            persisted = self.store.cached_market_intelligence("market_regime") or {}
+            embedded = (item or {}).get("decision_snapshot", {}).get("market_regime") or {}
+            value = persisted if persisted.get("status") == "ready" else embedded
+            if value.get("status") != "ready" or value.get("regime") in {None, "unknown"}:
+                return None
+            return MarketRegimeSnapshot(
+                status="ready",
+                regime=value.get("regime"),
+                source=value.get("source"),
+                as_of=value.get("as_of"),
+            )
+
         # New data should be persisted by market. The generic key and embedded
         # portfolio snapshot remain migration fallbacks, but only after an
         # explicit/recognizable market-identity check.
