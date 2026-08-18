@@ -22,3 +22,42 @@ def test_decision_snapshot_keeps_sources_and_separates_evidence_confidence():
     assert "不代表" in snapshot["confidence_definition"]
     assert "仓位" in snapshot["candidate_action"]
     assert snapshot["trade_plan"]["horizon"] == "swing"
+
+
+def test_portfolio_snapshot_drops_cross_market_regime_instead_of_showing_cn_for_hk():
+    snapshot = build_decision_snapshot(
+        {"symbol": "01810", "average_cost": 25, "quantity": 200},
+        {"price": 26, "source": "test"},
+        {"risk_level": "中"},
+        {"max_position_percent": 15},
+        [],
+        "observe",
+        market_regime={
+            "status": "ready",
+            "regime": "supportive",
+            "market": "CN",
+            "source": "test",
+        },
+    )
+
+    assert snapshot["market_regime"] is None
+
+
+def test_portfolio_snapshot_keeps_same_market_regime():
+    regime = {
+        "status": "ready",
+        "regime": "mixed",
+        "market": "HK",
+        "source": "test",
+    }
+    snapshot = build_decision_snapshot(
+        {"symbol": "01810", "average_cost": 25, "quantity": 200},
+        {"price": 26, "source": "test"},
+        {"risk_level": "中"},
+        {"max_position_percent": 15},
+        [],
+        "observe",
+        market_regime=regime,
+    )
+
+    assert snapshot["market_regime"] == regime
