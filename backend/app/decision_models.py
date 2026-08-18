@@ -390,7 +390,7 @@ class DecisionReport(DecisionModel):
     candidate_pool_hash: str | None = None
     candidate_rotation_key: str | None = None
     candidate_rank: int | None = Field(default=None, ge=1)
-    candidate_selection_reason: Literal["paper_position_risk_monitor", "deterministic_rotation"] | None = None
+    candidate_selection_reason: Literal["paper_position_risk_monitor", "deterministic_rotation", "decision_review_due"] | None = None
     execution_price_mode: Literal["NEXT_ELIGIBLE_OBSERVED_QUOTE"] = "NEXT_ELIGIBLE_OBSERVED_QUOTE"
     execution_eligible_after: str | None = None
     model: str | None = None

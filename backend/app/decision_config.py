@@ -18,7 +18,7 @@ RESEARCH_AGGREGATION_POLICY_VERSION = "research-aggregation-v1-domain-consensus"
 SEMANTIC_INVARIANT_VALIDATOR_VERSION = "research-semantic-invariants-v1"
 DECISION_ARBITER_POLICY_VERSION = "decision-arbiter-v3-state-and-event-gates"
 TIMEFRAME_AUTHORITY_POLICY_VERSION = "timeframe-authority-v1-daily-only"
-DECISION_CONTINUITY_POLICY_VERSION = "decision-continuity-v1-input-and-gate-materiality"
+DECISION_CONTINUITY_POLICY_VERSION = "decision-continuity-v2-runtime-cooldown-and-review"
 MODEL_POLICY_VERSION = "model-policy-v1-atomic-complexity-routing"
 FEEDBACK_POLICY_VERSION = "feedback-v1-audit-only-no-auto-tune"
 # v3 is a Day-0 correctness break: REDUCE now requires an existing position.
@@ -46,7 +46,7 @@ PRE_EVENT_BLOCK_SESSIONS = 1
 # v2 fixes A-share execution semantics: OPEN/ADD may fill on a strictly later
 # observed quote in the same trading day, while T+1 remains a SELL-availability
 # constraint enforced by the paper ledger.
-EXECUTION_POLICY_VERSION = "execution-v4-market-scoped-paper-rules"
+EXECUTION_POLICY_VERSION = "execution-v5-continuity-cooldown-gate"
 CANDIDATE_SELECTION_VERSION = "candidate-rotation-v1"
 OPPORTUNITY_SCORING_VERSION = "research-priority-v1"
 # Decision-input freshness stays conservative. Execution is a separate boundary:

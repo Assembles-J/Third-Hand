@@ -17,6 +17,7 @@ from app.decision_semantics import execution_side, formal_action_from_report
 from app.paper_runtime import (
     candidate_pool_audit,
     current_candidate_selection,
+    due_current_version_review_symbols,
     excluded_requested_symbols,
     latest_current_version_decision_report,
     pending_current_version_decision_symbols,
@@ -42,7 +43,12 @@ def install(m) -> None:
             m.store,
             policy_version=m.action_policy_engine.version,
         )
-        return list(dict.fromkeys((*selection.symbols, *pending)))
+        reviews = due_current_version_review_symbols(
+            m.store,
+            policy_version=m.action_policy_engine.version,
+            now=m.beijing_now(),
+        )
+        return list(dict.fromkeys((*selection.symbols, *reviews, *pending)))
 
     def refresh_universe_opportunity_inputs(trigger: str) -> list[str]:
         """Refresh market research metadata and a neutral history-prewarm cohort.
@@ -227,7 +233,16 @@ def install(m) -> None:
                 })
             context = m.decision_context_builder.build(symbol, holdings_override=paper_holdings, available_cash_override=float(paper_account.get("available_cash") or 0))
             m.store.save_decision_context(context.model_dump(mode="json"))
-            candidate_audit = selection.audit_for(symbol) if selection and symbol in selection.symbols else None
+            candidate_audit = selection.audit_for(symbol) if selection and symbol in selection.symbols else (
+                {
+                    "candidate_selection_version": selection.selection_version,
+                    "candidate_pool_hash": selection.candidate_pool_hash,
+                    "candidate_rotation_key": selection.rotation_key,
+                    "candidate_rank": None,
+                    "candidate_selection_reason": "decision_review_due",
+                }
+                if selection else None
+            )
             report = m.decision_orchestrator.generate(context, candidate_audit=candidate_audit).model_dump(mode="json")
             # Keep explainability deterministic and sidecar-compatible with the
             # existing DecisionReport schema.  The extra JSON field is persisted
@@ -279,7 +294,7 @@ def install(m) -> None:
                 continue
             check = m.validate_daily_execution(report, quote)
             if not check.allowed:
-                terminal_state = "not_due" if check.reason in {"execution_not_due_next_market_session", "execution_not_due_later_quote"} else "blocked_by_gate" if check.reason == "execution_action_gate_blocked" else "skipped_execution"
+                terminal_state = "not_due" if check.reason in {"execution_not_due_next_market_session", "execution_not_due_later_quote", "execution_cooldown_active"} else "blocked_by_gate" if check.reason == "execution_action_gate_blocked" else "skipped_execution"
                 detail = {"name": symbol_name, "decision_id": str(report.get("decision_id") or ""), "reason": check.reason, "action": report.get("action")}
                 m._record_simulation_symbol_state(run_id, symbol, terminal_state, detail, name=symbol_name)
                 m._record_simulation_stage(run_id, "execution", "skipped", symbol=symbol, detail={"terminal_state": terminal_state, **detail}, started_at=stage_started_at)
@@ -345,8 +360,9 @@ def install(m) -> None:
         rotation_key = m.beijing_now().date().isoformat()
         selection = paper_candidate_selection(rotation_key)
         pending = pending_current_version_decision_symbols(m.store, policy_version=m.action_policy_engine.version)
-        decision_symbols, due_symbols, symbols = runtime_scope(selection, requested_symbols=requested_symbols, pending_symbols=pending)
-        excluded = excluded_requested_symbols(selection, requested_symbols=requested_symbols, pending_symbols=pending)
+        reviews = due_current_version_review_symbols(m.store, policy_version=m.action_policy_engine.version, now=m.beijing_now())
+        decision_symbols, review_symbols, due_symbols, symbols = runtime_scope(selection, requested_symbols=requested_symbols, pending_symbols=pending, review_symbols=reviews)
+        excluded = excluded_requested_symbols(selection, requested_symbols=requested_symbols, pending_symbols=pending, review_symbols=reviews)
         data_refresh_symbols = tuple(dict.fromkeys((*symbols, *excluded)))
         with m.paper_trading_state_lock:
             m.paper_trading_state.update({
@@ -359,7 +375,7 @@ def install(m) -> None:
         m.last_paper_trading_run_at = m.time.monotonic()
         names = m.paper_trading_names(list(data_refresh_symbols))
         run_id = m._create_simulation_run("manual" if force else "scheduler", list(symbols), "交易运行开始")
-        pool_detail = candidate_pool_audit(selection, requested_symbols=requested_symbols, decision_symbols=decision_symbols, due_symbols=due_symbols)
+        pool_detail = candidate_pool_audit(selection, requested_symbols=requested_symbols, decision_symbols=decision_symbols, due_symbols=due_symbols, review_symbols=review_symbols)
         pool_detail["runtime_symbols"] = list(symbols)
         pool_detail["data_refresh_symbols"] = list(data_refresh_symbols)
         pool_detail["excluded_requested_symbols"] = list(excluded)

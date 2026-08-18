@@ -3,6 +3,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
+from typing import Mapping
 
 from app.decision_semantics import action_gate_for, formal_action_from_report
 
@@ -67,6 +68,15 @@ def validate_daily_execution(report: dict[str, object], quote: dict[str, object]
         return ExecutionCheck(False, "execution_time_unknown")
     if fill_at <= decision_at:
         return ExecutionCheck(False, "execution_not_due_later_quote")
+
+    # DecisionContinuity owns the cooldown value, but execution must enforce it
+    # at the last deterministic boundary.  A persisted report without a valid
+    # timestamp remains executable under the normal quote/gate checks; a bad
+    # optional audit field must never be silently interpreted as a future time.
+    memory = report.get("decision_memory")
+    cooldown_until = _datetime(memory.get("cooldown_until")) if isinstance(memory, Mapping) else None
+    if cooldown_until is not None and fill_at < cooldown_until:
+        return ExecutionCheck(False, "execution_cooldown_active")
 
     gates = ((report.get("data_quality") or {}).get("action_gates") or [])
     formal_action = formal_action_from_report(report)

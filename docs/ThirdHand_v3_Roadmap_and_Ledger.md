@@ -4,10 +4,10 @@
 > ledger. `ThirdHand_Architecture_v3_consolidated.md` is the paired authority
 > contract. All other files formerly under `docs/` are historical and removed.
 >
-> **Completed:** Phases 1–3, Phase 7 and Phase 8. **Active gaps:** Phase 4
+> **Completed:** Phases 1–3, Phase 6, Phase 7 and Phase 8. **Active gaps:** Phase 4
 > additional timeframe ingestion and ResearchAssessment-to-arbiter promotion;
-> Phase 5 HK/US fee + multi-currency FX ledger; Phase 6 runtime review/cooldown
-> scheduling. No gap is hidden behind a fallback or delegated to an LLM.
+> Phase 5 HK/US fee + multi-currency FX ledger. No gap is hidden behind a
+> fallback or delegated to an LLM.
 
 ## Current implementation decision
 
@@ -215,6 +215,9 @@ Implement:
 Acceptance:
 - changed recommendation states what changed
 - repeated analyses cannot flip without material change unless a hard gate changed
+- execution rejects a fill before `cooldown_until`
+- due `review_after` produces a separately auditable decision-refresh obligation,
+  never an implied trade
 
 ### Phase 7 — Model policy and audit
 Implement:

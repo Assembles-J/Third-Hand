@@ -9,6 +9,7 @@ from __future__ import annotations
 from app.domain.trading.adaptive_schedule import adaptive_paper_schedule
 from app.paper_runtime import (
     candidate_pool_audit,
+    due_current_version_review_symbols,
     excluded_requested_symbols,
     pending_current_version_decision_symbols,
     runtime_scope,
@@ -25,12 +26,12 @@ def install(m) -> None:
     m.last_paper_candidate_scan_at = 0.0
     m.last_company_intelligence_focus_at = 0.0
 
-    def _plan(pending_symbols=()):
+    def _plan(obligation_symbols=()):
         settings = m.store.system_settings()
         return adaptive_paper_schedule(
             m.store.paper_account(),
             configured_interval_seconds=int(settings["paper_trading_interval_seconds"]),
-            pending_symbols=pending_symbols,
+            pending_symbols=obligation_symbols,
         )
 
     def adaptive_paper_schedule_state() -> dict[str, object]:
@@ -38,7 +39,12 @@ def install(m) -> None:
             m.store,
             policy_version=m.action_policy_engine.version,
         )
-        plan = _plan(pending)
+        reviews = due_current_version_review_symbols(
+            m.store,
+            policy_version=m.action_policy_engine.version,
+            now=m.beijing_now(),
+        )
+        plan = _plan((*pending, *reviews))
         now = m.time.monotonic()
         scan_interval = plan.candidate_scan_interval_seconds
         seconds_until_candidate_scan = None
@@ -64,6 +70,7 @@ def install(m) -> None:
         return {
             **plan.as_dict(),
             "pending_symbols": list(pending),
+            "due_review_symbols": list(reviews),
             "candidate_scan_due": candidate_scan_due,
             "seconds_until_candidate_scan": seconds_until_candidate_scan,
             "company_research_due": company_research_due,
@@ -121,7 +128,12 @@ def install(m) -> None:
             m.store,
             policy_version=m.action_policy_engine.version,
         )
-        plan = _plan(pending)
+        reviews = due_current_version_review_symbols(
+            m.store,
+            policy_version=m.action_policy_engine.version,
+            now=m.beijing_now(),
+        )
+        plan = _plan((*pending, *reviews))
         now_mono = m.time.monotonic()
         if not force and now_mono - m.last_paper_trading_run_at < plan.review_interval_seconds:
             with m.paper_trading_state_lock:
@@ -159,20 +171,22 @@ def install(m) -> None:
             # the selector if an older caller supplied an empty list.
             effective_requested = tuple(dict.fromkeys(
                 str(item).strip().upper() for item in requested_symbols if str(item).strip()
-            )) or tuple(dict.fromkeys((*selection.symbols, *pending)))
+            )) or tuple(dict.fromkeys((*selection.symbols, *reviews, *pending)))
         else:
             # Full / holding-focus cycles do not refresh unrelated candidates.
             effective_requested = plan.focus_symbols
 
-        decision_symbols, due_symbols, symbols = runtime_scope(
+        decision_symbols, review_symbols, due_symbols, symbols = runtime_scope(
             selection,
             requested_symbols=effective_requested,
             pending_symbols=pending,
+            review_symbols=reviews,
         )
         excluded = excluded_requested_symbols(
             selection,
             requested_symbols=effective_requested,
             pending_symbols=pending,
+            review_symbols=reviews,
         )
         data_refresh_symbols = tuple(dict.fromkeys((*symbols, *excluded)))
 
@@ -199,6 +213,7 @@ def install(m) -> None:
             requested_symbols=effective_requested,
             decision_symbols=decision_symbols,
             due_symbols=due_symbols,
+            review_symbols=review_symbols,
         )
         pool_detail.update({
             "runtime_symbols": list(symbols),

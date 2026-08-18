@@ -1766,7 +1766,7 @@ def execute_due_paper_decisions(symbols: list[str], names: dict[str, str], run_i
         check = validate_daily_execution(report, quote)
         if not check.allowed:
             terminal_state = (
-                "not_due" if check.reason == "execution_not_due_next_market_session"
+                "not_due" if check.reason in {"execution_not_due_next_market_session", "execution_not_due_later_quote", "execution_cooldown_active"}
                 else "blocked_by_gate" if check.reason == "execution_action_gate_blocked"
                 else "skipped_execution"
             )

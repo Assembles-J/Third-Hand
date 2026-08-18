@@ -112,3 +112,20 @@ def test_formal_buy_uses_the_legacy_open_gate_during_compatibility_migration():
 
     assert check.allowed is False
     assert check.reason == "execution_action_gate_blocked"
+
+
+def test_execution_waits_for_the_persisted_decision_cooldown():
+    report = _report("OPEN")
+    report["decision_memory"] = {"cooldown_until": "2026-08-17T10:20:00+08:00"}
+
+    check = validate_daily_execution(report, _quote("2026-08-17T10:14:00+08:00"))
+
+    assert check.allowed is False
+    assert check.reason == "execution_cooldown_active"
+
+
+def test_execution_allows_the_quote_at_the_decision_cooldown_boundary():
+    report = _report("OPEN")
+    report["decision_memory"] = {"cooldown_until": "2026-08-17T10:14:00+08:00"}
+
+    assert validate_daily_execution(report, _quote("2026-08-17T10:14:00+08:00")).allowed is True

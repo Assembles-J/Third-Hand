@@ -15,7 +15,7 @@ The current repository already has strong production invariants around DataHub q
 | Atomic evidence and deterministic aggregation | Complete | Fact/availability/conflict provenance, point-in-time Company Intelligence, versioned aggregation and semantic validation are persisted. |
 | Decision semantics | Partial | Entry/Position actions and formal action authority exist; weekly/60m/15m/5m technical inputs are explicitly unavailable, and `ResearchAssessment` is still audit/research authority rather than an arbiter input. |
 | Market/execution adapters | Partial | CN lot/T+1/fee and PositionLot FIFO are formal; HK/US are safely blocked until their fee schedules and a multi-currency FX ledger exist. |
-| Decision continuity | Partial | Prior decision, episode, material change, cooldown/review fields and position age exist; runtime scheduling does not yet enforce or surface review/cooldown. |
+| Decision continuity | Complete | Prior decision, episode, material change, cooldown/review fields and position age are persisted. ExecutionPrecheck rejects fills before `cooldown_until`; the deterministic runtime promotes `review_after` into a separately audited decision-refresh obligation. |
 | Model policy and audit | Complete for the configured DeepSeek provider | Atomic prompt projection, Flash/Pro routing, schema/semantic checks, hashes, usage and retry traces are persisted. A generic multi-provider capability registry is not implemented. |
 | Feedback | Complete as an audit dataset | Frozen decision/execution lineage, actual-vs-hypothetical outcomes and read-only policy-version export exist; there is no automatic tuning. |
 
@@ -199,6 +199,12 @@ Store:
 `prior_decision_id`, `episode_id`, `last_action`, `position_age`,
 `material_change`, `material_change_reason`, `cooldown_until`, `review_after`,
 and invalidation conditions.
+
+`cooldown_until` is enforced at `ExecutionPrecheck` against the independently
+observed fill quote. `review_after` is not a trade: when due, it authorizes a
+new formal decision generation with the lineage reason `decision_review_due`.
+The runtime keeps review obligations distinct from unexecuted decision fills so
+an expired review cannot be mistaken for an executable order.
 
 ### PositionLot
 Lot-level settlement/sellability:

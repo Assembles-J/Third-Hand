@@ -1,6 +1,10 @@
+import json
+from datetime import datetime
+
 from app import decision_config as config
 from app.candidate_selection import select_candidates
 from app.paper_runtime import (
+    due_current_version_review_symbols,
     latest_current_version_decision_report,
     report_matches_current_selection,
     runtime_scope,
@@ -19,13 +23,14 @@ def test_requested_scope_can_only_narrow_not_inject_candidates_or_due_items():
         rotation_key="2026-08-14",
     )
 
-    decision, due, runtime = runtime_scope(
+    decision, reviews, due, runtime = runtime_scope(
         selection,
         requested_symbols=["600001", "600003", "999999"],
         pending_symbols=["600002", "888888"],
     )
 
     assert "999999" not in decision
+    assert reviews == ()
     assert "999999" not in runtime
     assert "888888" not in due
     assert "888888" not in runtime
@@ -40,15 +45,65 @@ def test_due_historical_decision_survives_new_rotation_when_in_execution_scope()
     )
     old_due = next(symbol for symbol in ["600001", "600002", "600003", "600004"] if symbol not in selection.symbols)
 
-    decision, due, runtime = runtime_scope(
+    decision, reviews, due, runtime = runtime_scope(
         selection,
         requested_symbols=[*selection.symbols, old_due],
         pending_symbols=[old_due],
     )
 
     assert old_due not in decision
+    assert reviews == ()
     assert due == (old_due,)
     assert old_due in runtime
+
+
+def test_due_review_is_a_decision_obligation_not_an_execution_obligation():
+    selection = select_candidates(["600001", "600002"], limit=1, rotation_key="2026-08-14")
+    review_symbol = next(symbol for symbol in ["600001", "600002"] if symbol not in selection.symbols)
+
+    decision, reviews, due, runtime = runtime_scope(
+        selection,
+        requested_symbols=[review_symbol],
+        pending_symbols=(),
+        review_symbols=[review_symbol],
+    )
+
+    assert decision == (review_symbol,)
+    assert reviews == (review_symbol,)
+    assert due == ()
+    assert runtime == (review_symbol,)
+
+
+def test_due_review_queue_uses_only_latest_current_formal_report(tmp_path):
+    from app.storage import PortfolioStore
+
+    store = PortfolioStore(tmp_path / "runtime-review.db")
+    current = {
+        "policy_version": "policy-v2",
+        "candidate_selection_version": config.CANDIDATE_SELECTION_VERSION,
+        "audit_versions": _execution_audit(),
+        "decision_memory": {"review_after": "2026-08-17T09:00:00+08:00"},
+        "evidence": [], "action_candidates": [], "operation_items": [],
+    }
+    newer_not_due = {
+        **current,
+        "decision_memory": {"review_after": "2026-08-19T09:00:00+08:00"},
+    }
+    with store._connect() as connection:
+        connection.executemany(
+            "INSERT INTO decision_reports VALUES (?,?,?,?,?,?)",
+            [
+                ("due", "ctx", "600001", "hash", json.dumps(current), "2026-08-17T08:00:00+08:00"),
+                ("newer", "ctx", "600001", "hash", json.dumps(newer_not_due), "2026-08-18T08:00:00+08:00"),
+                ("review", "ctx", "600002", "hash", json.dumps(current), "2026-08-17T08:00:00+08:00"),
+            ],
+        )
+
+    assert due_current_version_review_symbols(
+        store,
+        policy_version="policy-v2",
+        now=datetime.fromisoformat("2026-08-18T10:00:00+08:00"),
+    ) == ("600002",)
 
 
 def test_report_reuse_requires_same_candidate_policy_and_execution_lineage():
