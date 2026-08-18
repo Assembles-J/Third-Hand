@@ -13,21 +13,24 @@ from types import ModuleType
 def load_legacy_application() -> ModuleType:
     """Install governance, load legacy shell, then attach v2-native routers.
 
-    Import ordering is part of the production contract: daily-history policy and
-    compatibility hooks must wrap PortfolioStore/provider classes before the
-    legacy module constructs its singletons. Paper runtime governance then
-    patches that exact module object. Adaptive scheduling narrows cadence/scope
-    without changing policy authority. Session-aware data scheduling narrows when
-    provider-backed refreshes may run. Corporate-event policy then wraps the
-    already-local-first derived refresh so a bounded cached event calendar is
-    available before formal paper decisions. Finally, additive non-conflicting
-    v2 routes receive dependencies from bootstrap.
+    Import ordering is part of the production contract: daily-history policy,
+    compatibility hooks, and legacy synthetic instrument normalization must wrap
+    PortfolioStore/provider classes before the legacy module constructs its
+    singletons. Paper runtime governance then patches that exact module object.
+    Adaptive scheduling narrows cadence/scope without changing policy authority.
+    Session-aware data scheduling narrows when provider-backed refreshes may run.
+    Corporate-event policy then wraps the already-local-first derived refresh so
+    a bounded cached event calendar is available before formal paper decisions.
+    Finally, additive non-conflicting v2 routes receive dependencies from
+    bootstrap.
     """
     from app.daily_history_policy import install as install_daily_history_policy
     from app.daily_history_compat import install as install_daily_history_compat
+    from app.instrument_metadata_policy import install as install_instrument_metadata_policy
 
     install_daily_history_policy()
     install_daily_history_compat()
+    install_instrument_metadata_policy()
 
     from app.legacy import application_legacy as application
     from app.paper_runtime_integration import install as install_paper_runtime_governance
