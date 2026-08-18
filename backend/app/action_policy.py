@@ -22,11 +22,16 @@ class ActionPolicyEngine:
             return (self._candidate("BLOCKED", 100, (), (), ("data_quality.blocked",), context.data_quality.missing_fields),)
 
         candidates: list[ActionCandidate] = []
-        # REDUCE is a position-management verb.  Risk evidence may block a new
+        consistency_conflicted = any(
+            warning.startswith("consistency.")
+            for warning in context.data_quality.warnings
+        )
+        # REDUCE is a position-management verb. Risk evidence may block a new
         # position, but an empty account can never formally reduce something it
-        # does not own.  This is a semantic correctness guard, not a looser OPEN
-        # threshold.
-        if context.position and self._reduce_ids(ids):
+        # does not own. Cross-source contradictions also suppress executable
+        # position changes: a stale quote must not manufacture a position-cap
+        # breach against newer daily/technical inputs.
+        if context.position and not consistency_conflicted and self._reduce_ids(ids):
             support = tuple(sorted(self._reduce_ids(ids)))
             candidates.append(self._candidate("REDUCE", 85, support, (), ("position_or_risk.reduce",)))
         elif self._add_allowed(context, ids):
@@ -47,9 +52,9 @@ class ActionPolicyEngine:
     def open_gate_audit(self, context: DecisionContext, evidence: tuple[EvidenceItem, ...]) -> dict[str, object]:
         """Explain the existing OPEN rule without changing or scoring it.
 
-        The audit is intentionally deterministic and POLICY-only.  It answers
+        The audit is intentionally deterministic and POLICY-only. It answers
         whether an empty-account candidate *could* OPEN under the frozen formal
-        rule, and if not, which exact precondition is missing.  It is diagnostics,
+        rule, and if not, which exact precondition is missing. It is diagnostics,
         not a new opportunity score and not AI authority.
         """
         policy_ids = {
@@ -141,7 +146,7 @@ class ActionPolicyEngine:
         return bool(ActionPolicyEngine._positive_ids(ids))
 
     def _open_allowed(self, context: DecisionContext, ids: set[str]) -> bool:
-        # Keep the formal predicate in lock-step with the audit checks.  The
+        # Keep the formal predicate in lock-step with the audit checks. The
         # synthetic EvidenceItems are unnecessary here, so retain the compact
         # predicate while tests assert parity with open_gate_audit.
         if self._gate(context, "OPEN") != "allowed":
