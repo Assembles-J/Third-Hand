@@ -13,7 +13,7 @@ The current repository already has strong production invariants around DataHub q
 |---|---|---|
 | Data, identity, events and canonical price/time | Complete | Instrument metadata, market-scoped regime, canonical snapshot and event gates are formal inputs. |
 | Atomic evidence and deterministic aggregation | Complete | Fact/availability/conflict provenance, point-in-time Company Intelligence, versioned aggregation and semantic validation are persisted. |
-| Decision semantics | Partial | Entry/Position actions and formal action authority exist. High-confidence deterministic adverse research may veto new BUY/ADD risk only; it never upgrades an action or creates REDUCE/EXIT. Weekly/60m/15m/5m technical inputs remain explicitly unavailable. |
+| Decision semantics | Partial | Entry/Position actions and formal action authority exist. High-confidence deterministic adverse research may veto new BUY/ADD risk only; it never upgrades an action or creates REDUCE/EXIT. A traceable weekly snapshot is aggregated from completed daily bars; 60m/15m/5m inputs remain explicitly unavailable and ActionPolicy remains daily-only. |
 | Market/execution adapters | Partial | CN lot/T+1/fee and PositionLot FIFO are formal. HK Stock Connect declares HKD trading with CNY settlement and requires an observed directed HKD→CNY rate in the DecisionContext. Exact broker receipts are persisted as audit-only settlement facts; HK/US remain blocked until their broker fee schedules and multi-currency cash ledger exist. |
 | Decision continuity | Complete | Prior decision, episode, material change, cooldown/review fields and position age are persisted. ExecutionPrecheck rejects fills before `cooldown_until`; the deterministic runtime promotes `review_after` into a separately audited decision-refresh obligation. |
 | Model policy and audit | Complete for the configured DeepSeek provider | Atomic prompt projection, Flash/Pro routing, schema/semantic checks, hashes, usage and retry traces are persisted. A generic multi-provider capability registry is not implemented. |
@@ -289,6 +289,14 @@ Timeframe authority:
 - 60m = position management
 - 15m/5m = execution timing
 - realtime = hard risk/execution trigger only
+
+Completed daily bars now produce a deterministic weekly 4/12-SMA snapshot with
+its own source hash. It is visible in the frozen context and timeframe audit,
+but remains research/strategic input only; the formal ActionPolicy still uses
+the daily technical snapshot until an explicit multi-timeframe action policy is
+versioned. Accordingly, the weekly snapshot is excluded from the current
+daily-only formal `input_hash`; its separate source hash preserves auditability
+without allowing asynchronous history maintenance to alter job identity.
 
 Technical anchor lifecycle/rebase is deferred until a strategy-specific contract is defined.
 

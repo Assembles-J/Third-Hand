@@ -13,14 +13,14 @@ from app.decision_models import (
     FxRateSnapshot,
     InstrumentSnapshot, MarketFlowSnapshot, MarketRegimeSnapshot, PersonalRuleSnapshot,
     PositionSnapshot, QuoteSnapshot, RelativeStrengthSnapshot, RiskSnapshot,
-    TechnicalSnapshot, TradePlanSnapshot,
+    TechnicalSnapshot, TimeframeTechnicalSnapshot, TradePlanSnapshot,
 )
 from app.market_regime import regime_matches_market
 from app.time_utils import beijing_now
 from app.trading_calendar import TradingCalendarService
 
 
-CONTEXT_SCHEMA_VERSION = "context-v2-fx-settlement"
+CONTEXT_SCHEMA_VERSION = "context-v3-weekly-timeframe"
 
 
 def _canonical_hash(value: object) -> str:
@@ -135,7 +135,8 @@ class DecisionContextBuilder:
             "symbol": symbol, "name": str(holding["name"]) if holding else str(research_target["name"]) if research_target else symbol,
             "decision_horizon": str(plan.get("horizon", "swing")) if plan else "swing",
             "account": account, "fx_rate": fx_rate, "position": position, "quote": self._quote(quote),
-            "daily_bars": self._daily_bars(bars), "technical": technical, "risk": self._risk(risk),
+            "daily_bars": self._daily_bars(bars), "technical": technical,
+            "timeframe_technicals": self._timeframe_technicals(bars), "risk": self._risk(risk),
             "market_regime": market_regime, "market_flow": market_flow, "relative_strength": relative_strength, "events": events,
             "trade_plan": self._plan(plan, symbol), "personal_rule": self._rule(rule),
             "instrument": instrument_snapshot, "data_quality": quality,
@@ -143,7 +144,16 @@ class DecisionContextBuilder:
         }
         # Reports retain this hash, allowing later comparisons to distinguish a
         # changed conclusion from a changed input snapshot.
-        input_hash = _canonical_hash({key: value.model_dump(mode="json") if hasattr(value, "model_dump") else value for key, value in payload.items()})
+        # Weekly aggregation is frozen and independently source-hashed for
+        # strategic research/audit, but is not an ActionPolicy input yet. Keep
+        # it out of the current daily-only formal hash so asynchronous history
+        # maintenance cannot break decision-job idempotency before a versioned
+        # multi-timeframe action policy promotes it.
+        input_hash = _canonical_hash({
+            key: value.model_dump(mode="json") if hasattr(value, "model_dump") else value
+            for key, value in payload.items()
+            if key != "timeframe_technicals"
+        })
         return DecisionContext(
             context_id=str(uuid4()), generated_at=analysis_at, input_hash=input_hash, **payload,
         )
@@ -224,6 +234,41 @@ class DecisionContextBuilder:
             return TechnicalSnapshot(**{key: item.get(key) for key in TechnicalSnapshot.model_fields})
         except Exception:
             return None
+
+    @staticmethod
+    def _timeframe_technicals(bars: list[dict[str, object]]) -> tuple[TimeframeTechnicalSnapshot, ...]:
+        """Aggregate completed daily bars into a traceable weekly technical view.
+
+        The weekly view is available for strategic research/timeframe audit only.
+        It does not change the current daily ActionPolicy until a separately
+        versioned multi-timeframe decision policy is approved.
+        """
+        weekly_closes: dict[tuple[int, int], tuple[str, float]] = {}
+        for bar in bars:
+            try:
+                trading_date = str(bar["trading_date"])
+                date_value = datetime.fromisoformat(trading_date).date()
+                close = float(bar["close"])
+            except (KeyError, TypeError, ValueError):
+                continue
+            year, week, _ = date_value.isocalendar()
+            weekly_closes[(year, week)] = (trading_date, close)
+        values = tuple(weekly_closes[key] for key in sorted(weekly_closes))
+        if len(values) < 12:
+            return ()
+        closes = [item[1] for item in values]
+        fast_sma = sum(closes[-4:]) / 4
+        slow_sma = sum(closes[-12:]) / 12
+        trend = "up" if fast_sma > slow_sma else "down" if fast_sma < slow_sma else "flat"
+        source_material = [
+            {"week": key, "as_of": weekly_closes[key][0], "close": weekly_closes[key][1]}
+            for key in sorted(weekly_closes)
+        ]
+        return (TimeframeTechnicalSnapshot(
+            timeframe="weekly", as_of=values[-1][0], sample_count=len(values), close=closes[-1],
+            fast_sma=round(fast_sma, 6), slow_sma=round(slow_sma, 6), trend=trend,
+            source="daily_price_cache:weekly_resample_v1", source_hash=_canonical_hash(source_material),
+        ),)
 
     def _fx_rate(self, instrument: InstrumentSnapshot | None, account: AccountSnapshot) -> FxRateSnapshot | None:
         if instrument is None or instrument.currency == account.account_currency:

@@ -87,6 +87,20 @@ class TechnicalSnapshot(DecisionModel):
     drawdown_60d_percent: float
 
 
+class TimeframeTechnicalSnapshot(DecisionModel):
+    """Deterministic technical state for an explicitly aggregated timeframe."""
+
+    timeframe: Literal["weekly"]
+    as_of: str
+    sample_count: int = Field(ge=1)
+    close: float
+    fast_sma: float
+    slow_sma: float
+    trend: Literal["up", "down", "flat"]
+    source: str
+    source_hash: str
+
+
 class RiskSnapshot(DecisionModel):
     as_of: str | None = None
     sample_count: int | None = None
@@ -395,7 +409,7 @@ class DecisionReport(DecisionModel):
     sizing: PositionSizingResult | None = None
     policy_version: str
     prompt_version: str | None = None
-    schema_version: str = "context-v2-fx-settlement"
+    schema_version: str = "context-v3-weekly-timeframe"
     audit_versions: dict[str, str] = {}
     candidate_selection_version: str | None = None
     candidate_pool_hash: str | None = None
@@ -421,6 +435,7 @@ class DecisionContext(DecisionModel):
     quote: QuoteSnapshot | None
     daily_bars: DailyBarSummary
     technical: TechnicalSnapshot | None
+    timeframe_technicals: tuple[TimeframeTechnicalSnapshot, ...] = ()
     risk: RiskSnapshot | None
     market_regime: MarketRegimeSnapshot | None
     market_flow: MarketFlowSnapshot | None = None

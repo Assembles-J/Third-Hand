@@ -5,7 +5,8 @@
 > contract. All other files formerly under `docs/` are historical and removed.
 >
 > **Completed:** Phases 1–3, Phase 6, Phase 7 and Phase 8. **Active gaps:** Phase 4
-> additional timeframe ingestion; Phase 5 HK/US fee + multi-currency FX cash
+> intraday 60m/15m/5m ingestion and a versioned multi-timeframe action policy;
+> Phase 5 HK/US fee + multi-currency FX cash
 > ledger and broker fee schedules.
 > No gap is hidden behind a fallback or delegated to an LLM.
 
@@ -104,7 +105,7 @@ Legend:
 
 1. The former held `NO_TRADE -> REDUCE` behavior is removed from formal semantics; held WATCH resolves to HOLD.
 2. Market regime, lot and settlement selection are market-scoped. HK Stock Connect explicitly uses HKD trading and CNY settlement, with a directed observed HKD→CNY context quote. Exact broker receipts preserve actual settlement/fee facts without inventing a future fee formula; CN remains executable, while HK/US stay blocked until their broker fee and multi-currency cash-ledger rules are configured.
-3. Atomic Evidence and ResearchAssessment are deterministic and persisted. The DecisionArbiter consumes only high-confidence ADVERSE research as a new-risk veto; it never lets research upgrade an action or produce REDUCE/EXIT. Additional technical timeframe ingestion remains the Phase 4 gap.
+3. Atomic Evidence and ResearchAssessment are deterministic and persisted. The DecisionArbiter consumes only high-confidence ADVERSE research as a new-risk veto; it never lets research upgrade an action or produce REDUCE/EXIT. Completed daily bars also create a frozen weekly technical snapshot; intraday 60m/15m/5m ingestion and its action policy remain the Phase 4 gap.
 4. Model policy/audit is complete for the configured DeepSeek client, while a generic provider-capability registry remains out of scope.
 5. Feedback is immutable audit data and has no policy/sizing/model-routing write path.
 6. Repository quality, time and freeze invariants remain the migration anchors.
@@ -193,6 +194,8 @@ Acceptance:
 - every hard gate has reason codes
 - high-confidence ADVERSE research may downgrade BUY to WAIT or ADD to HOLD,
   but cannot create or upgrade any action
+- weekly technical state is hash-traceable but cannot alter the daily ActionPolicy
+  before a separately versioned multi-timeframe action policy is approved
 
 ### Phase 5 — Market/execution adapters
 Implement:
