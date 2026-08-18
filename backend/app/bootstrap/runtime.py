@@ -20,9 +20,10 @@ def load_legacy_application() -> ModuleType:
     Adaptive scheduling narrows cadence/scope without changing policy authority.
     Session-aware data scheduling narrows when provider-backed refreshes may run.
     Corporate-event policy wraps the already-local-first derived refresh. Finally,
-    the Phase-2 Atomic Evidence runtime adds persisted Company Intelligence only
-    to the shadow builder that runs after formal candidates are frozen; it does
-    not alter DecisionContext, AI prompts or execution inputs.
+    v2 research services are registered before the Mandatory Acquisition preflight
+    is installed, so formal Decision entrypoints can convert LOCAL_MISS/stale
+    coverage into bounded fetch attempts without moving remote I/O into
+    DecisionContextBuilder, Evidence, AI, Arbiter or execution policy.
     """
     from app.daily_history_policy import install as install_daily_history_policy
     from app.daily_history_compat import install as install_daily_history_compat
@@ -39,6 +40,7 @@ def load_legacy_application() -> ModuleType:
     from app.corporate_events import install as install_corporate_event_policy
     from app.atomic_evidence_runtime import install as install_atomic_evidence_runtime
     from app.bootstrap.v2_routes import register_v2_routes
+    from app.mandatory_acquisition import install as install_mandatory_acquisition
 
     install_paper_runtime_governance(application)
     install_adaptive_paper_runtime(application)
@@ -46,4 +48,5 @@ def load_legacy_application() -> ModuleType:
     install_corporate_event_policy(application)
     install_atomic_evidence_runtime(application)
     register_v2_routes(application)
+    install_mandatory_acquisition(application)
     return application
