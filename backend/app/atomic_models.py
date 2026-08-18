@@ -42,6 +42,8 @@ class AtomicFactRecord(AtomicModel):
     period_end: str | None = None
     comparison_type: str | None = None
     source_evidence_id: str | None = None
+    source_name: str | None = None
+    source_reference: str | None = None
     source_timestamp: str | None = None
     observed_at: datetime
     freshness_status: FreshnessStatus
