@@ -5,6 +5,7 @@ import logging
 from uuid import uuid4
 
 from app import decision_config as config
+from app.atomic_evidence import AtomicEvidenceSnapshotBuilder
 from app.canonical_snapshot import build_canonical_market_snapshot
 from app.decision_ai import DecisionAiOutcome
 from app.decision_models import DecisionReport, OperationItem
@@ -15,13 +16,27 @@ logger = logging.getLogger(__name__)
 
 
 class DecisionOrchestrator:
-    def __init__(self, evidence_engine, policy_engine, sizing_engine, ai_service, guard) -> None:
+    def __init__(self, evidence_engine, policy_engine, sizing_engine, ai_service, guard, atomic_evidence_builder=None) -> None:
         self.evidence_engine, self.policy_engine = evidence_engine, policy_engine
         self.sizing_engine, self.ai_service, self.guard = sizing_engine, ai_service, guard
+        self.atomic_evidence_builder = atomic_evidence_builder or AtomicEvidenceSnapshotBuilder()
 
     def generate(self, context, *, candidate_audit: dict[str, object] | None = None) -> DecisionReport:
         evidence = self.evidence_engine.build(context)
+        # Formal policy consumes only the existing EvidenceItem pipeline.  Phase-2
+        # Atomic Evidence is deliberately built *after* candidates are frozen, so
+        # it cannot change the current action, gates, sizing inputs or AI prompt.
         candidates = self.policy_engine.evaluate(context, evidence)
+        atomic_evidence_shadow = self.atomic_evidence_builder.build(context, evidence)
+        logger.info(
+            "Atomic evidence shadow context_id=%s symbol=%s snapshot_hash=%s fact_count=%s availability_count=%s conflict_count=%s",
+            context.context_id,
+            context.symbol,
+            atomic_evidence_shadow.snapshot_hash,
+            len(atomic_evidence_shadow.facts),
+            len(atomic_evidence_shadow.availability),
+            len(atomic_evidence_shadow.conflicts),
+        )
         canonical = self._canonical_market(context)
         if config.DECISION_AI_ENABLED:
             logger.info(
@@ -60,7 +75,7 @@ class DecisionOrchestrator:
             decision_id=str(uuid4()), context_id=context.context_id, symbol=context.symbol,
             name=context.name, generated_at=beijing_now(), status=status, action=action,
             summary=self._summary(action, candidates[0].blocked_reasons), data_quality=context.data_quality,
-            evidence=evidence, action_candidates=candidates,
+            evidence=evidence, atomic_evidence_shadow=atomic_evidence_shadow, action_candidates=candidates,
             operation_items=self._operation_items(context, action, candidates[0].blocked_reasons, sizing, canonical.display_price),
             ai_assessment=assessment, ai_status=ai_outcome.status, ai_error_code=ai_outcome.error_code,
             ai_shadow_action=ai_shadow_action,
