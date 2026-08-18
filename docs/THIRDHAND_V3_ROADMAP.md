@@ -173,22 +173,21 @@ scheduling observable in the paper runtime.
 
 Add DecisionMemory, episode id, material-change detector, cooldown/review-after and prior-decision references.
 
-### Phase 7 — Model policy and audit — ACTIVE
+### Phase 7 — Model policy and audit — COMPLETE
 
 ModelPolicy now selects Flash/default or Pro escalation from deterministic Atomic
 Evidence complexity only. The AI receives a compact atomic evidence projection,
 while every run records prompt/evidence/content hashes, tier/model/thinking
-settings, usage, validation result and repair retry path. AI output remains
-explanatory and cannot mutate formal actions. Remaining: wire provider-internal
-transport retries into the same audit record when the provider exposes them.
+settings, usage, validation result, repair retry path and provider retry trace.
+AI output remains explanatory and cannot mutate formal actions.
 
-### Phase 8 — Feedback — ACTIVE
+### Phase 8 — Feedback — COMPLETE
 
 FeedbackEvent now links an exact frozen decision (and, when present, its matching
 paper execution) to user action, actual outcome, hypothetical outcome and review
 label. The storage API verifies the decision/execution lineage, provides a
 read-only policy-version evaluation export, and always marks events as
-`automatic_tuning: false`. Remaining: add UI/API review workflows.
+`automatic_tuning: false`.
 
 ## 4. Migration guardrails
 

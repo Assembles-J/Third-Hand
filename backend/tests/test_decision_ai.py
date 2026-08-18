@@ -48,6 +48,8 @@ def test_ai_service_accepts_only_known_evidence_and_policy_candidate():
     assert len(metadata["prompt_hash"]) == 64
     assert len(metadata["evidence_hash"]) == 64
     assert metadata["validation"] == "schema_and_semantic_passed"
+    assert metadata["provider_attempt_count"] == 1
+    assert metadata["provider_retry_codes"] == []
 
 
 def test_ai_service_rejects_unknown_evidence_and_preserves_rule_fallback():

@@ -85,6 +85,8 @@ class LlmResponse(BaseModel):
     finish_reason: str | None = None
     usage: LlmUsage = Field(default_factory=LlmUsage)
     latency_ms: int
+    attempt_count: int = 1
+    retry_codes: tuple[str, ...] = ()
 
 
 class LlmClientError(RuntimeError):
@@ -142,14 +144,16 @@ class DeepSeekClient:
 
         selected_model = model or self.settings.model
         started_at = self._monotonic()
+        retry_codes: list[str] = []
         try:
             for attempt in range(self.settings.max_retries + 1):
                 try:
                     result = self._request(messages, selected_model, max_tokens, thinking, started_at)
                     self._record_success()
-                    return result
+                    return result.model_copy(update={"attempt_count": attempt + 1, "retry_codes": tuple(retry_codes)})
                 except LlmClientError as error:
                     if not error.retryable or attempt >= self.settings.max_retries:
+                        error.retry_codes = tuple(retry_codes)  # type: ignore[attr-defined]
                         self._record_failure()
                         logger.warning(
                             "DeepSeek 请求失败 model=%s code=%s status=%s attempts=%s",
@@ -159,6 +163,7 @@ class DeepSeekClient:
                             attempt + 1,
                         )
                         raise
+                    retry_codes.append(error.code)
                     delay = self.settings.retry_base_seconds * (2 ** attempt)
                     logger.warning(
                         "DeepSeek 请求重试 model=%s code=%s status=%s attempt=%s delay_seconds=%.2f",

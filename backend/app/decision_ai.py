@@ -61,7 +61,7 @@ class DecisionAiService:
                 assessment = AiResearchAssessment.model_validate_json(_json_object(response.content))
                 assessment = self._canonicalize_references(assessment, evidence)
                 self._validate_references(assessment, evidence, candidates)
-                self.store.save_decision_ai_run({**run, "status": "succeeded", "error_code": None, "model": response.model, "payload": assessment.model_dump(mode="json"), "metadata": {**self._audit_metadata(selection, evidence_hash=evidence_hash, retry_path=tuple(retry_path)), "prompt_hash": prompt_hash, "content_hash": _hash_json(assessment.model_dump(mode="json")), "response_id": response.response_id, "prompt_tokens": response.usage.prompt_tokens, "completion_tokens": response.usage.completion_tokens, "total_tokens": response.usage.total_tokens, "latency_ms": response.latency_ms, "validation": "schema_and_semantic_passed"}})
+                self.store.save_decision_ai_run({**run, "status": "succeeded", "error_code": None, "model": response.model, "payload": assessment.model_dump(mode="json"), "metadata": {**self._audit_metadata(selection, evidence_hash=evidence_hash, retry_path=tuple(retry_path)), "prompt_hash": prompt_hash, "content_hash": _hash_json(assessment.model_dump(mode="json")), "response_id": response.response_id, "prompt_tokens": response.usage.prompt_tokens, "completion_tokens": response.usage.completion_tokens, "total_tokens": response.usage.total_tokens, "latency_ms": response.latency_ms, "provider_attempt_count": response.attempt_count, "provider_retry_codes": list(response.retry_codes), "validation": "schema_and_semantic_passed"}})
                 logger.info("Decision AI succeeded context_id=%s symbol=%s model=%s latency_ms=%s tokens=%s", context.context_id, context.symbol, response.model, response.latency_ms, response.usage.total_tokens)
                 return DecisionAiOutcome(assessment, "succeeded", model=response.model)
             except (LlmClientError, ValidationError, ValueError, json.JSONDecodeError) as error:
@@ -74,7 +74,7 @@ class DecisionAiService:
                 status_code = error.status_code if isinstance(error, LlmClientError) else None
                 model = getattr(getattr(self.client, "settings", None), "model", None)
                 retry_path.append({"attempt": attempt + 1, "reason": code, "error_type": type(error).__name__})
-                self.store.save_decision_ai_run({**run, "status": "failed", "error_code": code, "payload": {}, "metadata": {**self._audit_metadata(selection, evidence_hash=evidence_hash, retry_path=tuple(retry_path)), "prompt_hash": prompt_hash, "model": model, "status_code": status_code, "validation": "failed"}})
+                self.store.save_decision_ai_run({**run, "status": "failed", "error_code": code, "payload": {}, "metadata": {**self._audit_metadata(selection, evidence_hash=evidence_hash, retry_path=tuple(retry_path)), "prompt_hash": prompt_hash, "model": model, "status_code": status_code, "provider_retry_codes": list(getattr(error, "retry_codes", ())), "validation": "failed"}})
                 logger.warning("Decision AI failed context_id=%s symbol=%s model=%s code=%s status=%s error_type=%s", context.context_id, context.symbol, model, code, status_code, type(error).__name__)
                 return DecisionAiOutcome(None, "failed", code, model)
 
