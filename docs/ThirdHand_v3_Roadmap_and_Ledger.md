@@ -5,9 +5,8 @@
 > contract. All other files formerly under `docs/` are historical and removed.
 >
 > **Completed:** Phases 1–3, Phase 6, Phase 7 and Phase 8. **Active gaps:** Phase 4
-> additional timeframe ingestion and ResearchAssessment-to-arbiter promotion;
-> Phase 5 HK/US fee + multi-currency FX ledger. No gap is hidden behind a
-> fallback or delegated to an LLM.
+> additional timeframe ingestion; Phase 5 HK/US fee + multi-currency FX ledger.
+> No gap is hidden behind a fallback or delegated to an LLM.
 
 ## Current implementation decision
 
@@ -18,10 +17,11 @@ DecisionContext -> EvidenceEngine -> ActionPolicy -> DecisionArbiter
                 -> DecisionContinuity -> formal_action -> ExecutionPrecheck
 ```
 
-Atomic Evidence, ResearchAssessment and AI explanations are persisted and
-audited beside this path. Research is not silently promoted into an action,
-while AI never receives authority over price/time, quality, market rules,
-sellable quantity, hard gates, sizing or formal action.
+Atomic Evidence and AI explanations are persisted and audited beside this path.
+`ResearchAssessment` is an explicit, asymmetric arbiter input: high-confidence
+ADVERSE research can veto only new BUY/ADD risk. It cannot upgrade an action or
+create REDUCE/EXIT. AI never receives authority over price/time, quality,
+market rules, sellable quantity, hard gates, sizing or formal action.
 
 ## A. Consolidated ledger disposition
 
@@ -103,7 +103,7 @@ Legend:
 
 1. The former held `NO_TRADE -> REDUCE` behavior is removed from formal semantics; held WATCH resolves to HOLD.
 2. Market regime, lot and settlement selection are market-scoped. CN remains executable; HK/US are intentionally blocked, not defaulted to CN behavior.
-3. Atomic Evidence and ResearchAssessment are deterministic and persisted, but not yet DecisionArbiter inputs. This is an explicit Phase 4 promotion gap, not an accidental omission.
+3. Atomic Evidence and ResearchAssessment are deterministic and persisted. The DecisionArbiter consumes only high-confidence ADVERSE research as a new-risk veto; it never lets research upgrade an action or produce REDUCE/EXIT. Additional technical timeframe ingestion remains the Phase 4 gap.
 4. Model policy/audit is complete for the configured DeepSeek client, while a generic provider-capability registry remains out of scope.
 5. Feedback is immutable audit data and has no policy/sizing/model-routing write path.
 6. Repository quality, time and freeze invariants remain the migration anchors.
@@ -190,6 +190,8 @@ Acceptance:
 - held-position actions use HOLD/ADD/REDUCE/EXIT only
 - entry actions use BUY/WAIT/BLOCKED only
 - every hard gate has reason codes
+- high-confidence ADVERSE research may downgrade BUY to WAIT or ADD to HOLD,
+  but cannot create or upgrade any action
 
 ### Phase 5 — Market/execution adapters
 Implement:

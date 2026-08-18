@@ -9,14 +9,17 @@ EVIDENCE_VERSION = "evidence-v3-canonical-market-inputs"
 # Phase 2 runs this compact fact representation beside current evidence. v2 adds
 # point-in-time persisted Company Intelligence facts without formal authority.
 ATOMIC_EVIDENCE_VERSION = "atomic-evidence-shadow-v2-company-research"
-# Phase 3 makes evidence aggregation reproducible and auditable.  These policy
-# versions never grant a research assessment action authority by themselves.
+# Phase 3 makes evidence aggregation reproducible and auditable. Phase 4 may
+# use only its deterministic adverse new-risk veto; research never upgrades an
+# action or manufactures an exit/reduce recommendation.
 DIMENSION_AGGREGATION_POLICY_VERSION = "dimension-aggregation-v1-fact-polarity"
 FACT_POLARITY_POLICY_VERSION = "fact-polarity-v1-atomic-record-authority"
 FUNDAMENTAL_AGGREGATION_POLICY_VERSION = "fundamental-aggregation-v1-dimension-consensus"
 RESEARCH_AGGREGATION_POLICY_VERSION = "research-aggregation-v1-domain-consensus"
 SEMANTIC_INVARIANT_VALIDATOR_VERSION = "research-semantic-invariants-v1"
-DECISION_ARBITER_POLICY_VERSION = "decision-arbiter-v3-state-and-event-gates"
+DECISION_ARBITER_POLICY_VERSION = "decision-arbiter-v4-adverse-research-new-risk-veto"
+RESEARCH_DECISION_POLICY_VERSION = "research-decision-v1-adverse-new-risk-veto"
+RESEARCH_ADVERSE_MIN_EVIDENCE_CONFIDENCE = 0.60
 TIMEFRAME_AUTHORITY_POLICY_VERSION = "timeframe-authority-v1-daily-only"
 DECISION_CONTINUITY_POLICY_VERSION = "decision-continuity-v2-runtime-cooldown-and-review"
 MODEL_POLICY_VERSION = "model-policy-v1-atomic-complexity-routing"
@@ -78,6 +81,7 @@ def audit_version_snapshot() -> dict[str, str]:
         "research_aggregation_policy_version": RESEARCH_AGGREGATION_POLICY_VERSION,
         "semantic_invariant_validator_version": SEMANTIC_INVARIANT_VALIDATOR_VERSION,
         "decision_arbiter_policy_version": DECISION_ARBITER_POLICY_VERSION,
+        "research_decision_policy_version": RESEARCH_DECISION_POLICY_VERSION,
         "timeframe_authority_policy_version": TIMEFRAME_AUTHORITY_POLICY_VERSION,
         "decision_continuity_policy_version": DECISION_CONTINUITY_POLICY_VERSION,
         "model_policy_version": MODEL_POLICY_VERSION,

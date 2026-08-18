@@ -42,7 +42,11 @@ class DecisionOrchestrator:
         research_validation = self.research_validator.validate(atomic_evidence_shadow, research_assessment)
         if not research_validation.valid:
             raise ValueError(f"invalid deterministic research assessment: {research_validation.violations}")
-        semantic_decision = self.decision_arbiter.arbitrate(context, candidates)
+        semantic_decision = self.decision_arbiter.arbitrate(
+            context,
+            candidates,
+            research_assessment=research_assessment,
+        )
         prior_report = self.prior_report_loader(context.symbol) if self.prior_report_loader else None
         formal_action, decision_memory = self.continuity_policy.assess(context, semantic_decision.action, prior_report)
         if formal_action != semantic_decision.action:

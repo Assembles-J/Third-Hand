@@ -13,7 +13,7 @@ The current repository already has strong production invariants around DataHub q
 |---|---|---|
 | Data, identity, events and canonical price/time | Complete | Instrument metadata, market-scoped regime, canonical snapshot and event gates are formal inputs. |
 | Atomic evidence and deterministic aggregation | Complete | Fact/availability/conflict provenance, point-in-time Company Intelligence, versioned aggregation and semantic validation are persisted. |
-| Decision semantics | Partial | Entry/Position actions and formal action authority exist; weekly/60m/15m/5m technical inputs are explicitly unavailable, and `ResearchAssessment` is still audit/research authority rather than an arbiter input. |
+| Decision semantics | Partial | Entry/Position actions and formal action authority exist. High-confidence deterministic adverse research may veto new BUY/ADD risk only; it never upgrades an action or creates REDUCE/EXIT. Weekly/60m/15m/5m technical inputs remain explicitly unavailable. |
 | Market/execution adapters | Partial | CN lot/T+1/fee and PositionLot FIFO are formal; HK/US are safely blocked until their fee schedules and a multi-currency FX ledger exist. |
 | Decision continuity | Complete | Prior decision, episode, material change, cooldown/review fields and position age are persisted. ExecutionPrecheck rejects fills before `cooldown_until`; the deterministic runtime promotes `review_after` into a separately audited decision-refresh obligation. |
 | Model policy and audit | Complete for the configured DeepSeek provider | Atomic prompt projection, Flash/Pro routing, schema/semantic checks, hashes, usage and retry traces are persisted. A generic multi-provider capability registry is not implemented. |
@@ -23,7 +23,9 @@ The target diagram below is deliberately broader than the current formal action
 path. The current path is `DecisionContext -> EvidenceEngine -> ActionPolicy ->
 DecisionArbiter -> DecisionContinuity -> formal_action`; Atomic Evidence,
 ResearchAssessment and AI are deterministic/auditable research inputs beside
-that path. They do not silently gain action authority.
+that path. `ResearchAssessment` has one explicit, bounded authority: sufficiently
+evidenced ADVERSE research can veto a new BUY/ADD risk. It cannot upgrade an
+action, create REDUCE/EXIT, or bypass a hard gate; AI has no formal action path.
 
 ## 1. Existing foundations to preserve
 
@@ -173,6 +175,11 @@ Fields:
 
 ### Decision semantics
 Research bias is not an action.
+
+The DecisionArbiter consumes deterministic research only as an asymmetric
+new-risk veto: ADVERSE research at the configured evidence-confidence threshold
+may turn BUY into WAIT or ADD into HOLD. SUPPORTIVE research never creates or
+upgrades an action, and research never creates REDUCE or EXIT.
 
 Entry actions:
 - BUY

@@ -21,6 +21,33 @@ def test_entry_semantics_map_open_to_buy_and_watch_to_wait():
     assert "legacy_candidate:WATCH" in wait.reason_codes
 
 
+def test_adverse_high_confidence_research_can_veto_new_entry_risk_only():
+    arbiter = DecisionArbiter()
+    assessment = SimpleNamespace(research_bias="ADVERSE", evidence_confidence=.8)
+
+    decision = arbiter.arbitrate(SimpleNamespace(position=None), (_candidate("OPEN"),), assessment)
+
+    assert decision.action == "WAIT"
+    assert decision.next_state == "FLAT"
+    assert "research.adverse_new_risk_veto" in decision.reason_codes
+
+
+def test_adverse_research_cannot_create_or_upgrade_a_position_action():
+    arbiter = DecisionArbiter()
+    assessment = SimpleNamespace(research_bias="ADVERSE", evidence_confidence=.8)
+    held = SimpleNamespace(position=object())
+
+    assert arbiter.arbitrate(held, (_candidate("ADD"),), assessment).action == "HOLD"
+    assert arbiter.arbitrate(held, (_candidate("REDUCE"),), assessment).action == "REDUCE"
+    assert arbiter.arbitrate(held, (_candidate("EXIT"),), assessment).action == "EXIT"
+
+
+def test_low_confidence_adverse_research_remains_advisory():
+    assessment = SimpleNamespace(research_bias="ADVERSE", evidence_confidence=.2)
+
+    assert DecisionArbiter().arbitrate(SimpleNamespace(position=None), (_candidate("OPEN"),), assessment).action == "BUY"
+
+
 def test_position_watch_becomes_hold_not_reduce():
     arbiter = DecisionArbiter()
     held = SimpleNamespace(position=object())

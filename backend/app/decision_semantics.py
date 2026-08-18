@@ -41,7 +41,12 @@ class PositionDecision(DecisionSemanticModel):
 
 
 class DecisionArbiter:
-    """Translate candidate actions by portfolio state; ResearchAssessment is not input."""
+    """Translate policy candidates by position state and bounded research input.
+
+    Research can only veto *new* incremental risk when its deterministic
+    aggregate is adverse and sufficiently evidenced. It cannot upgrade an
+    action, invent a SELL/EXIT, or override a hard ActionPolicy gate.
+    """
 
     version = config.DECISION_ARBITER_POLICY_VERSION
 
@@ -49,6 +54,7 @@ class DecisionArbiter:
         self,
         context: DecisionContext,
         candidates: tuple[ActionCandidate, ...],
+        research_assessment=None,
     ) -> EntryDecision | PositionDecision:
         candidate = candidates[0] if candidates else None
         if candidate is None:
@@ -69,6 +75,14 @@ class DecisionArbiter:
         confidence = candidate.policy_score
         if context.position is None:
             if candidate.action == "OPEN":
+                research_reason = self._adverse_new_risk_reason(research_assessment)
+                if research_reason:
+                    return EntryDecision(
+                        action="WAIT",
+                        decision_confidence=min(confidence, float(getattr(research_assessment, "evidence_confidence", 0.0))),
+                        next_state="FLAT",
+                        reason_codes=tuple(dict.fromkeys((*reasons, research_reason))),
+                    )
                 return EntryDecision(action="BUY", decision_confidence=confidence, next_state="ENTRY_PENDING", reason_codes=reasons)
             if candidate.action == "BLOCKED":
                 return EntryDecision(action="BLOCKED", decision_confidence=confidence, next_state="BLOCKED", reason_codes=reasons)
@@ -80,6 +94,14 @@ class DecisionArbiter:
                 reason_codes=tuple(dict.fromkeys((*reasons, *gate_reasons, f"legacy_candidate:{candidate.action}"))),
             )
         if candidate.action in {"ADD", "REDUCE", "EXIT", "HOLD"}:
+            research_reason = self._adverse_new_risk_reason(research_assessment) if candidate.action == "ADD" else None
+            if research_reason:
+                return PositionDecision(
+                    action="HOLD",
+                    decision_confidence=min(confidence, float(getattr(research_assessment, "evidence_confidence", 0.0))),
+                    next_state="HOLDING",
+                    reason_codes=tuple(dict.fromkeys((*reasons, research_reason))),
+                )
             next_state = {
                 "ADD": "HOLDING", "HOLD": "HOLDING", "REDUCE": "REDUCE_PENDING", "EXIT": "EXIT_PENDING",
             }[candidate.action]
@@ -99,6 +121,20 @@ class DecisionArbiter:
         gates = getattr(quality, "action_gates", ()) if quality is not None else ()
         gate = next((item for item in gates if item.action == action), None)
         return tuple(gate.reasons) if gate and gate.permission == "blocked" else ()
+
+    @staticmethod
+    def _adverse_new_risk_reason(research_assessment) -> str | None:
+        if research_assessment is None:
+            return None
+        if str(getattr(research_assessment, "research_bias", "")).upper() != "ADVERSE":
+            return None
+        try:
+            confidence = float(getattr(research_assessment, "evidence_confidence", 0.0))
+        except (TypeError, ValueError):
+            return None
+        if confidence < config.RESEARCH_ADVERSE_MIN_EVIDENCE_CONFIDENCE:
+            return None
+        return "research.adverse_new_risk_veto"
 
 
 def formal_action_from_report(report: Mapping[str, object]) -> FormalDecisionAction:
