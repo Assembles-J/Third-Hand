@@ -3,7 +3,7 @@ from __future__ import annotations
 
 import hashlib
 import json
-from datetime import timedelta
+from datetime import datetime, timedelta
 from typing import TYPE_CHECKING, Mapping
 
 from pydantic import BaseModel, ConfigDict
@@ -85,7 +85,7 @@ class DecisionContinuityPolicy:
             prior_decision_id=str(prior.get("decision_id")) if prior and prior.get("decision_id") else None,
             episode_id=episode_id,
             last_action=action,
-            position_age=None,
+            position_age=self._position_age(context),
             material_change=material,
             material_change_reason=reason,
             cooldown_until=cooldown_until,
@@ -96,6 +96,19 @@ class DecisionContinuityPolicy:
     def _episode_id(symbol: str, state: str, seed: object) -> str:
         value = f"{symbol.strip().upper()}|{state}|{seed or 'initial'}"
         return f"episode-{hashlib.sha256(value.encode('utf-8')).hexdigest()[:16]}"
+
+    @staticmethod
+    def _position_age(context: DecisionContext) -> int | None:
+        opened_at = getattr(getattr(context, "position", None), "opened_at", None)
+        if not opened_at:
+            return None
+        try:
+            opened = datetime.fromisoformat(str(opened_at).replace("Z", "+00:00"))
+            if opened.tzinfo is None:
+                opened = opened.replace(tzinfo=context.generated_at.tzinfo)
+            return max(0, (context.generated_at - opened).days)
+        except (TypeError, ValueError):
+            return None
 
     @staticmethod
     def _state_for_report(report: Mapping[str, object]) -> str:

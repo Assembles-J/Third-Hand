@@ -54,3 +54,12 @@ def test_changed_input_is_a_material_change():
     assert action == "BUY"
     assert memory.material_change is True
     assert memory.material_change_reason == "decision_input_changed"
+
+
+def test_position_age_is_derived_from_the_frozen_open_timestamp():
+    context = _context()
+    context.position = SimpleNamespace(opened_at="2026-08-15T10:00:00+00:00")
+    action, memory = DecisionContinuityPolicy().assess(context, "HOLD", None)
+
+    assert action == "HOLD"
+    assert memory.position_age == 3

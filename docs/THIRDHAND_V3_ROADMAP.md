@@ -167,8 +167,9 @@ multi-currency cash/FX ledger before enabling non-CN paper execution.
 The formal decision path now records `DecisionMemory`: the prior decision,
 episode, material-change reason, review time and an action cooldown. Identical
 inputs and hard gates preserve the prior formal action; an input, position-state
-or hard-gate change is an explicit material-change reason. Remaining: persist
-position age and make review/cooldown scheduling observable in the paper runtime.
+or hard-gate change is an explicit material-change reason. Position age is
+derived from the frozen opening timestamp. Remaining: make review/cooldown
+scheduling observable in the paper runtime.
 
 Add DecisionMemory, episode id, material-change detector, cooldown/review-after and prior-decision references.
 
