@@ -11,6 +11,48 @@ from app.storage import PortfolioStore
 BEIJING = timezone(timedelta(hours=8))
 
 
+def test_legacy_aggregate_position_replays_logs_into_sellable_lots(tmp_path: Path, monkeypatch) -> None:
+    store = PortfolioStore(tmp_path / "legacy-paper-lots.db")
+    store.save_paper_account(10_000)
+    day_one = datetime(2026, 8, 17, 10, 0, tzinfo=BEIJING)
+    monkeypatch.setattr(storage_module, "beijing_now", lambda: day_one)
+    store.execute_paper_trade(
+        trade_id=str(uuid4()), symbol="600001", name="legacy", side="BUY",
+        quantity=100, price=10, decision_id="legacy-buy", reason="legacy seed",
+    )
+    # Simulate a database produced before the PositionLot schema existed.
+    with store._connect() as connection:
+        connection.execute("DELETE FROM paper_position_lots WHERE symbol='600001'")
+
+    day_two = datetime(2026, 8, 18, 10, 0, tzinfo=BEIJING)
+    monkeypatch.setattr(storage_module, "beijing_now", lambda: day_two)
+    sale = store.execute_paper_trade(
+        trade_id=str(uuid4()), symbol="600001", name="legacy", side="SELL",
+        quantity=100, price=10, decision_id="legacy-sell", reason="reconciled sale",
+    )
+
+    assert sale["quantity"] == 100
+    lots = store.paper_position_lots("600001")
+    assert len(lots) == 1
+    assert lots[0]["settlement_state"] == "CLOSED"
+
+
+def test_unreconcilable_legacy_position_is_not_silently_sellable(tmp_path: Path) -> None:
+    store = PortfolioStore(tmp_path / "unreconciled-paper-lots.db")
+    store.save_paper_account(10_000)
+    with store._connect() as connection:
+        connection.execute(
+            "INSERT INTO paper_trading_positions VALUES (?,?,?,?,?)",
+            ("600002", "unknown legacy", 100, 10, "2026-08-17T10:00:00+08:00"),
+        )
+
+    with pytest.raises(ValueError, match="paper_position_lot_reconciliation_required"):
+        store.execute_paper_trade(
+            trade_id=str(uuid4()), symbol="600002", name="unknown legacy", side="SELL",
+            quantity=100, price=10, decision_id="unreconciled-sell", reason="must reconcile first",
+        )
+
+
 def test_t1_blocks_only_today_buy_quantity_in_mixed_inventory(tmp_path: Path, monkeypatch) -> None:
     store = PortfolioStore(tmp_path / "paper-t1-mixed.db")
     store.save_paper_account(10_000)

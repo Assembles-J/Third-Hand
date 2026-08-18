@@ -1520,6 +1520,74 @@ class PortfolioStore:
             connection.execute("INSERT INTO paper_trading_logs (id,symbol,name,side,quantity,price,fee,cash_before,cash_after,decision_id,reason,status,executed_at) VALUES (:id,:symbol,:name,:side,:quantity,:price,:fee,:cash_before,:cash_after,:decision_id,:reason,:status,:executed_at)", item)
         return item
 
+    @staticmethod
+    def _reconcile_legacy_position_lots(connection, *, symbol: str, market: str, currency: str, now: str) -> bool:
+        """Rebuild pre-PositionLot inventory from its immutable paper ledger.
+
+        Earlier installations stored only the aggregate position, but their
+        executed paper-trading logs are sufficient to replay FIFO remaining
+        inventory.  A mismatch is never guessed: the caller receives an
+        explicit reconciliation requirement instead of an invented sellable
+        quantity.
+        """
+        position = connection.execute(
+            "SELECT quantity FROM paper_trading_positions WHERE symbol=?", (symbol,)
+        ).fetchone()
+        if not position or float(position["quantity"]) <= 1e-9:
+            return True
+        existing_lots = connection.execute(
+            "SELECT COUNT(*) AS count FROM paper_position_lots WHERE symbol=?", (symbol,)
+        ).fetchone()
+        if int(existing_lots["count"]):
+            return True
+        logs = connection.execute(
+            "SELECT id,side,quantity,price,fee,executed_at FROM paper_trading_logs "
+            "WHERE symbol=? AND status='executed' AND side IN ('BUY','SELL') "
+            "ORDER BY executed_at, id",
+            (symbol,),
+        ).fetchall()
+        replay_lots: list[dict[str, object]] = []
+        for log in logs:
+            log_quantity = float(log["quantity"])
+            if log["side"] == "BUY":
+                replay_lots.append({
+                    "lot_id": f"legacy-{log['id']}",
+                    "quantity": log_quantity,
+                    "acquired_at": str(log["executed_at"]),
+                    "cost_basis": (log_quantity * float(log["price"]) + float(log["fee"])) / log_quantity,
+                })
+                continue
+            remaining_to_sell = log_quantity
+            for lot in replay_lots:
+                if remaining_to_sell <= 1e-9:
+                    break
+                consumed = min(remaining_to_sell, float(lot["quantity"]))
+                lot["quantity"] = float(lot["quantity"]) - consumed
+                remaining_to_sell -= consumed
+            if remaining_to_sell > 1e-9:
+                return False
+        remaining_quantity = sum(float(lot["quantity"]) for lot in replay_lots)
+        if abs(remaining_quantity - float(position["quantity"])) > 1e-6:
+            return False
+        today = now[:10]
+        for lot in replay_lots:
+            quantity = float(lot["quantity"])
+            if quantity <= 1e-9:
+                continue
+            is_cn_pending = market == "CN" and str(lot["acquired_at"])[:10] >= today
+            connection.execute(
+                "INSERT INTO paper_position_lots "
+                "(lot_id,symbol,market,currency,quantity,acquired_at,cost_basis,sellable_quantity,settlement_state,updated_at) "
+                "VALUES (?,?,?,?,?,?,?,?,?,?)",
+                (
+                    lot["lot_id"], symbol, market, currency, quantity, lot["acquired_at"], lot["cost_basis"],
+                    0.0 if is_cn_pending else quantity,
+                    "PENDING_T1" if is_cn_pending else "SETTLED",
+                    now,
+                ),
+            )
+        return True
+
     def execute_paper_trade(self, *, trade_id: str, symbol: str, name: str, side: str, quantity: float, price: float, decision_id: str | None, reason: str, execution_quote_at: str | None = None, execution_quote_source: str | None = None, fill_price_mode: str = "NEXT_ELIGIBLE_OBSERVED_QUOTE") -> dict[str, object]:
         if quantity <= 0 or price <= 0: raise ValueError("quantity_and_price_must_be_positive")
         now = beijing_now().isoformat()
@@ -1534,6 +1602,10 @@ class PortfolioStore:
             adapter = adapter_for_market(market)
             if adapter is None:
                 raise ValueError("paper_market_rule_unavailable")
+            if not self._reconcile_legacy_position_lots(
+                connection, symbol=symbol, market=market, currency=adapter.trading_currency, now=now
+            ):
+                raise ValueError("paper_position_lot_reconciliation_required")
             if adapter.paper_fee_schedule != "CN_A_STANDARD":
                 raise ValueError("paper_fee_schedule_unconfigured")
             # For a CN sell, report the substantive availability failure before

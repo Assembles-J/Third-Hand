@@ -157,9 +157,10 @@ deriving a quantity. CN retains its existing T+1 and fee schedule; HK/US are
 conservatively blocked until their own fee/FX schedules and account currency
 boundary exist, rather than inheriting CN's 100-share lot, T+1 or fees.
 
-Remaining: migrate or explicitly reconcile legacy aggregate positions into
-PositionLots, add market-specific HK/US fee schedules, and add a multi-currency
-cash/FX ledger before enabling non-CN paper execution.
+Pre-PositionLot aggregate positions are replayed from their immutable execution
+logs into lots; any aggregate/log mismatch is explicitly blocked for manual
+reconciliation. Remaining: market-specific HK/US fee schedules and a
+multi-currency cash/FX ledger before enabling non-CN paper execution.
 
 ### Phase 6 — Decision continuity
 
