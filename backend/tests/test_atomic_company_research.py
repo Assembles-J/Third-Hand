@@ -5,17 +5,21 @@ from types import SimpleNamespace
 from app import decision_config as config
 from app.atomic_company_builder import CompanyAwareAtomicEvidenceBuilder
 from app.atomic_company_research import CompanyResearchAtomicSource
+from app.atomic_evidence import AtomicEvidenceSnapshotBuilder
 from app.atomic_evidence_runtime import install as install_atomic_runtime
 from app.decision_models import (
     AccountSnapshot,
+    ActionCandidate,
     ActionGate,
     DailyBarSummary,
     DecisionContext,
     DecisionQualitySummary,
+    EvidenceItem,
     InstrumentSnapshot,
     QuoteSnapshot,
     SourceFreshness,
 )
+from app.decision_orchestrator import DecisionOrchestrator
 from app.infrastructure.database.company_intelligence_repository import CompanyIntelligenceRepository
 from app.infrastructure.database.research_data_repository import ResearchDataRepository
 from app.storage import PortfolioStore
@@ -305,3 +309,100 @@ def test_runtime_installer_replaces_only_atomic_shadow_builder(tmp_path):
     assert isinstance(orchestrator.atomic_evidence_builder, CompanyAwareAtomicEvidenceBuilder)
     assert orchestrator.atomic_evidence_builder.base_builder is original
     assert module._atomic_evidence_runtime_installed is True
+
+
+class _FrozenEvidenceEngine:
+    def __init__(self, evidence):
+        self.evidence = evidence
+
+    def build(self, _context):
+        return self.evidence
+
+
+class _FrozenPolicy:
+    version = "xiaomi-frozen-policy-v1"
+
+    def evaluate(self, _context, _evidence):
+        return (ActionCandidate(action="WATCH", priority=30, policy_score=.3),)
+
+
+class _NoSizing:
+    def size(self, *_args, **_kwargs):
+        raise AssertionError("the frozen shadow benchmark disables sizing")
+
+
+class _NoAi:
+    def assess(self, *_args, **_kwargs):
+        raise AssertionError("Atomic Evidence must not enter the AI prompt in Phase 2")
+
+
+class _NoopGuard:
+    def guard(self, _candidates, _assessment):
+        return None
+
+
+def _frozen_report(context, evidence, builder):
+    return DecisionOrchestrator(
+        _FrozenEvidenceEngine(evidence),
+        _FrozenPolicy(),
+        _NoSizing(),
+        _NoAi(),
+        _NoopGuard(),
+        atomic_evidence_builder=builder,
+    ).generate(context)
+
+
+def test_xiaomi_frozen_shadow_benchmark_is_reproducible_and_action_isolated(tmp_path, monkeypatch):
+    """Phase-2 acceptance: research facts remain auditable, never authoritative."""
+    store = PortfolioStore(tmp_path / "xiaomi-frozen-shadow.db")
+    saved = _save_company_context(store)
+    context = _decision_context()
+    evidence = (EvidenceItem(
+        evidence_id="trend.sma20_above_sma60",
+        category="trend",
+        direction="positive",
+        strength=.6,
+        title="Frozen technical input",
+        description="This is the complete formal input for the benchmark.",
+        value=True,
+        source="frozen-fixture",
+        as_of="2026-08-17",
+        fresh=True,
+    ),)
+    shadow_builder = CompanyAwareAtomicEvidenceBuilder(store)
+
+    first = shadow_builder.build(context, evidence)
+    second = shadow_builder.build(context, evidence)
+    baseline = AtomicEvidenceSnapshotBuilder().build(context, evidence)
+    availability = {item.capability: item for item in first.availability}
+    facts = {item.metric: item for item in first.facts}
+
+    # A frozen context produces byte-stable shadow evidence.  Adding Company
+    # Research changes only the shadow snapshot, not the formal input hash.
+    assert first == second
+    assert first.snapshot_hash == second.snapshot_hash
+    assert first.snapshot_hash != baseline.snapshot_hash
+    assert context.input_hash == "formal-input-does-not-contain-company-research"
+    assert availability["company_dataset.valuation_framework"].status == "missing"
+
+    # One raw filing can retain both directions, each traceable to the exact
+    # persisted snapshot and point-in-time availability boundary.
+    revenue = facts["revenue_yoy_percent"]
+    profit = facts["holder_profit_yoy_percent"]
+    assert revenue.polarity == "ADVERSE"
+    assert profit.polarity == "SUPPORTIVE"
+    assert revenue.source_evidence_id == f"research_snapshot:{saved['profit'].snapshot_id}"
+    assert revenue.source_reference == saved["profit"].source_reference
+    assert revenue.available_at == saved["profit"].available_at
+    assert revenue.provenance_hash != profit.provenance_hash
+
+    monkeypatch.setattr(config, "DECISION_AI_ENABLED", False)
+    monkeypatch.setattr(config, "DECISION_SIZING_ENABLED", False)
+    legacy_report = _frozen_report(context, evidence, AtomicEvidenceSnapshotBuilder())
+    shadow_report = _frozen_report(context, evidence, shadow_builder)
+
+    # The action was frozen before Atomic Evidence and must remain identical
+    # when point-in-time Company Research is present.
+    assert legacy_report.action == shadow_report.action == "WATCH"
+    assert legacy_report.action_candidates == shadow_report.action_candidates
+    assert shadow_report.atomic_evidence_shadow.snapshot_hash == first.snapshot_hash

@@ -82,7 +82,7 @@ Acceptance met:
 - the formal paper-decision path remains Local-First;
 - legacy CN behavior remains compatible while HK/US no longer inherit CN lot/currency defaults.
 
-### Phase 2 — Atomic Evidence shadow mode — ACTIVE
+### Phase 2 — Atomic Evidence shadow mode — COMPLETE
 
 Add `AtomicFactRecord`, `FactExtractor`, compact evidence snapshots, deterministic availability/conflicts, provenance, materiality and comparison adequacy. Run beside current evidence with no action changes.
 
@@ -96,13 +96,21 @@ Current first slice:
 - construct Atomic Evidence only **after** current `ActionPolicyEngine` candidates are frozen;
 - do not pass Atomic Evidence to ActionPolicy, AI, sizing, execution or final action selection during Phase 2.
 
-Phase 2 acceptance before promotion:
+Completed acceptance:
 - identical frozen inputs produce identical atomic snapshot hashes;
 - source provenance survives fact extraction;
 - mixed-polarity facts from one source remain separate;
 - missing/stale/conflicted capabilities agree with existing deterministic quality state;
 - scheduled earnings remains `NEUTRAL_MATERIAL` rather than support/opposition;
+- Company Intelligence is point-in-time bounded by both CompanyContext and its
+  underlying ResearchDataSnapshot `available_at` values;
+- the Xiaomi frozen-shadow benchmark proves that adding Company Research changes
+  only the shadow snapshot, never formal candidates or action;
 - full regression suite proves no formal action behavior changes.
+
+Promotion boundary: Phase 3 may consume Atomic Evidence only through versioned,
+deterministic aggregation policies. It must not promote the Xiaomi fixture's
+weights or a model-produced research label into formal action authority.
 
 ### Phase 3 — Deterministic research aggregation
 
