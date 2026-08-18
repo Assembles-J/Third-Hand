@@ -2,7 +2,9 @@
 from __future__ import annotations
 
 from app import decision_config as config
+from app.canonical_snapshot import build_canonical_market_snapshot
 from app.decision_models import DecisionContext, EvidenceItem
+from app.trading_calendar import TradingCalendarService
 
 
 def _item(evidence_id: str, category: str, direction: str, strength: float, title: str, description: str, *, value=None, threshold=None, source: str, as_of=None, fresh: bool = True, usage_scope: str = "POLICY", rule_id=None, source_reference=None) -> EvidenceItem:
@@ -28,10 +30,23 @@ class EvidenceEngine:
         return result
 
     @staticmethod
+    def _canonical(context: DecisionContext):
+        market = context.instrument.market if context.instrument else TradingCalendarService.market_for_symbol(context.symbol)
+        return build_canonical_market_snapshot(
+            market=market,
+            quote_price=context.quote.price if context.quote else None,
+            quote_as_of=context.quote.as_of if context.quote else None,
+            quote_retrieved_at=context.quote.retrieved_at if context.quote else None,
+            daily_close=context.daily_bars.last_close,
+            daily_bar_as_of=context.daily_bars.last_trading_date,
+            risk_as_of=context.risk.as_of if context.risk else None,
+        )
+
+    @staticmethod
     def _data_quality(context: DecisionContext) -> EvidenceItem:
         quality = context.data_quality
         direction = "positive" if quality.status == "ready" else "uncertain" if quality.status == "degraded" else "negative"
-        fresh = not quality.stale_fields
+        fresh = not quality.stale_fields and not any(item.startswith("consistency.") for item in quality.warnings)
         return _item("data_quality.summary", "data_quality", direction, quality.score_percent / 100, "数据质量", f"数据质量为 {quality.status}，完整度 {quality.score_percent}%", value=quality.status, threshold=100, source="decision_context", as_of=context.generated_at, fresh=fresh)
 
     @staticmethod
@@ -61,14 +76,15 @@ class EvidenceEngine:
         if not technical:
             return []
         result: list[EvidenceItem] = []
-        price, sma20, sma60 = context.quote.price if context.quote else None, technical.sma20, technical.sma60
+        canonical = EvidenceEngine._canonical(context)
+        price, sma20, sma60 = canonical.technical_reference_price, technical.sma20, technical.sma60
         if price is not None and sma20 is not None and sma60 is not None:
             if price >= sma20 and price >= sma60:
-                result.append(_item("trend.above_sma20", "trend", "positive", .5, "价格高于均线", "当前价格高于 20 日和 60 日均线", value=price, threshold=sma20, source="technical_analysis", as_of=technical.as_of))
+                result.append(_item("trend.above_sma20", "trend", "positive", .5, "价格高于均线", "规范化参考价格高于 20 日和 60 日均线", value=price, threshold=sma20, source=f"technical_analysis:{canonical.technical_reference_source}", as_of=technical.as_of, fresh=canonical.technical_reference_source in {"quote", "daily_close"}))
             if sma20 >= sma60:
                 result.append(_item("trend.sma20_above_sma60", "trend", "positive", .6, "均线结构偏强", "20 日均线高于 60 日均线", value=sma20, threshold=sma60, source="technical_analysis", as_of=technical.as_of))
             if price < sma20 and price < sma60:
-                result.append(_item("trend.below_sma20_and_sma60", "trend", "negative", .7, "价格低于均线", "当前价格低于 20 日和 60 日均线", value=price, threshold=sma20, source="technical_analysis", as_of=technical.as_of))
+                result.append(_item("trend.below_sma20_and_sma60", "trend", "negative", .7, "价格低于均线", "规范化参考价格低于 20 日和 60 日均线", value=price, threshold=sma20, source=f"technical_analysis:{canonical.technical_reference_source}", as_of=technical.as_of, fresh=canonical.technical_reference_source in {"quote", "daily_close"}))
         if technical.drawdown_60d_percent <= config.HIGH_DRAWDOWN_PERCENT:
             result.append(_item("trend.drawdown_60d", "trend", "negative", .6, "60 日回撤较大", f"60 日回撤 {technical.drawdown_60d_percent:.2f}%", value=technical.drawdown_60d_percent, threshold=config.HIGH_DRAWDOWN_PERCENT, source="technical_analysis", as_of=technical.as_of))
         if technical.rsi14 >= config.RSI_HOT:
@@ -85,11 +101,14 @@ class EvidenceEngine:
         risk = context.risk
         if not risk:
             return []
+        canonical = EvidenceEngine._canonical(context)
+        policy_usable = canonical.risk_policy_usable
+        usage_scope = "POLICY" if policy_usable else "RESEARCH_ONLY"
         result = []
         if risk.historical_downside_probability is not None and risk.historical_downside_probability >= config.HIGH_DOWNSIDE_PROBABILITY_PERCENT:
-            result.append(_item("risk.historical_downside_high", "risk", "negative", .7, "历史下行概率偏高", f"历史下行概率为 {risk.historical_downside_probability:.2f}%", value=risk.historical_downside_probability, threshold=config.HIGH_DOWNSIDE_PROBABILITY_PERCENT, source=risk.source, as_of=risk.as_of))
+            result.append(_item("risk.historical_downside_high", "risk", "negative", .7, "历史下行概率偏高", f"历史下行概率为 {risk.historical_downside_probability:.2f}%", value=risk.historical_downside_probability, threshold=config.HIGH_DOWNSIDE_PROBABILITY_PERCENT, source=risk.source, as_of=risk.as_of, fresh=policy_usable, usage_scope=usage_scope))
         if risk.annualized_volatility_percent is not None and risk.annualized_volatility_percent >= config.HIGH_ANNUALIZED_VOLATILITY_PERCENT:
-            result.append(_item("risk.annualized_volatility_high", "risk", "negative", .7, "年化波动率偏高", f"年化波动率为 {risk.annualized_volatility_percent:.2f}%", value=risk.annualized_volatility_percent, threshold=config.HIGH_ANNUALIZED_VOLATILITY_PERCENT, source=risk.source, as_of=risk.as_of))
+            result.append(_item("risk.annualized_volatility_high", "risk", "negative", .7, "年化波动率偏高", f"年化波动率为 {risk.annualized_volatility_percent:.2f}%", value=risk.annualized_volatility_percent, threshold=config.HIGH_ANNUALIZED_VOLATILITY_PERCENT, source=risk.source, as_of=risk.as_of, fresh=policy_usable, usage_scope=usage_scope))
         return result
 
     @staticmethod

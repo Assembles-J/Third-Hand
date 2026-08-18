@@ -2,8 +2,9 @@
 from __future__ import annotations
 
 from app import decision_config as config
+from app.canonical_snapshot import build_canonical_market_snapshot
 from app.decision_models import ActionGate, DecisionQualitySummary
-from app.freshness import evaluate_freshness, evaluate_session_freshness
+from app.freshness import evaluate_session_freshness
 
 
 def summarize_data_quality(*, has_quote: bool, daily_bar_count: int, total_assets_available: bool,
@@ -35,21 +36,35 @@ def summarize_data_quality(*, has_quote: bool, daily_bar_count: int, total_asset
     if not has_events:
         degraded.append("events")
 
-    # Quote freshness is intraday wall-clock data. Daily bars, locally derived
-    # risk and the broad-market regime are daily/session data, so weekends,
-    # holidays and pre-close hours must not manufacture a stale result merely
-    # because wall-clock time elapsed.  Market regime is a formal POLICY input;
-    # research-only fund-flow/market-intelligence data is deliberately absent
-    # from this formal freshness gate.
+    # Canonicalize quote/daily/risk time semantics once.  In addition to normal
+    # freshness this detects cross-source contradictions such as a quote whose
+    # observed market date predates the latest completed daily bar.  Retrieval
+    # time alone must never make that contradiction executable.
+    canonical = build_canonical_market_snapshot(
+        market=market,
+        quote_price=1.0 if has_quote else None,
+        quote_as_of=quote_as_of,
+        quote_retrieved_at=quote_retrieved_at,
+        daily_close=1.0 if daily_bar_count else None,
+        daily_bar_as_of=daily_bar_as_of,
+        risk_as_of=risk_as_of,
+    )
+    market_freshness = evaluate_session_freshness(
+        "market_regime",
+        as_of=market_as_of,
+        market=market,
+        max_age_seconds=config.MARKET_INTELLIGENCE_MAX_AGE_SECONDS,
+    )
     freshness = (
-        evaluate_freshness("quote", as_of=quote_as_of, retrieved_at=quote_retrieved_at, max_age_seconds=config.QUOTE_MAX_AGE_SECONDS),
-        evaluate_session_freshness("daily_bars", as_of=daily_bar_as_of, market=market, max_age_seconds=config.DAILY_BAR_MAX_AGE_DAYS * 86_400),
-        evaluate_session_freshness("risk", as_of=risk_as_of, market=market, max_age_seconds=config.RISK_MAX_AGE_DAYS * 86_400),
-        evaluate_session_freshness("market_regime", as_of=market_as_of, market=market, max_age_seconds=config.MARKET_INTELLIGENCE_MAX_AGE_SECONDS),
+        canonical.quote_freshness,
+        canonical.daily_freshness,
+        canonical.risk_freshness,
+        market_freshness,
     )
     stale = tuple(item.source_key for item in freshness if item.status in {"stale", "unknown"})
-    status = "blocked" if missing else "degraded" if degraded or stale else "ready"
-    score = max(0, 100 - len(missing) * 20 - len(degraded) * 5)
+    conflict_warnings = tuple(f"consistency.{code}" for code in canonical.conflict_codes)
+    status = "blocked" if missing else "degraded" if degraded or stale or conflict_warnings else "ready"
+    score = max(0, 100 - len(missing) * 20 - len(degraded) * 5 - len(conflict_warnings) * 10)
     open_required = ("quote.price", "daily_bars.minimum_60", "risk", "account.total_assets", "market_regime", "instrument")
     open_unavailable = [field for field in open_required if field in {"daily_bars.minimum_60", "risk", "account.total_assets", "market_regime"} and field in degraded]
     if not has_quote:
@@ -57,12 +72,8 @@ def summarize_data_quality(*, has_quote: bool, daily_bar_count: int, total_asset
     if not has_instrument:
         open_unavailable.append("instrument")
 
-    # Presence and freshness are two different failure modes.  When a required
-    # source is absent, the required-field blocker above is sufficient; adding
-    # an extra ``*.unknown`` blocker only duplicates the same problem and made
-    # the old market-regime failure look like RESEARCH_ONLY market intelligence
-    # was influencing OPEN.  Once the source exists, stale/unknown timestamps
-    # remain a hard OPEN blocker exactly as before.
+    # Presence and freshness are different failure modes.  Only add a freshness
+    # blocker when the corresponding source actually exists.
     freshness_by_key = {item.source_key: item for item in freshness}
     present_for_open = {
         "quote": has_quote,
@@ -75,6 +86,11 @@ def summarize_data_quality(*, has_quote: bool, daily_bar_count: int, total_asset
         if present and item.status != "fresh":
             open_unavailable.append(f"{source_key}.{item.status}")
 
+    # Cross-source conflicts are hard OPEN/ADD blockers even when every source
+    # is individually fresh.  For example, a newly retrieved but old-market-date
+    # quote cannot be mixed with a newer daily bar.
+    open_unavailable.extend(conflict_warnings)
+
     open_gate = ActionGate(action="OPEN", permission="blocked" if open_unavailable else "allowed", required_fields=open_required, unavailable_fields=tuple(open_unavailable), reasons=tuple(f"data_quality.{item}" for item in open_unavailable))
     add_required = (*open_required, "position", "personal_rule")
     add_unavailable = [*open_unavailable]
@@ -83,15 +99,23 @@ def summarize_data_quality(*, has_quote: bool, daily_bar_count: int, total_asset
     if not has_personal_rule:
         add_unavailable.append("personal_rule")
     add_gate = ActionGate(action="ADD", permission="blocked" if add_unavailable else "allowed", required_fields=add_required, unavailable_fields=tuple(add_unavailable), reasons=tuple(f"data_quality.{item}" for item in add_unavailable))
-    defensive_permission = "blocked" if not has_quote else "research_only" if stale else "allowed"
-    defensive_reason = tuple(f"data_quality.{item}" for item in ((*missing, *stale) if defensive_permission != "allowed" else ()))
-    gates = (open_gate, add_gate,
-             ActionGate(action="HOLD", permission=defensive_permission, reasons=defensive_reason),
-             ActionGate(action="WATCH", permission=defensive_permission, reasons=defensive_reason),
-             ActionGate(action="REDUCE", permission=defensive_permission, reasons=defensive_reason),
-             ActionGate(action="EXIT", permission=defensive_permission, reasons=defensive_reason))
+    defensive_permission = "blocked" if not has_quote else "research_only" if stale or conflict_warnings else "allowed"
+    defensive_inputs = (*missing, *stale, *conflict_warnings) if defensive_permission != "allowed" else ()
+    defensive_reason = tuple(f"data_quality.{item}" for item in defensive_inputs)
+    gates = (
+        open_gate,
+        add_gate,
+        ActionGate(action="HOLD", permission=defensive_permission, reasons=defensive_reason),
+        ActionGate(action="WATCH", permission=defensive_permission, reasons=defensive_reason),
+        ActionGate(action="REDUCE", permission=defensive_permission, reasons=defensive_reason),
+        ActionGate(action="EXIT", permission=defensive_permission, reasons=defensive_reason),
+    )
     return DecisionQualitySummary(
-        status=status, score_percent=score, missing_fields=tuple(missing),
-        stale_fields=stale, warnings=tuple(f"{field} unavailable" for field in degraded),
-        source_freshness=freshness, action_gates=gates,
+        status=status,
+        score_percent=score,
+        missing_fields=tuple(missing),
+        stale_fields=stale,
+        warnings=tuple(f"{field} unavailable" for field in degraded) + conflict_warnings,
+        source_freshness=freshness,
+        action_gates=gates,
     )

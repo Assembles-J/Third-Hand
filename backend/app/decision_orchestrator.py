@@ -5,9 +5,11 @@ import logging
 from uuid import uuid4
 
 from app import decision_config as config
+from app.canonical_snapshot import build_canonical_market_snapshot
 from app.decision_ai import DecisionAiOutcome
 from app.decision_models import DecisionReport, OperationItem
 from app.time_utils import beijing_now
+from app.trading_calendar import TradingCalendarService
 
 logger = logging.getLogger(__name__)
 
@@ -20,6 +22,7 @@ class DecisionOrchestrator:
     def generate(self, context, *, candidate_audit: dict[str, object] | None = None) -> DecisionReport:
         evidence = self.evidence_engine.build(context)
         candidates = self.policy_engine.evaluate(context, evidence)
+        canonical = self._canonical_market(context)
         if config.DECISION_AI_ENABLED:
             logger.info(
                 "Decision AI dispatch context_id=%s symbol=%s evidence_count=%s candidate_actions=%s",
@@ -42,18 +45,29 @@ class DecisionOrchestrator:
         sizing = self.sizing_engine.size(context, action) if config.DECISION_SIZING_ENABLED else None
         status = "BLOCKED" if context.data_quality.status == "blocked" else "DEGRADED" if context.data_quality.status == "degraded" else "READY"
         candidate_audit = candidate_audit or {}
+        market_as_of = self._display_as_of(context, canonical.display_price_source)
+        market_change = (
+            context.quote.change_percent
+            if context.quote and canonical.display_price_source == "quote"
+            else None
+        )
+        execution_eligible_after = (
+            context.quote.as_of
+            if context.quote and canonical.execution_price is not None
+            else None
+        )
         return DecisionReport(
             decision_id=str(uuid4()), context_id=context.context_id, symbol=context.symbol,
             name=context.name, generated_at=beijing_now(), status=status, action=action,
             summary=self._summary(action, candidates[0].blocked_reasons), data_quality=context.data_quality,
             evidence=evidence, action_candidates=candidates,
-            operation_items=self._operation_items(context, action, candidates[0].blocked_reasons, sizing),
+            operation_items=self._operation_items(context, action, candidates[0].blocked_reasons, sizing, canonical.display_price),
             ai_assessment=assessment, ai_status=ai_outcome.status, ai_error_code=ai_outcome.error_code,
             ai_shadow_action=ai_shadow_action,
             ai_shadow_agreement=(ai_shadow_action == action) if ai_shadow_action is not None else None,
-            market_price=context.quote.price if context.quote else None,
-            market_change_percent=context.quote.change_percent if context.quote else None,
-            market_as_of=context.quote.as_of if context.quote else None,
+            market_price=canonical.display_price,
+            market_change_percent=market_change,
+            market_as_of=market_as_of,
             sizing=sizing, policy_version=self.policy_engine.version,
             prompt_version=config.DECISION_RESEARCH_PROMPT_VERSION if assessment else None,
             audit_versions=config.audit_version_snapshot(),
@@ -62,13 +76,37 @@ class DecisionOrchestrator:
             candidate_rotation_key=candidate_audit.get("candidate_rotation_key"),
             candidate_rank=candidate_audit.get("candidate_rank"),
             candidate_selection_reason=candidate_audit.get("candidate_selection_reason"),
-            execution_eligible_after=context.quote.as_of if context.quote else None,
+            execution_eligible_after=execution_eligible_after,
             model=ai_outcome.model, input_hash=context.input_hash,
         )
 
     @staticmethod
-    def _operation_items(context, action, candidate_blockers, sizing) -> tuple[OperationItem, ...]:
-        quote_price = context.quote.price if context.quote else None
+    def _canonical_market(context):
+        market = (
+            context.instrument.market
+            if context.instrument
+            else TradingCalendarService.market_for_symbol(context.symbol)
+        )
+        return build_canonical_market_snapshot(
+            market=market,
+            quote_price=context.quote.price if context.quote else None,
+            quote_as_of=context.quote.as_of if context.quote else None,
+            quote_retrieved_at=context.quote.retrieved_at if context.quote else None,
+            daily_close=context.daily_bars.last_close,
+            daily_bar_as_of=context.daily_bars.last_trading_date,
+            risk_as_of=context.risk.as_of if context.risk else None,
+        )
+
+    @staticmethod
+    def _display_as_of(context, display_source: str) -> str | None:
+        if display_source in {"quote", "stale_quote"}:
+            return context.quote.as_of if context.quote else None
+        if display_source in {"daily_close", "stale_daily_close"}:
+            return context.daily_bars.last_trading_date
+        return None
+
+    @staticmethod
+    def _operation_items(context, action, candidate_blockers, sizing, reference_price) -> tuple[OperationItem, ...]:
         sizing_blockers = tuple(sizing.blocked_reasons) if sizing else ()
         blockers = tuple(dict.fromkeys((*candidate_blockers, *sizing_blockers)))
         if blockers:
@@ -79,7 +117,7 @@ class DecisionOrchestrator:
             kind=action,
             title=title_by_action.get(action, "暂不操作"),
             trigger=trigger,
-            reference_price=quote_price,
+            reference_price=reference_price,
             invalidation_price=getattr(sizing, "invalidation_price", None),
             suggested_quantity=getattr(sizing, "suggested_quantity", None),
             target_quantity=getattr(sizing, "target_quantity", None),
