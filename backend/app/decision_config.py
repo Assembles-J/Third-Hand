@@ -3,7 +3,9 @@ import hashlib
 import json
 import os
 
-EVIDENCE_VERSION = "evidence-v2-usage-scope"
+# v3 changes POLICY evidence authority: technical price/location uses the
+# canonical quote/daily view and stale/conflicted risk evidence is research-only.
+EVIDENCE_VERSION = "evidence-v3-canonical-market-inputs"
 # v3 is a Day-0 correctness break: REDUCE now requires an existing position.
 # Bumping the version prevents historical v2 empty-position REDUCE reports from
 # remaining eligible for next-session execution after deployment.
@@ -13,6 +15,9 @@ OPEN_GATE_AUDIT_VERSION = "open-gate-audit-v1"
 # latest-completed-exchange-session semantics. Thresholds are unchanged; the
 # version bump makes the already-deployed behavior auditable in DecisionReport.
 FRESHNESS_POLICY_VERSION = "freshness-v2-session-aware"
+# v1 adds a separate, deterministic cross-source authority layer.  Individually
+# fresh records can still conflict when their observed market dates disagree.
+CANONICAL_INPUT_POLICY_VERSION = "canonical-input-v1-cross-source-consistency"
 # v2 fixes A-share execution semantics: OPEN/ADD may fill on a strictly later
 # observed quote in the same trading day, while T+1 remains a SELL-availability
 # constraint enforced by the paper ledger.
@@ -45,6 +50,7 @@ def audit_version_snapshot() -> dict[str, str]:
         "open_gate_audit_version": OPEN_GATE_AUDIT_VERSION,
         "sizing_version": SIZING_VERSION,
         "freshness_policy_version": FRESHNESS_POLICY_VERSION,
+        "canonical_input_policy_version": CANONICAL_INPUT_POLICY_VERSION,
         "execution_policy_version": EXECUTION_POLICY_VERSION,
         "decision_prompt_version": DECISION_RESEARCH_PROMPT_VERSION,
         "candidate_selection_version": CANDIDATE_SELECTION_VERSION,
