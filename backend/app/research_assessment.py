@@ -252,7 +252,7 @@ class ResearchAggregator:
             for item in snapshot.availability
             if item.status in {"missing", "stale", "conflicted"}
         ]
-        if fundamental.current_confirmation != "CONFIRMED":
+        if currentness is not None and fundamental.current_confirmation != "CONFIRMED":
             unresolved_items.append(
                 f"currentness:fundamental_current_confirmation:{fundamental.current_confirmation}"
             )
