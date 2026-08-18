@@ -1,6 +1,7 @@
 """Paper-runtime adapters for explicit order quantity and entry provenance."""
 from __future__ import annotations
 
+import sqlite3
 from collections.abc import Mapping
 
 
@@ -44,9 +45,9 @@ def project_paper_holdings(store, paper_account: Mapping[str, object]) -> list[d
                 for row in rows
                 if row["symbol"] is not None and row["opened_at"] is not None
             }
-        except Exception:
-            # Projection must remain compatible with databases created before the
-            # episode migration; migration/runtime tests cover the current schema.
+        except sqlite3.Error:
+            # Projection remains compatible with databases created before the
+            # episode migration; current migrations/tests exercise this table.
             episode_opened_at = {}
 
     results: list[dict[str, object]] = []
