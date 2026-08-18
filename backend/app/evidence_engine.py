@@ -140,4 +140,36 @@ class EvidenceEngine:
 
     @staticmethod
     def _events(context: DecisionContext) -> list[EvidenceItem]:
-        return [_item(f"event.{event.impact}.{event.event_id}", "event", event.impact, .7 if event.impact in {"positive", "negative"} else .4, event.title, event.summary or event.title, value=event.impact, source=event.source, as_of=event.published_at, fresh=True, usage_scope="RESEARCH_ONLY", source_reference=event.source_reference) for event in context.events]
+        results: list[EvidenceItem] = []
+        for event in context.events:
+            if event.lifecycle == "upcoming" and event.event_type == "earnings_report":
+                results.append(_item(
+                    f"event.upcoming.earnings_report.{event.event_id}",
+                    "event",
+                    "neutral",
+                    .8,
+                    "已知财报披露日",
+                    event.summary or event.title,
+                    value=event.scheduled_at or event.title,
+                    source=event.source,
+                    as_of=event.scheduled_at,
+                    fresh=True,
+                    usage_scope="POLICY" if event.policy_eligible else "RESEARCH_ONLY",
+                    source_reference=event.source_reference,
+                ))
+                continue
+            results.append(_item(
+                f"event.{event.impact}.{event.event_id}",
+                "event",
+                event.impact,
+                .7 if event.impact in {"positive", "negative"} else .4,
+                event.title,
+                event.summary or event.title,
+                value=event.impact,
+                source=event.source,
+                as_of=event.published_at,
+                fresh=True,
+                usage_scope="RESEARCH_ONLY",
+                source_reference=event.source_reference,
+            ))
+        return results

@@ -24,6 +24,10 @@ MARKET_IDENTITY_POLICY_VERSION = "market-identity-v2-instrument-authority"
 # Market-regime evidence may only apply to the same explicit market. Missing HK/
 # US providers degrade to unknown instead of inheriting A-share benchmarks.
 MARKET_REGIME_POLICY_VERSION = "market-regime-v2-market-scoped"
+# Scheduled earnings are deterministic neutral-material facts.  The policy only
+# blocks new risk immediately before disclosure; it never infers event direction.
+CORPORATE_EVENT_POLICY_VERSION = "corporate-event-v1-pre-earnings-gate"
+PRE_EVENT_BLOCK_SESSIONS = 1
 # v2 fixes A-share execution semantics: OPEN/ADD may fill on a strictly later
 # observed quote in the same trading day, while T+1 remains a SELL-availability
 # constraint enforced by the paper ledger.
@@ -59,6 +63,7 @@ def audit_version_snapshot() -> dict[str, str]:
         "canonical_input_policy_version": CANONICAL_INPUT_POLICY_VERSION,
         "market_identity_policy_version": MARKET_IDENTITY_POLICY_VERSION,
         "market_regime_policy_version": MARKET_REGIME_POLICY_VERSION,
+        "corporate_event_policy_version": CORPORATE_EVENT_POLICY_VERSION,
         "execution_policy_version": EXECUTION_POLICY_VERSION,
         "decision_prompt_version": DECISION_RESEARCH_PROMPT_VERSION,
         "candidate_selection_version": CANDIDATE_SELECTION_VERSION,
