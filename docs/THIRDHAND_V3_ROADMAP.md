@@ -112,9 +112,18 @@ Promotion boundary: Phase 3 may consume Atomic Evidence only through versioned,
 deterministic aggregation policies. It must not promote the Xiaomi fixture's
 weights or a model-produced research label into formal action authority.
 
-### Phase 3 — Deterministic research aggregation
+### Phase 3 — Deterministic research aggregation — ACTIVE
 
-Move formal dimension/fundamental/research aggregation out of the LLM. Add three confidence layers and semantic validation. Atomic Evidence may gain formal aggregation authority only in this phase after shadow comparisons are trustworthy.
+The first aggregation slice is implemented: a versioned deterministic
+`DimensionAggregator` and `ResearchAggregator` build a `FundamentalVector` and
+`ResearchAssessment` directly from frozen Atomic Evidence. Mixed polarity,
+missing capability and source conflict remain explicit states; no LLM output or
+Xiaomi-specific weighting is consulted. The assessment is persisted on the
+decision report for audit, but has no action authority until Phase 4.
+
+Remaining: expand the domain policies beyond the initial fundamental/technical/
+event/market partitions, define semantic invariants, and introduce the formal
+DecisionArbiter with separate decision confidence.
 
 ### Phase 4 — Decision semantics/state machine
 

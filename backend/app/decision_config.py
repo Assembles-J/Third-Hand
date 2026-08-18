@@ -9,6 +9,11 @@ EVIDENCE_VERSION = "evidence-v3-canonical-market-inputs"
 # Phase 2 runs this compact fact representation beside current evidence. v2 adds
 # point-in-time persisted Company Intelligence facts without formal authority.
 ATOMIC_EVIDENCE_VERSION = "atomic-evidence-shadow-v2-company-research"
+# Phase 3 makes evidence aggregation reproducible and auditable.  These policy
+# versions never grant a research assessment action authority by themselves.
+DIMENSION_AGGREGATION_POLICY_VERSION = "dimension-aggregation-v1-fact-polarity"
+FUNDAMENTAL_AGGREGATION_POLICY_VERSION = "fundamental-aggregation-v1-dimension-consensus"
+RESEARCH_AGGREGATION_POLICY_VERSION = "research-aggregation-v1-domain-consensus"
 # v3 is a Day-0 correctness break: REDUCE now requires an existing position.
 # Bumping the version prevents historical v2 empty-position REDUCE reports from
 # remaining eligible for next-session execution after deployment.
@@ -60,6 +65,9 @@ def audit_version_snapshot() -> dict[str, str]:
         "context_schema_version": "context-v1",
         "evidence_version": EVIDENCE_VERSION,
         "atomic_evidence_version": ATOMIC_EVIDENCE_VERSION,
+        "dimension_aggregation_policy_version": DIMENSION_AGGREGATION_POLICY_VERSION,
+        "fundamental_aggregation_policy_version": FUNDAMENTAL_AGGREGATION_POLICY_VERSION,
+        "research_aggregation_policy_version": RESEARCH_AGGREGATION_POLICY_VERSION,
         "action_policy_version": ACTION_POLICY_VERSION,
         "open_gate_audit_version": OPEN_GATE_AUDIT_VERSION,
         "sizing_version": SIZING_VERSION,

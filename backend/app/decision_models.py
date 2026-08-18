@@ -7,6 +7,7 @@ from typing import Literal
 from pydantic import BaseModel, ConfigDict, Field
 
 from app.atomic_models import AtomicEvidenceSnapshot
+from app.research_assessment import ResearchAssessment
 
 
 class DecisionModel(BaseModel):
@@ -360,6 +361,7 @@ class DecisionReport(DecisionModel):
     data_quality: DecisionQualitySummary
     evidence: tuple[EvidenceItem, ...]
     atomic_evidence_shadow: AtomicEvidenceSnapshot | None = None
+    research_assessment: ResearchAssessment | None = None
     action_candidates: tuple[ActionCandidate, ...]
     operation_items: tuple[OperationItem, ...] = ()
     ai_assessment: AiResearchAssessment | None = None

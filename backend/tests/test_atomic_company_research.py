@@ -406,3 +406,6 @@ def test_xiaomi_frozen_shadow_benchmark_is_reproducible_and_action_isolated(tmp_
     assert legacy_report.action == shadow_report.action == "WATCH"
     assert legacy_report.action_candidates == shadow_report.action_candidates
     assert shadow_report.atomic_evidence_shadow.snapshot_hash == first.snapshot_hash
+    assert shadow_report.research_assessment is not None
+    assert shadow_report.research_assessment.research_bias == "MIXED"
+    assert shadow_report.research_assessment.decision_confidence is None
