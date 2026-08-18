@@ -1,9 +1,29 @@
 # ThirdHand Backend Architecture v3
 
 ## 0. Status
-This is the consolidated implementation baseline after the Xiaomi T4-E benchmark and inspection of the current GitHub branch `agent/stock-discipline-os-core`.
+This is the single authoritative v3 architecture document. It defines both the
+target authority boundaries and the current implementation conformance; it
+supersedes all earlier v1/v2 designs, amendments and duplicate v3 documents.
 
 The current repository already has strong production invariants around DataHub quality, provider lineage, DecisionPackage hashing, AI isolation, and unified freeze. v3 extends those mechanisms; it does not replace them with a parallel stack.
+
+## 0.1 Current implementation conformance
+
+| Area | Status | Code truth |
+|---|---|---|
+| Data, identity, events and canonical price/time | Complete | Instrument metadata, market-scoped regime, canonical snapshot and event gates are formal inputs. |
+| Atomic evidence and deterministic aggregation | Complete | Fact/availability/conflict provenance, point-in-time Company Intelligence, versioned aggregation and semantic validation are persisted. |
+| Decision semantics | Partial | Entry/Position actions and formal action authority exist; weekly/60m/15m/5m technical inputs are explicitly unavailable, and `ResearchAssessment` is still audit/research authority rather than an arbiter input. |
+| Market/execution adapters | Partial | CN lot/T+1/fee and PositionLot FIFO are formal; HK/US are safely blocked until their fee schedules and a multi-currency FX ledger exist. |
+| Decision continuity | Partial | Prior decision, episode, material change, cooldown/review fields and position age exist; runtime scheduling does not yet enforce or surface review/cooldown. |
+| Model policy and audit | Complete for the configured DeepSeek provider | Atomic prompt projection, Flash/Pro routing, schema/semantic checks, hashes, usage and retry traces are persisted. A generic multi-provider capability registry is not implemented. |
+| Feedback | Complete as an audit dataset | Frozen decision/execution lineage, actual-vs-hypothetical outcomes and read-only policy-version export exist; there is no automatic tuning. |
+
+The target diagram below is deliberately broader than the current formal action
+path. The current path is `DecisionContext -> EvidenceEngine -> ActionPolicy ->
+DecisionArbiter -> DecisionContinuity -> formal_action`; Atomic Evidence,
+ResearchAssessment and AI are deterministic/auditable research inputs beside
+that path. They do not silently gain action authority.
 
 ## 1. Existing foundations to preserve
 

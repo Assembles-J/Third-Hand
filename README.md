@@ -64,4 +64,5 @@ symbol,name,quantity,average_cost
 3. 第 4 周：关注偏好、风险暴露、每日报告；所有结论附来源和置信度。
 4. 后续：合规评审后再接入付费行情、LLM 摘要、推送与回测。
 
-详见 [产品与接口设计](docs/DESIGN.md)。
+详见 [当前 v3 架构设计](docs/ThirdHand_Architecture_v3_consolidated.md) 与
+[当前 v3 路线图](docs/ThirdHand_v3_Roadmap_and_Ledger.md)。

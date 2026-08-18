@@ -1,5 +1,28 @@
 # ThirdHand v3 Redesign Ledger and Roadmap
 
+> **Canonical status (2026-08-18):** This is the only active implementation
+> ledger. `ThirdHand_Architecture_v3_consolidated.md` is the paired authority
+> contract. All other files formerly under `docs/` are historical and removed.
+>
+> **Completed:** Phases 1–3, Phase 7 and Phase 8. **Active gaps:** Phase 4
+> additional timeframe ingestion and ResearchAssessment-to-arbiter promotion;
+> Phase 5 HK/US fee + multi-currency FX ledger; Phase 6 runtime review/cooldown
+> scheduling. No gap is hidden behind a fallback or delegated to an LLM.
+
+## Current implementation decision
+
+The formal action path remains intentionally conservative:
+
+```text
+DecisionContext -> EvidenceEngine -> ActionPolicy -> DecisionArbiter
+                -> DecisionContinuity -> formal_action -> ExecutionPrecheck
+```
+
+Atomic Evidence, ResearchAssessment and AI explanations are persisted and
+audited beside this path. Research is not silently promoted into an action,
+while AI never receives authority over price/time, quality, market rules,
+sellable quantity, hard gates, sizing or formal action.
+
 ## A. Consolidated ledger disposition
 
 Legend:
@@ -76,18 +99,22 @@ Legend:
 | DecisionSnapshot | MERGE initially | extend DecisionPackage/PlanAnalysisRun first; add table when memory requires it |
 | separate EvidenceAvailabilitySnapshot service | MERGE | keep inside EvidenceSnapshot/quality snapshot |
 
-## B. Current-code findings that directly affect sequencing
+## B. Current-code conformance findings
 
-1. `one_click_pipeline._decision()` still maps held `NO_TRADE` to `REDUCE`; this must be removed when Entry/Position semantics are introduced.
-2. `_market_assessment()` is currently CSI300/A-share-specific.
-3. `_floor_lot()` is globally 100-share based.
-4. current `DecisionPackage` already separates deterministic rule state from executable state and blocks poor required evidence.
-5. AI validation already prevents mutation of deterministic fields and validates cited Evidence.
-6. repository quality invariants explicitly require unified provider lineage, time semantics, and freeze path.
+1. The former held `NO_TRADE -> REDUCE` behavior is removed from formal semantics; held WATCH resolves to HOLD.
+2. Market regime, lot and settlement selection are market-scoped. CN remains executable; HK/US are intentionally blocked, not defaulted to CN behavior.
+3. Atomic Evidence and ResearchAssessment are deterministic and persisted, but not yet DecisionArbiter inputs. This is an explicit Phase 4 promotion gap, not an accidental omission.
+4. Model policy/audit is complete for the configured DeepSeek client, while a generic provider-capability registry remains out of scope.
+5. Feedback is immutable audit data and has no policy/sizing/model-routing write path.
+6. Repository quality, time and freeze invariants remain the migration anchors.
 
 Therefore v3 is an evolution of the present architecture, not a rewrite.
 
-## C. Implementation roadmap
+## C. Target requirements and acceptance criteria
+
+The following phase descriptions are the target contract. The canonical status
+at the start of this file overrides their historical tense: an item remains
+active until its stated acceptance criteria are actually met.
 
 ### Phase 0 — Architecture/documentation lock
 Deliverables:
@@ -192,7 +219,7 @@ Acceptance:
 ### Phase 7 — Model policy and audit
 Implement:
 - compact atomic research prompt
-- provider-capability ModelPolicy
+- configured-provider ModelPolicy (generic capability registry deferred)
 - Flash/default vs Pro/escalation
 - schema + semantic validation
 - observable runtime audit
