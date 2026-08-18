@@ -15,7 +15,6 @@ from app.decision_models import (
     QuoteSnapshot,
     SourceFreshness,
 )
-from app.domain.research.data_gateway import ResearchDataSnapshot, canonical_hash
 from app.infrastructure.database.company_intelligence_repository import CompanyIntelligenceRepository
 from app.infrastructure.database.research_data_repository import ResearchDataRepository
 from app.storage import PortfolioStore
@@ -69,15 +68,19 @@ def _decision_context() -> DecisionContext:
     )
 
 
-def _snapshot(snapshot_id: str, data_type: str, payload, *, available_at="2026-08-17T15:00:00+08:00") -> ResearchDataSnapshot:
-    return ResearchDataSnapshot(
-        snapshot_id=snapshot_id,
+def _save_snapshot(
+    research: ResearchDataRepository,
+    data_type: str,
+    payload,
+    *,
+    available_at="2026-08-17T15:00:00+08:00",
+):
+    snapshot_id = research.save_snapshot(
         data_type=data_type,
         symbol="01810",
-        query_hash=f"query-{snapshot_id}",
+        query_hash=f"query-{data_type}-{available_at}",
         schema_version="research-data-v1",
         payload=payload,
-        payload_hash=canonical_hash(payload),
         provider="AKShare",
         source_reference=f"Eastmoney/AKShare {data_type}",
         as_of="2026-06-30T00:00:00+08:00",
@@ -87,6 +90,9 @@ def _snapshot(snapshot_id: str, data_type: str, payload, *, available_at="2026-0
         coverage_keys=(),
         freshness_status="fresh",
     )
+    snapshot = research.get_snapshot(snapshot_id)
+    assert snapshot is not None
+    return snapshot
 
 
 def _save_company_context(store, *, generated_at="2026-08-17T15:30:00+08:00", future_dataset=False):
@@ -114,15 +120,13 @@ def _save_company_context(store, *, generated_at="2026-08-17T15:30:00+08:00", fu
             "net_margin_percent": 4.8,
         }]
     }
-    profit = _snapshot(
-        "snap-profit",
+    profit = _save_snapshot(
+        research,
         "company_profit_cashflow_drivers",
         profit_payload,
         available_at="2026-08-17T17:00:00+08:00" if future_dataset else "2026-08-17T15:00:00+08:00",
     )
-    margin = _snapshot("snap-margin", "company_margin_structure", margin_payload)
-    research.save_snapshot(profit)
-    research.save_snapshot(margin)
+    margin = _save_snapshot(research, "company_margin_structure", margin_payload)
 
     payload = {
         "symbol": "01810",
@@ -162,7 +166,8 @@ def _save_company_context(store, *, generated_at="2026-08-17T15:30:00+08:00", fu
         "generated_at": generated_at,
         "policy": {"usage_scope": "RESEARCH_ONLY", "formal_trade_authority": False},
     }
-    return CompanyIntelligenceRepository(store).save_context(payload)
+    company = CompanyIntelligenceRepository(store).save_context(payload)
+    return {"company": company, "profit": profit, "margin": margin}
 
 
 def test_company_repository_replays_latest_context_at_or_before_cutoff(tmp_path):
@@ -186,17 +191,18 @@ def test_company_repository_replays_latest_context_at_or_before_cutoff(tmp_path)
 
 def test_company_atomic_source_emits_mixed_polarity_from_one_persisted_snapshot(tmp_path):
     store = PortfolioStore(tmp_path / "company-facts.db")
-    company = _save_company_context(store)
+    saved = _save_company_context(store)
 
     result = CompanyResearchAtomicSource(store).build(_decision_context())
     by_metric = {fact.metric: fact for fact in result.facts}
     availability = {item.capability: item for item in result.availability}
+    profit = saved["profit"]
 
     assert by_metric["revenue_yoy_percent"].polarity == "ADVERSE"
     assert by_metric["holder_profit_yoy_percent"].polarity == "SUPPORTIVE"
     assert by_metric["gross_margin_percent"].polarity == "NEUTRAL_MATERIAL"
-    assert by_metric["revenue_yoy_percent"].source_evidence_id == "research_snapshot:snap-profit"
-    assert by_metric["holder_profit_yoy_percent"].source_evidence_id == "research_snapshot:snap-profit"
+    assert by_metric["revenue_yoy_percent"].source_evidence_id == f"research_snapshot:{profit.snapshot_id}"
+    assert by_metric["holder_profit_yoy_percent"].source_evidence_id == f"research_snapshot:{profit.snapshot_id}"
     assert by_metric["revenue_yoy_percent"].source_reference == "Eastmoney/AKShare company_profit_cashflow_drivers"
     assert by_metric["revenue_yoy_percent"].available_at == "2026-08-17T15:00:00+08:00"
     assert by_metric["revenue_yoy_percent"].comparison_adequacy == "adequate"
@@ -205,7 +211,7 @@ def test_company_atomic_source_emits_mixed_polarity_from_one_persisted_snapshot(
     assert availability["company_dataset.margin_structure"].status == "available"
     assert availability["company_dataset.valuation_framework"].status == "missing"
     assert availability["company_research"].status == "degraded"
-    assert f"company_context:{company['context_id']}" in availability["company_research"].source_keys
+    assert f"company_context:{saved['company']['context_id']}" in availability["company_research"].source_keys
 
 
 def test_future_dataset_is_not_visible_to_earlier_decision(tmp_path):
