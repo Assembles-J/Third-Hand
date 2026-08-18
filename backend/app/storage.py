@@ -961,6 +961,23 @@ class PortfolioStore:
         with self._connect() as connection:
             connection.execute("INSERT INTO decision_ai_runs (run_id,context_id,input_hash,status,error_code,payload,metadata,created_at) VALUES (?,?,?,?,?,?,?,?)", (str(item["run_id"]), str(item["context_id"]), str(item["input_hash"]), str(item["status"]), item.get("error_code"), json.dumps(item.get("payload", {}), ensure_ascii=False), json.dumps(item.get("metadata", {}), ensure_ascii=False), str(item["created_at"])))
 
+    def decision_ai_runs(self, context_id: str | None = None, limit: int = 100) -> list[dict[str, object]]:
+        """Read the safe model-runtime audit without exposing credentials or reasoning."""
+        query = "SELECT run_id,context_id,input_hash,status,error_code,payload,metadata,created_at FROM decision_ai_runs"
+        args: list[object] = []
+        if context_id:
+            query += " WHERE context_id=?"
+            args.append(str(context_id))
+        query += " ORDER BY created_at DESC LIMIT ?"
+        args.append(max(1, limit))
+        with self._connect() as connection:
+            rows = connection.execute(query, args).fetchall()
+        return [{
+            **dict(row),
+            "payload": json.loads(str(row["payload"])),
+            "metadata": json.loads(str(row["metadata"])),
+        } for row in rows]
+
     def save_decision_report(self, item: dict[str, object]) -> None:
         if not self._is_valid_decision_report(item):
             raise ValueError("refusing to persist an incomplete decision report")

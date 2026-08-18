@@ -1,9 +1,11 @@
 import json
+from pathlib import Path
 
 from app.decision_ai import DecisionAiService
 from app.decision_guard import DecisionGuard
 from app.decision_models import ActionCandidate, AiResearchAssessment
 from app.llm_client import LlmClientError, LlmResponse, LlmUsage
+from app.storage import PortfolioStore
 
 
 class Store:
@@ -88,3 +90,18 @@ def test_guard_rejects_ai_action_outside_policy_candidates():
     assessment = AiResearchAssessment(thesis_status="unknown", preferred_action="ADD", uncertainty="high", summary="add")
 
     assert DecisionGuard().guard((_candidate("REDUCE"),), assessment) is None
+
+
+def test_persisted_model_audit_is_readable_without_secrets(tmp_path: Path):
+    store = PortfolioStore(tmp_path / "model-audit.db")
+    store.save_decision_ai_run({
+        "run_id": "run-1", "context_id": "context-1", "input_hash": "input-1",
+        "status": "succeeded", "error_code": None, "payload": {},
+        "metadata": {"prompt_hash": "a" * 64, "retry_fallback_path": []},
+        "created_at": "2026-08-18T10:00:00+08:00",
+    })
+
+    audit = store.decision_ai_runs("context-1")
+
+    assert audit[0]["metadata"]["prompt_hash"] == "a" * 64
+    assert "api_key" not in audit[0]["metadata"]
