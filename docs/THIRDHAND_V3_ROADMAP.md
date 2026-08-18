@@ -70,24 +70,43 @@
 
 ## 3. Roadmap
 
-### Phase 1 — Data correctness and market identity
+### Phase 1 — Data correctness and market identity — COMPLETE
 
-Implement explicit instrument/market identity, canonical snapshot semantics, cross-source consistency, first-class corporate events, market-specific regime selection and stale-risk quarantine.
+Implemented in PRs #30-#33. The production decision path now has explicit instrument/market identity, canonical quote/daily authority, cross-source consistency, first-class scheduled earnings, market-scoped regime selection, stale-risk quarantine, and migration handling for the legacy synthetic paper-market instrument placeholder.
 
-Acceptance:
+Acceptance met:
 - quote and bars cannot silently represent different authority times;
 - display fallback cannot act as execution price;
 - HK decisions never consume CN market regime;
-- event date is explicit evidence;
-- existing CN behavior remains compatible.
+- scheduled earnings date is explicit neutral-material evidence and can conservatively block only new risk near disclosure;
+- the formal paper-decision path remains Local-First;
+- legacy CN behavior remains compatible while HK/US no longer inherit CN lot/currency defaults.
 
-### Phase 2 — Atomic Evidence shadow mode
+### Phase 2 — Atomic Evidence shadow mode — ACTIVE
 
-Add `AtomicFactRecord`, FactExtractor, compact evidence snapshot, deterministic availability/conflicts, provenance, materiality and comparison adequacy. Run beside current evidence; no action changes.
+Add `AtomicFactRecord`, `FactExtractor`, compact evidence snapshots, deterministic availability/conflicts, provenance, materiality and comparison adequacy. Run beside current evidence with no action changes.
+
+Current first slice:
+- add strict atomic fact / availability / conflict schemas;
+- derive source-level facts from the already-authoritative `DecisionContext` and current deterministic `EvidenceItem`s;
+- keep supportive and adverse facts separate even when they come from the same source document;
+- mirror existing `DecisionQualitySummary` availability/conflict semantics rather than create a second quality authority;
+- hash the compact evidence content against the frozen `context.input_hash`;
+- attach the full atomic snapshot to `DecisionReport` for existing JSON persistence;
+- construct Atomic Evidence only **after** current `ActionPolicyEngine` candidates are frozen;
+- do not pass Atomic Evidence to ActionPolicy, AI, sizing, execution or final action selection during Phase 2.
+
+Phase 2 acceptance before promotion:
+- identical frozen inputs produce identical atomic snapshot hashes;
+- source provenance survives fact extraction;
+- mixed-polarity facts from one source remain separate;
+- missing/stale/conflicted capabilities agree with existing deterministic quality state;
+- scheduled earnings remains `NEUTRAL_MATERIAL` rather than support/opposition;
+- full regression suite proves no formal action behavior changes.
 
 ### Phase 3 — Deterministic research aggregation
 
-Move formal dimension/fundamental/research aggregation out of the LLM. Add three confidence layers and semantic validation.
+Move formal dimension/fundamental/research aggregation out of the LLM. Add three confidence layers and semantic validation. Atomic Evidence may gain formal aggregation authority only in this phase after shadow comparisons are trustworthy.
 
 ### Phase 4 — Decision semantics/state machine
 
@@ -109,15 +128,10 @@ Use compact evidence by default, deep-model escalation only when justified, and 
 
 Link user actions and outcomes to exact frozen decisions. Do not auto-tune production policy until offline labels/evaluation are trustworthy.
 
-## 4. First implementation slice
+## 4. Migration guardrails
 
-The first PR deliberately stays narrow:
-
-1. add a single `MarketAdapter`/instrument identity boundary;
-2. preserve current CN/HK symbol compatibility;
-3. add US identity/calendar capability without changing strategy logic;
-4. make `TradingCalendarService.market_for_symbol` delegate to the new resolver;
-5. add focused unit tests;
-6. do not change sizing, strategy thresholds, AI authority or final decisions.
-
-The next PR will build CanonicalInputSnapshot consistency on top of this boundary.
+1. Existing `DecisionContext`, `DecisionQualitySummary`, `EvidenceEngine`, deterministic `ActionPolicyEngine`, `DecisionReport`, and execution audit remain migration anchors.
+2. New shadow representations must be additive and auditable before they receive policy authority.
+3. Availability and conflict truth stay deterministic; an LLM may explain them but cannot define whether data exists, is stale, or conflicts.
+4. Research bias is not an action. Entry/position action semantics remain a later phase.
+5. No phase may silently reintroduce cross-market defaults, display-price execution, synchronous remote dependencies on the formal paper-decision path, or AI action override.
