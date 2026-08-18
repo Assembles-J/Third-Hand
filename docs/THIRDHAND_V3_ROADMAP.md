@@ -173,9 +173,14 @@ scheduling observable in the paper runtime.
 
 Add DecisionMemory, episode id, material-change detector, cooldown/review-after and prior-decision references.
 
-### Phase 7 — Model policy and audit
+### Phase 7 — Model policy and audit — ACTIVE
 
-Use compact evidence by default, deep-model escalation only when justified, and persist observable runtime audit metadata with schema + semantic validation.
+ModelPolicy now selects Flash/default or Pro escalation from deterministic Atomic
+Evidence complexity only. The AI receives a compact atomic evidence projection,
+while every run records prompt/evidence/content hashes, tier/model/thinking
+settings, usage, validation result and repair retry path. AI output remains
+explanatory and cannot mutate formal actions. Remaining: wire provider-internal
+transport retries into the same audit record when the provider exposes them.
 
 ### Phase 8 — Feedback
 

@@ -41,6 +41,11 @@ def test_ai_service_accepts_only_known_evidence_and_policy_candidate():
     assert result.status == "succeeded"
     assert result.assessment.preferred_action == "REDUCE"
     assert store.runs[0]["status"] == "succeeded"
+    metadata = store.runs[0]["metadata"]
+    assert metadata["model_tier"] == "FLASH_DEFAULT"
+    assert len(metadata["prompt_hash"]) == 64
+    assert len(metadata["evidence_hash"]) == 64
+    assert metadata["validation"] == "schema_and_semantic_passed"
 
 
 def test_ai_service_rejects_unknown_evidence_and_preserves_rule_fallback():
@@ -52,6 +57,7 @@ def test_ai_service_rejects_unknown_evidence_and_preserves_rule_fallback():
     assert result.status == "failed"
     assert result.error_code == "invalid_ai_output"
     assert store.runs[-1]["status"] == "failed"
+    assert store.runs[-1]["metadata"]["retry_fallback_path"][0]["reason"] == "schema_or_semantic_validation_failed"
 
 
 def test_ai_service_accepts_a_fenced_json_response_and_canonicalizes_a_unique_title():

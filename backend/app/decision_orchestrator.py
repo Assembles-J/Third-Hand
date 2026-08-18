@@ -66,7 +66,7 @@ class DecisionOrchestrator:
                 len(evidence),
                 ",".join(candidate.action for candidate in candidates),
             )
-            ai_outcome = self.ai_service.assess(context, evidence, candidates)
+            ai_outcome = self.ai_service.assess(context, evidence, candidates, atomic_evidence=atomic_evidence_shadow)
         else:
             logger.warning(
                 "Decision AI disabled context_id=%s symbol=%s code=feature_disabled",

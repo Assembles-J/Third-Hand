@@ -5,6 +5,7 @@ import json
 import logging
 import os
 import re
+import hashlib
 from dataclasses import dataclass
 from uuid import uuid4
 
@@ -14,6 +15,7 @@ from app import decision_config as config
 from app.decision_models import AiResearchAssessment, DecisionContext, EvidenceItem, ActionCandidate
 from app.decision_prompts import decision_research_messages
 from app.llm_client import DeepSeekClient, LlmClientError
+from app.model_policy import ModelPolicy
 from app.time_utils import beijing_now
 
 logger = logging.getLogger(__name__)
@@ -28,40 +30,65 @@ class DecisionAiOutcome:
 
 
 class DecisionAiService:
-    def __init__(self, store, client: DeepSeekClient | None = None) -> None:
+    def __init__(self, store, client: DeepSeekClient | None = None, model_policy: ModelPolicy | None = None) -> None:
         self.store, self.client = store, client or DeepSeekClient()
+        self.model_policy = model_policy or ModelPolicy()
 
-    def assess(self, context: DecisionContext, evidence: tuple[EvidenceItem, ...], candidates: tuple[ActionCandidate, ...]) -> DecisionAiOutcome:
+    def assess(self, context: DecisionContext, evidence: tuple[EvidenceItem, ...], candidates: tuple[ActionCandidate, ...], *, atomic_evidence=None) -> DecisionAiOutcome:
         # The model is a constrained evidence interpreter, not an action engine:
         # it may choose only among candidates already produced by hard rules.
         run = {"run_id": str(uuid4()), "context_id": context.context_id, "input_hash": context.input_hash, "prompt_version": config.DECISION_RESEARCH_PROMPT_VERSION, "created_at": beijing_now().isoformat()}
+        settings = getattr(self.client, "settings", None)
+        selection = self.model_policy.select(
+            atomic_evidence,
+            default_model=getattr(settings, "model", None),
+            reasoning_model=getattr(settings, "reasoning_model", None),
+            default_max_tokens=_decision_ai_max_tokens(),
+        )
+        evidence_hash = atomic_evidence.snapshot_hash if atomic_evidence is not None else _hash_json([
+            item.model_dump(mode="json") for item in evidence
+        ])
         if not self.client.enabled:
-            self.store.save_decision_ai_run({**run, "status": "skipped", "error_code": "not_configured", "payload": {}})
+            self.store.save_decision_ai_run({**run, "status": "skipped", "error_code": "not_configured", "payload": {}, "metadata": self._audit_metadata(selection, evidence_hash=evidence_hash, retry_path=())})
             logger.warning("Decision AI skipped context_id=%s symbol=%s code=not_configured", context.context_id, context.symbol)
             return DecisionAiOutcome(None, "skipped", "not_configured")
-        messages = decision_research_messages(context, evidence, candidates)
-        max_tokens = _decision_ai_max_tokens()
+        messages = decision_research_messages(context, evidence, candidates, atomic_evidence=atomic_evidence)
+        prompt_hash = _hash_json(messages)
+        retry_path: list[dict[str, object]] = []
         for attempt in range(2):
             try:
-                response = self.client.chat_json(messages, max_tokens=max_tokens, thinking=False)
+                response = self.client.chat_json(messages, model=selection.model, max_tokens=selection.max_tokens, thinking=selection.thinking)
                 assessment = AiResearchAssessment.model_validate_json(_json_object(response.content))
                 assessment = self._canonicalize_references(assessment, evidence)
                 self._validate_references(assessment, evidence, candidates)
-                self.store.save_decision_ai_run({**run, "status": "succeeded", "error_code": None, "model": response.model, "payload": assessment.model_dump(mode="json"), "metadata": {"response_id": response.response_id, "total_tokens": response.usage.total_tokens, "latency_ms": response.latency_ms}})
+                self.store.save_decision_ai_run({**run, "status": "succeeded", "error_code": None, "model": response.model, "payload": assessment.model_dump(mode="json"), "metadata": {**self._audit_metadata(selection, evidence_hash=evidence_hash, retry_path=tuple(retry_path)), "prompt_hash": prompt_hash, "content_hash": _hash_json(assessment.model_dump(mode="json")), "response_id": response.response_id, "prompt_tokens": response.usage.prompt_tokens, "completion_tokens": response.usage.completion_tokens, "total_tokens": response.usage.total_tokens, "latency_ms": response.latency_ms, "validation": "schema_and_semantic_passed"}})
                 logger.info("Decision AI succeeded context_id=%s symbol=%s model=%s latency_ms=%s tokens=%s", context.context_id, context.symbol, response.model, response.latency_ms, response.usage.total_tokens)
                 return DecisionAiOutcome(assessment, "succeeded", model=response.model)
             except (LlmClientError, ValidationError, ValueError, json.JSONDecodeError) as error:
                 if attempt == 0 and not isinstance(error, LlmClientError):
+                    retry_path.append({"attempt": attempt + 1, "reason": "schema_or_semantic_validation_failed", "error_type": type(error).__name__})
                     messages = [*messages, {"role": "user", "content": _repair_instruction(error, evidence, candidates)}]
+                    prompt_hash = _hash_json(messages)
                     continue
                 code = error.code if isinstance(error, LlmClientError) else "invalid_ai_output"
                 status_code = error.status_code if isinstance(error, LlmClientError) else None
                 model = getattr(getattr(self.client, "settings", None), "model", None)
-                self.store.save_decision_ai_run({**run, "status": "failed", "error_code": code, "payload": {}, "metadata": {"model": model, "status_code": status_code}})
+                retry_path.append({"attempt": attempt + 1, "reason": code, "error_type": type(error).__name__})
+                self.store.save_decision_ai_run({**run, "status": "failed", "error_code": code, "payload": {}, "metadata": {**self._audit_metadata(selection, evidence_hash=evidence_hash, retry_path=tuple(retry_path)), "prompt_hash": prompt_hash, "model": model, "status_code": status_code, "validation": "failed"}})
                 logger.warning("Decision AI failed context_id=%s symbol=%s model=%s code=%s status=%s error_type=%s", context.context_id, context.symbol, model, code, status_code, type(error).__name__)
                 return DecisionAiOutcome(None, "failed", code, model)
 
         return DecisionAiOutcome(None, "failed", "unknown")
+
+    def _audit_metadata(self, selection, *, evidence_hash: str, retry_path: tuple[dict[str, object], ...]) -> dict[str, object]:
+        return {
+            "provider": "deepseek", "model_policy_version": self.model_policy.version,
+            "model_tier": selection.tier, "selected_model": selection.model,
+            "thinking": selection.thinking, "max_tokens": selection.max_tokens,
+            "escalation_reasons": list(selection.escalation_reasons),
+            "evidence_hash": evidence_hash, "assessment_schema_version": "ai-research-assessment-v1",
+            "retry_fallback_path": list(retry_path),
+        }
 
     @staticmethod
     def _validate_references(assessment, evidence, candidates) -> None:
@@ -129,3 +156,7 @@ def _decision_ai_max_tokens() -> int:
     except ValueError:
         logger.warning("DECISION_AI_MAX_TOKENS is invalid; using 1200")
         return 1200
+
+
+def _hash_json(value: object) -> str:
+    return hashlib.sha256(json.dumps(value, ensure_ascii=False, sort_keys=True, default=str).encode("utf-8")).hexdigest()
