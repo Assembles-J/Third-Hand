@@ -6,6 +6,7 @@ import json
 from datetime import datetime
 from uuid import uuid4
 
+from app.corporate_events import pre_event_policy_blockers
 from app.data_quality import summarize_data_quality
 from app.decision_models import (
     AccountSnapshot, DailyBarSummary, DecisionContext, EventSnapshot,
@@ -59,6 +60,7 @@ class DecisionContextBuilder:
         # caches. Keep upstream fetching and LLM calls out of this boundary so
         # a saved decision can be audited against stable input data.
         symbol = self._symbol(symbol)
+        analysis_at = beijing_now()
         # Paper trading must reason from its own ledger, never from the user's
         # real holdings. The override keeps the same canonical context schema
         # while making the simulated account an auditable decision input.
@@ -86,7 +88,12 @@ class DecisionContextBuilder:
             else TradingCalendarService.market_for_symbol(symbol)
         )
         portfolio_item = self._portfolio_item(symbol)
-        events = self._events(symbol)
+        events = self._events(symbol, market)
+        event_policy_blockers = pre_event_policy_blockers(
+            events,
+            market=market,
+            analysis_at=analysis_at,
+        )
 
         all_market_values: list[float] = []
         for account_holding in holdings:
@@ -116,6 +123,7 @@ class DecisionContextBuilder:
             market_as_of=market_regime.as_of if market_regime else None,
             market_retrieved_at=market_flow.retrieved_at if market_flow else None,
             market=market,
+            event_policy_blockers=event_policy_blockers,
         )
         account = AccountSnapshot(
             available_cash=cash, total_market_value=total_market_value, total_assets=total_assets,
@@ -135,27 +143,73 @@ class DecisionContextBuilder:
         # changed conclusion from a changed input snapshot.
         input_hash = _canonical_hash({key: value.model_dump(mode="json") if hasattr(value, "model_dump") else value for key, value in payload.items()})
         return DecisionContext(
-            context_id=str(uuid4()), generated_at=beijing_now(), input_hash=input_hash, **payload,
+            context_id=str(uuid4()), generated_at=analysis_at, input_hash=input_hash, **payload,
         )
 
     def _portfolio_item(self, symbol: str) -> dict[str, object] | None:
         payload = self.store.cached_portfolio_analysis() or {}
         return next((item for item in payload.get("items", []) if str(item.get("symbol", "")).upper() == symbol), None)
 
-    def _events(self, symbol: str) -> tuple[EventSnapshot, ...]:
-        # Cached AI analysis is research-only. Its directional label must not
-        # enter deterministic evidence because ActionPolicy consumes negative
-        # event evidence for ADD/REDUCE decisions. A future policy event must
-        # be a separately verified, deterministic feature.
-        results = []
+    def _events(self, symbol: str, market: str | None = None) -> tuple[EventSnapshot, ...]:
+        results: list[EventSnapshot] = []
+        seen: set[str] = set()
+
+        # Scheduled corporate events are deterministic calendar facts. Their
+        # date/materiality may enter policy, but their direction is always neutral
+        # until actual disclosure evidence exists.
+        scheduled_bundle = {}
+        if hasattr(self.store, "cached_market_intelligence"):
+            scheduled_bundle = self.store.cached_market_intelligence(f"corporate_events:{symbol}") or {}
+        if scheduled_bundle.get("status") in {"ready", "partial", "stale_fallback"}:
+            bundle_market = str(scheduled_bundle.get("market") or "").strip().upper()
+            if not market or not bundle_market or bundle_market == market:
+                for item in scheduled_bundle.get("events", []):
+                    if not isinstance(item, dict):
+                        continue
+                    item_symbol = str(item.get("symbol") or symbol).strip().upper()
+                    item_market = str(item.get("market") or bundle_market).strip().upper()
+                    if item_symbol != symbol or (market and item_market and item_market != market):
+                        continue
+                    event_id = str(item.get("event_id") or "").strip()
+                    scheduled_at = str(item.get("scheduled_at") or "").strip() or None
+                    if not event_id or not scheduled_at or event_id in seen:
+                        continue
+                    results.append(EventSnapshot(
+                        event_id=event_id,
+                        title=str(item.get("title") or "已知公司事件"),
+                        impact="neutral",
+                        source=str(item.get("source") or scheduled_bundle.get("source") or "corporate_event_calendar"),
+                        source_reference=item.get("source_reference") or scheduled_bundle.get("source_reference"),
+                        published_at=None,
+                        summary=str(item.get("summary") or "已知披露日属于方向未知但重要的事件风险。"),
+                        event_type=str(item.get("event_type") or "corporate_event"),
+                        lifecycle="upcoming",
+                        scheduled_at=scheduled_at,
+                        evidence_polarity="NEUTRAL_MATERIAL",
+                        verification_level=str(item.get("verification_level") or "unknown"),
+                        policy_eligible=bool(item.get("policy_eligible")),
+                    ))
+                    seen.add(event_id)
+                    if len(results) == 5:
+                        return tuple(results)
+
+        # Cached content / AI interpretation remains research-only. Its
+        # directional label must not enter deterministic evidence because
+        # ActionPolicy must never trade on an LLM sentiment label.
         for item in self.store.cached_content([symbol], limit=10):
             ai = item.get("ai_analysis") or {}
+            event_id = str(item.get("id", ""))
+            if not event_id or event_id in seen:
+                continue
             results.append(EventSnapshot(
-                event_id=str(item.get("id", "")), title=str(item.get("title", "")), impact="uncertain",
+                event_id=event_id, title=str(item.get("title", "")), impact="uncertain",
                 source=str(item.get("source_name", "content_cache")), source_reference=item.get("source_url"),
                 published_at=str(item["published_at"]) if item.get("published_at") else None,
                 summary=str(ai.get("summary") or item.get("explanation") or "") or None,
+                event_type="content", lifecycle="observed", verification_level="unknown",
+                policy_eligible=False,
             ))
+            seen.add(event_id)
             if len(results) == 5:
                 break
         return tuple(results)
@@ -308,4 +362,14 @@ class DecisionContextBuilder:
 
     @staticmethod
     def _source_versions() -> dict[str, str]:
-        return {"context_schema": CONTEXT_SCHEMA_VERSION, "quote": "market_quote_cache-v1", "daily_bars": "daily_price_cache-v1", "risk": "risk_cache-v1", "events": "content_cache-v1", "market_regime": "market_intelligence_cache-v2-market-scoped", "market_flow": "market_intelligence_cache-v1", "trade_plan": "trade_plans-v1"}
+        return {
+            "context_schema": CONTEXT_SCHEMA_VERSION,
+            "quote": "market_quote_cache-v1",
+            "daily_bars": "daily_price_cache-v1",
+            "risk": "risk_cache-v1",
+            "events": "content_cache-v1",
+            "corporate_events": "corporate-event-calendar-v1",
+            "market_regime": "market_intelligence_cache-v2-market-scoped",
+            "market_flow": "market_intelligence_cache-v1",
+            "trade_plan": "trade_plans-v1",
+        }

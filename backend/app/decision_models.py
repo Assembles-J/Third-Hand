@@ -113,6 +113,12 @@ class EventSnapshot(DecisionModel):
     source_reference: str | None = None
     published_at: str | None = None
     summary: str | None = None
+    event_type: str = "content"
+    lifecycle: Literal["observed", "upcoming", "unknown"] = "observed"
+    scheduled_at: str | None = None
+    evidence_polarity: Literal["SUPPORTIVE", "ADVERSE", "NEUTRAL_MATERIAL", "CONFLICT", "MISSING"] | None = None
+    verification_level: Literal["official", "secondary_calendar", "unknown"] = "unknown"
+    policy_eligible: bool = False
 
 
 class TradePlanSnapshot(DecisionModel):

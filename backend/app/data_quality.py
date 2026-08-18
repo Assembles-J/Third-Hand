@@ -14,7 +14,8 @@ def summarize_data_quality(*, has_quote: bool, daily_bar_count: int, total_asset
                            quote_as_of: str | None = None, quote_retrieved_at: str | None = None,
                            daily_bar_as_of: str | None = None, risk_as_of: str | None = None,
                            market_as_of: str | None = None, market_retrieved_at: str | None = None,
-                           market: str | None = None) -> DecisionQualitySummary:
+                           market: str | None = None,
+                           event_policy_blockers: tuple[str, ...] = ()) -> DecisionQualitySummary:
     missing: list[str] = []
     degraded: list[str] = []
     if not has_quote:
@@ -36,9 +37,9 @@ def summarize_data_quality(*, has_quote: bool, daily_bar_count: int, total_asset
     if not has_events:
         degraded.append("events")
 
-    # Canonicalize quote/daily/risk time semantics once.  In addition to normal
+    # Canonicalize quote/daily/risk time semantics once. In addition to normal
     # freshness this detects cross-source contradictions such as a quote whose
-    # observed market date predates the latest completed daily bar.  Retrieval
+    # observed market date predates the latest completed daily bar. Retrieval
     # time alone must never make that contradiction executable.
     canonical = build_canonical_market_snapshot(
         market=market,
@@ -72,7 +73,7 @@ def summarize_data_quality(*, has_quote: bool, daily_bar_count: int, total_asset
     if not has_instrument:
         open_unavailable.append("instrument")
 
-    # Presence and freshness are different failure modes.  Only add a freshness
+    # Presence and freshness are different failure modes. Only add a freshness
     # blocker when the corresponding source actually exists.
     freshness_by_key = {item.source_key: item for item in freshness}
     present_for_open = {
@@ -87,18 +88,35 @@ def summarize_data_quality(*, has_quote: bool, daily_bar_count: int, total_asset
             open_unavailable.append(f"{source_key}.{item.status}")
 
     # Cross-source conflicts are hard OPEN/ADD blockers even when every source
-    # is individually fresh.  For example, a newly retrieved but old-market-date
+    # is individually fresh. For example, a newly retrieved but old-market-date
     # quote cannot be mixed with a newer daily bar.
     open_unavailable.extend(conflict_warnings)
 
-    open_gate = ActionGate(action="OPEN", permission="blocked" if open_unavailable else "allowed", required_fields=open_required, unavailable_fields=tuple(open_unavailable), reasons=tuple(f"data_quality.{item}" for item in open_unavailable))
+    # A known near-term corporate event is not missing/stale data and therefore
+    # does not lower the data-quality score. It is a separate deterministic
+    # policy constraint: block only prospective risk (OPEN/ADD) while leaving
+    # defensive position-management verbs available under their existing gates.
+    event_blockers = tuple(dict.fromkeys(str(item) for item in event_policy_blockers if str(item)))
+    open_gate = ActionGate(
+        action="OPEN",
+        permission="blocked" if open_unavailable or event_blockers else "allowed",
+        required_fields=open_required,
+        unavailable_fields=tuple(open_unavailable),
+        reasons=tuple(f"data_quality.{item}" for item in open_unavailable) + event_blockers,
+    )
     add_required = (*open_required, "position", "personal_rule")
     add_unavailable = [*open_unavailable]
     if not has_position:
         add_unavailable.append("position")
     if not has_personal_rule:
         add_unavailable.append("personal_rule")
-    add_gate = ActionGate(action="ADD", permission="blocked" if add_unavailable else "allowed", required_fields=add_required, unavailable_fields=tuple(add_unavailable), reasons=tuple(f"data_quality.{item}" for item in add_unavailable))
+    add_gate = ActionGate(
+        action="ADD",
+        permission="blocked" if add_unavailable or event_blockers else "allowed",
+        required_fields=add_required,
+        unavailable_fields=tuple(add_unavailable),
+        reasons=tuple(f"data_quality.{item}" for item in add_unavailable) + event_blockers,
+    )
     defensive_permission = "blocked" if not has_quote else "research_only" if stale or conflict_warnings else "allowed"
     defensive_inputs = (*missing, *stale, *conflict_warnings) if defensive_permission != "allowed" else ()
     defensive_reason = tuple(f"data_quality.{item}" for item in defensive_inputs)
