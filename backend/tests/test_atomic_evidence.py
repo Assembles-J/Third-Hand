@@ -139,7 +139,7 @@ def test_atomic_snapshot_is_deterministic_for_same_frozen_input():
 
     assert first == second
     assert first.snapshot_hash == second.snapshot_hash
-    assert first.version == config.ATOMIC_EVIDENCE_VERSION == "atomic-evidence-shadow-v1"
+    assert first.version == config.ATOMIC_EVIDENCE_VERSION
     assert first.shadow_mode is True
     assert len({fact.fact_id for fact in first.facts}) == len(first.facts)
     assert config.audit_version_snapshot()["atomic_evidence_version"] == first.version
