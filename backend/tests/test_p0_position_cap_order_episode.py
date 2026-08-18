@@ -19,10 +19,11 @@ def _seed_decision_inputs(store: PortfolioStore, *, cap: float, holding_quantity
         "source": "test", "as_of": "2026-08-18T10:00:00+08:00",
         "retrieved_at": "2026-08-18T10:00:01+08:00",
     }])
+    start = datetime(2026, 5, 1, tzinfo=timezone.utc).date()
     store.save_daily_prices("600519", [
         {
-            "trading_date": f"2026-06-{index + 1:02d}", "open": 10, "close": 10,
-            "high": 11, "low": 9, "source": "test",
+            "trading_date": (start + timedelta(days=index)).isoformat(),
+            "open": 10, "close": 10, "high": 11, "low": 9, "source": "test",
         }
         for index in range(60)
     ])
