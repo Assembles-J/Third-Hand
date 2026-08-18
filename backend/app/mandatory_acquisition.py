@@ -10,6 +10,7 @@ from __future__ import annotations
 from contextlib import contextmanager
 from contextvars import ContextVar
 from dataclasses import dataclass
+from datetime import datetime
 import hashlib
 import json
 import logging
@@ -27,7 +28,11 @@ logger = logging.getLogger(__name__)
 
 ACQUISITION_LATEST_KEY_PREFIX = "mandatory_acquisition_latest:"
 ACQUISITION_MANIFEST_KEY_PREFIX = "mandatory_acquisition_manifest:"
-FORMAL_DECISION_TRIGGER = "formal-decision-preflight"
+# Reuse existing scheduling-policy trigger names so a formal preflight cannot
+# accidentally bypass the Local-First/session guards already governing provider
+# calls. The acquisition manifest retains the real caller trigger separately.
+SESSION_GOVERNED_QUOTE_TRIGGER = "request-forced"
+SESSION_GOVERNED_DERIVED_TRIGGER = "paper-trading-decision"
 
 _BOUND_MANIFESTS: ContextVar[dict[str, dict[str, object]]] = ContextVar(
     "thirdhand_mandatory_acquisition_manifests",
@@ -40,6 +45,14 @@ def _budget_seconds() -> float:
         return max(1.0, min(float(os.getenv("MANDATORY_ACQUISITION_BUDGET_SECONDS", "30")), 120.0))
     except ValueError:
         return 30.0
+
+
+def _cooldown_seconds() -> float:
+    """Short duplicate-request reuse window; never converts degraded to ready."""
+    try:
+        return max(0.0, min(float(os.getenv("MANDATORY_ACQUISITION_COOLDOWN_SECONDS", "60")), 600.0))
+    except ValueError:
+        return 60.0
 
 
 def requirement_action(local_status: str | None, provider_registered: bool) -> str:
@@ -81,6 +94,16 @@ def _market_requirement_action(status: str | None, provider_registered: bool) ->
 def _iso_date(value: object) -> str | None:
     text = str(value or "").strip()
     return text[:10] if len(text) >= 10 else None
+
+
+def _parse_datetime(value: object) -> datetime | None:
+    text = str(value or "").strip().replace("Z", "+00:00")
+    if not text:
+        return None
+    try:
+        return datetime.fromisoformat(text)
+    except ValueError:
+        return None
 
 
 @dataclass(frozen=True)
@@ -127,6 +150,10 @@ class ResearchAcquisitionOrchestrator:
         deadline = self.monotonic() + _budget_seconds()
         manifests: dict[str, dict[str, object]] = {}
         for symbol in requested:
+            recent = self._recent_manifest(symbol, research_priority=research_priority)
+            if recent is not None:
+                manifests[symbol] = recent
+                continue
             if self.monotonic() >= deadline:
                 manifests[symbol] = self._failed_manifest(
                     symbol,
@@ -203,16 +230,20 @@ class ResearchAcquisitionOrchestrator:
                 self.fetch_quotes(
                     [symbol],
                     force_refresh=True,
-                    trigger=FORMAL_DECISION_TRIGGER,
+                    trigger=SESSION_GOVERNED_QUOTE_TRIGGER,
                     run_id=run_id,
                 )
             except Exception as error:
                 market_error = error
                 errors.append({"stage": "quote", "error_type": type(error).__name__})
             try:
+                # Reuse the existing paper-decision scheduling contract: it
+                # catches up only eligible sessions and then recomputes derived
+                # state from persisted bars. It never forces a closed-market
+                # provider fetch simply because a user asked for a Decision.
                 self.refresh_derived(
                     [symbol],
-                    FORMAL_DECISION_TRIGGER,
+                    SESSION_GOVERNED_DERIVED_TRIGGER,
                     force_history=True,
                     run_id=run_id,
                 )
@@ -445,6 +476,49 @@ class ResearchAcquisitionOrchestrator:
         )
         return AcquisitionResult(symbol=symbol, manifest=manifest)
 
+    def _recent_manifest(self, symbol: str, *, research_priority: str | None) -> dict[str, object] | None:
+        """Reuse an exact recent preflight for duplicate formal requests.
+
+        Reuse is intentionally short-lived and preserves the prior manifest's
+        ready/degraded status. This prevents request retries from causing a new
+        provider storm or changing Decision input identity solely through a new
+        manifest UUID. Underlying persisted market/company fields still remain
+        part of DecisionContext.input_hash, so genuine cache changes are visible.
+        """
+        cooldown = _cooldown_seconds()
+        if cooldown <= 0:
+            return None
+        latest = self.store.cached_market_intelligence(f"{ACQUISITION_LATEST_KEY_PREFIX}{symbol}") or {}
+        if latest.get("requirement_policy_version") != config.MANDATORY_ACQUISITION_POLICY_VERSION:
+            return None
+        completed_at = _parse_datetime(latest.get("completed_at"))
+        current = self.now()
+        if completed_at is None or not isinstance(current, datetime):
+            return None
+        try:
+            age = (current - completed_at).total_seconds()
+        except TypeError:
+            return None
+        if age < 0 or age > cooldown:
+            return None
+
+        resolved_priority = research_priority
+        if resolved_priority is None:
+            try:
+                requirements = self.company_service.requirements(symbol, research_priority=None)
+                resolved_priority = str(requirements.get("research_priority") or "L1")
+            except Exception:
+                resolved_priority = None
+        if resolved_priority is not None and str(latest.get("research_priority") or "") != str(resolved_priority):
+            return None
+        self.log.info(
+            "mandatory acquisition reused symbol=%s manifest_id=%s age_seconds=%.2f",
+            symbol,
+            latest.get("manifest_id"),
+            age,
+        )
+        return dict(latest)
+
     def _failed_manifest(
         self,
         symbol: str,
@@ -620,15 +694,15 @@ def install(m) -> None:
 
     original_prepare_paper_decisions = m.prepare_paper_decisions
 
-    def prepare_paper_decisions(symbols, run_id=None, names=None):
+    def prepare_paper_decisions(symbols, *args, **kwargs):
         manifests = service.acquire_many(
             symbols,
             research_priority=None,
             trigger="paper-formal-decision",
-            run_id=run_id,
+            run_id=kwargs.get("run_id"),
         )
         with bind_acquisition_manifests(manifests):
-            return original_prepare_paper_decisions(symbols, run_id=run_id, names=names)
+            return original_prepare_paper_decisions(symbols, *args, **kwargs)
 
     m.prepare_paper_decisions = prepare_paper_decisions
 
@@ -656,7 +730,10 @@ def install(m) -> None:
             manifests = await to_thread.run_sync(
                 lambda: service.acquire_many(
                     symbols,
-                    research_priority="L3",
+                    # Resolve the existing candidate/research priority locally;
+                    # direct formal requests with no candidate default to L1
+                    # rather than silently forcing an expensive L3 research scan.
+                    research_priority=None,
                     trigger="api-formal-decision",
                 )
             )
