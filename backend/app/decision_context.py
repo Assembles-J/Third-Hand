@@ -284,6 +284,15 @@ class DecisionContextBuilder:
             cost_value=cost_value, unrealized_pnl=market_value - cost_value if market_value is not None else None,
             unrealized_pnl_percent=(market_value / cost_value - 1) * 100 if market_value is not None and cost_value else None,
             position_percent=market_value / total_assets * 100 if market_value is not None and total_assets else None,
+            entry_episode_id=str(holding.get("entry_episode_id") or "") or None,
+            entry_decision_id=str(holding.get("entry_decision_id") or "") or None,
+            entry_evidence_snapshot_hash=str(holding.get("entry_evidence_snapshot_hash") or "") or None,
+            entry_research_assessment_hash=str(holding.get("entry_research_assessment_hash") or "") or None,
+            entry_risk_state=holding.get("entry_risk_state") if isinstance(holding.get("entry_risk_state"), dict) else None,
+            entry_technical_state=holding.get("entry_technical_state") if isinstance(holding.get("entry_technical_state"), dict) else None,
+            entry_market_regime=holding.get("entry_market_regime") if isinstance(holding.get("entry_market_regime"), dict) else None,
+            entry_event_state=holding.get("entry_event_state") if isinstance(holding.get("entry_event_state"), dict) else None,
+            entry_price=float(holding["entry_price"]) if holding.get("entry_price") is not None else None,
         )
 
     @staticmethod

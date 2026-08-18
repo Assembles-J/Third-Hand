@@ -41,6 +41,17 @@ class PositionSnapshot(DecisionModel):
     unrealized_pnl: float | None
     unrealized_pnl_percent: float | None
     position_percent: float | None
+    # Frozen at the first fill of the currently open paper-position episode.
+    # These fields are audit/context inputs, never a second policy authority.
+    entry_episode_id: str | None = None
+    entry_decision_id: str | None = None
+    entry_evidence_snapshot_hash: str | None = None
+    entry_research_assessment_hash: str | None = None
+    entry_risk_state: dict[str, object] | None = None
+    entry_technical_state: dict[str, object] | None = None
+    entry_market_regime: dict[str, object] | None = None
+    entry_event_state: dict[str, object] | None = None
+    entry_price: float | None = None
 
 
 class QuoteSnapshot(DecisionModel):

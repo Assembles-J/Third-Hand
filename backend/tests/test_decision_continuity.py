@@ -92,3 +92,13 @@ def test_position_age_is_derived_from_the_frozen_open_timestamp():
 
     assert action == "HOLD"
     assert memory.position_age == 3
+
+
+def test_held_position_uses_persisted_entry_episode_after_state_change():
+    policy = DecisionContinuityPolicy()
+    context = _context(position=SimpleNamespace(opened_at="2026-08-18T09:30:00+00:00", entry_episode_id="episode-entry-fill"))
+    action, memory = policy.assess(context, "HOLD", _prior(fingerprint=policy._material_fingerprint(_context())))
+
+    assert action == "HOLD"
+    assert memory.material_change_reason == "position_state_changed"
+    assert memory.episode_id == "episode-entry-fill"

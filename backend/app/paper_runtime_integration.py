@@ -7,6 +7,8 @@ observation governance spec.
 """
 from __future__ import annotations
 
+import hashlib
+import json
 from datetime import datetime
 from uuid import uuid4
 
@@ -24,6 +26,38 @@ from app.paper_runtime import (
     report_matches_current_selection,
     runtime_scope,
 )
+
+
+def paper_position_entry_snapshot(report: dict[str, object], price: float) -> dict[str, object]:
+    """Project an executed OPEN decision into the next held-position context.
+
+    The projection intentionally copies only frozen report facts.  It neither
+    recomputes research nor gives the paper ledger a second policy path.
+    """
+    memory = report.get("decision_memory")
+    fingerprint = memory.get("material_fingerprint") if isinstance(memory, dict) else {}
+    atomic = report.get("atomic_evidence_shadow")
+    research = report.get("research_assessment")
+
+    def state(key: str) -> dict[str, object]:
+        value = fingerprint.get(key) if isinstance(fingerprint, dict) else None
+        return {key: value}
+
+    research_hash = None
+    if isinstance(research, dict):
+        encoded = json.dumps(research, ensure_ascii=False, sort_keys=True, separators=(",", ":"), default=str)
+        research_hash = hashlib.sha256(encoded.encode("utf-8")).hexdigest()
+    return {
+        "episode_id": memory.get("episode_id") if isinstance(memory, dict) else None,
+        "decision_id": report.get("decision_id"),
+        "evidence_snapshot_hash": atomic.get("snapshot_hash") if isinstance(atomic, dict) else None,
+        "research_assessment_hash": research_hash,
+        "risk_state": state("risk_level"),
+        "technical_state": state("technical_state"),
+        "market_regime": state("market_regime"),
+        "event_state": state("event_state"),
+        "entry_price": price,
+    }
 
 
 def install(m) -> None:
@@ -373,6 +407,7 @@ def install(m) -> None:
                     execution_quote_at=execution_quote_observed_at(quote),
                     execution_quote_source=str((quote or {}).get("source") or "") or None,
                     fill_price_mode="NEXT_ELIGIBLE_OBSERVED_QUOTE",
+                    entry_snapshot=paper_position_entry_snapshot(report, price) if side == "BUY" else None,
                 )
                 detail = {"name": symbol_name, "decision_id": str(report.get("decision_id") or ""), "side": side, "quantity": quantity, "price": price, "action": action}
                 m._record_simulation_symbol_state(run_id, symbol, "executed", detail, name=symbol_name)

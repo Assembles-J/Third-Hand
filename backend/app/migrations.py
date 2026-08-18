@@ -307,6 +307,23 @@ def _create_paper_execution_safety_contract(connection: sqlite3.Connection) -> N
     )
 
 
+def _create_paper_position_episodes(connection: sqlite3.Connection) -> None:
+    """Persist the frozen entry contract for every paper-position episode."""
+    connection.execute(
+        "CREATE TABLE IF NOT EXISTS paper_position_episodes ("
+        "episode_id TEXT PRIMARY KEY, symbol TEXT NOT NULL, entry_decision_id TEXT, "
+        "entry_evidence_snapshot_hash TEXT, entry_research_assessment_hash TEXT, "
+        "entry_risk_state TEXT NOT NULL DEFAULT '{}', entry_technical_state TEXT NOT NULL DEFAULT '{}', "
+        "entry_market_regime TEXT NOT NULL DEFAULT '{}', entry_event_state TEXT NOT NULL DEFAULT '{}', "
+        "entry_price REAL NOT NULL, opened_at TEXT NOT NULL, closed_at TEXT, detail TEXT NOT NULL DEFAULT '{}'"
+        ")"
+    )
+    connection.execute(
+        "CREATE INDEX IF NOT EXISTS idx_paper_position_episodes_active "
+        "ON paper_position_episodes(symbol, closed_at, opened_at DESC)"
+    )
+
+
 MIGRATIONS = (
     Migration("0001_legacy_schema_baseline", _record_legacy_schema_baseline),
     Migration("0002_decision_contexts", _create_decision_contexts),
@@ -325,6 +342,7 @@ MIGRATIONS = (
     Migration("0015_fx_rate_cache", _retire_fx_rate_cache),
     Migration("0016_broker_settlement_receipts", _create_broker_settlement_receipts),
     Migration("0017_paper_execution_safety_contract", _create_paper_execution_safety_contract),
+    Migration("0018_paper_position_episodes", _create_paper_position_episodes),
 )
 
 

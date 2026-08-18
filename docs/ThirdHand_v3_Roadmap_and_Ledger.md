@@ -244,7 +244,7 @@ Acceptance:
 ### Phase 6 — Decision continuity
 Implement:
 - DecisionMemory
-- episode id
+- entry-bound position episode id and frozen entry snapshot
 - material-change detector
 - cooldown/review-after
 - prior decision reference
@@ -261,6 +261,8 @@ Acceptance:
 - execution rejects a fill before `cooldown_until`
 - due `review_after` produces a separately auditable decision-refresh obligation,
   never an implied trade
+- first paper BUY persists decision/evidence/research/state/price provenance;
+  ADD cannot overwrite it and full EXIT closes the episode
 
 ### Phase 7 — Model policy and audit
 Implement:

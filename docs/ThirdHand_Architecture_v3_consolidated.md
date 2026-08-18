@@ -21,8 +21,8 @@ The current repository already has strong production invariants around DataHub q
 | Data, identity, events and canonical price/time | Complete | Instrument metadata, market-scoped regime, canonical snapshot and event gates are formal inputs. |
 | Atomic evidence and deterministic aggregation | Complete | Fact/availability/conflict provenance, point-in-time Company Intelligence, versioned aggregation and semantic validation are persisted. |
 | Decision semantics | Partial | Entry/Position actions and formal action authority exist. High-confidence deterministic adverse research may veto new BUY/ADD risk only; it never upgrades an action or creates REDUCE/EXIT. A traceable weekly snapshot is aggregated from completed daily bars; 60m/15m/5m inputs remain explicitly unavailable and ActionPolicy remains daily-only. |
-| Market/execution adapters | Partial at the CNY-only scope | CN lot/T+1/fee and PositionLot FIFO are enforced correctly at the ledger boundary. However, sellable quantity is not yet a formal DecisionContext/sizing/pre-execution input, and account/API observability does not yet expose lot-level sellability. HK Stock Connect retains HKD trading-price metadata and actual RMB broker-settlement receipts as audit facts. HK/US have no paper-execution path. |
-| Decision continuity | Complete | Prior decision, episode, full-input audit change, versioned material fingerprint, cooldown/review fields and position age are persisted. Only a strategic fingerprint transition or a hard gate/position-state transition may replace the prior formal action. ExecutionPrecheck rejects fills before `cooldown_until`; the deterministic runtime promotes `review_after` into a separately audited decision-refresh obligation. |
+| Market/execution adapters | Partial at the CNY-only scope | CN lot/T+1/fee and PositionLot FIFO are enforced at the ledger boundary. Sellable/locked quantity and read-only lot evidence feed the formal Context and execution precheck. HK Stock Connect retains HKD trading-price metadata and actual RMB broker-settlement receipts as audit facts. HK/US have no paper-execution path. |
+| Decision continuity | Complete | Prior decision, entry-bound position episode, full-input audit change, versioned material fingerprint, cooldown/review fields and position age are persisted. Only a strategic fingerprint transition or a hard gate/position-state transition may replace the prior formal action. ExecutionPrecheck rejects fills before `cooldown_until`; the deterministic runtime promotes `review_after` into a separately audited decision-refresh obligation. |
 | Model policy and audit | Complete for configured-provider bounded recovery | Atomic prompt projection, Flash/Pro routing, schema/semantic checks, hashes, usage and retry traces are persisted. The finite recovery graph is Flash -> Pro thinking -> Pro non-thinking structured: a schema/semantic failure promotes the next tier, while exhausted empty-content or truncation failures use the structured tier. A generic multi-provider capability registry and a provider-specific maximum-reasoning capability tier are deliberately not implemented. |
 | Feedback | Complete as an audit dataset | Frozen decision/execution lineage, actual-vs-hypothetical outcomes and read-only policy-version export exist; there is no automatic tuning. |
 
@@ -258,6 +258,18 @@ observed fill quote. `review_after` is not a trade: when due, it authorizes a
 new formal decision generation with the lineage reason `decision_review_due`.
 The runtime keeps review obligations distinct from unexecuted decision fills so
 an expired review cannot be mistaken for an executable order.
+
+### Position episode binding
+
+The first executed BUY of an open paper position creates an immutable
+`paper_position_episodes` record. It binds `entry_decision_id`, the Atomic
+Evidence snapshot hash, the ResearchAssessment hash, frozen risk/technical/
+market/event state and the observed entry price to `episode_id`. ADD orders
+cannot replace that record; a full EXIT closes it. `paper_account()` projects
+the active record into `PositionSnapshot`, and DecisionContinuity reuses that
+entry `episode_id` after FLAT becomes HOLDING. This makes the position's origin
+an explicit, durable policy input rather than an inference from the latest
+report.
 
 ### PositionLot
 Lot-level settlement/sellability:

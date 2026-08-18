@@ -108,6 +108,47 @@ def test_paper_fill_keeps_quote_time_source_and_price_semantics(tmp_path: Path) 
     assert log["fill_price_mode"] == "NEXT_ELIGIBLE_OBSERVED_QUOTE"
 
 
+def test_paper_position_episode_survives_add_and_closes_with_position(tmp_path: Path, monkeypatch) -> None:
+    store = PortfolioStore(tmp_path / "episode.db")
+    store.save_paper_account(10_000)
+    day_one = datetime(2026, 8, 12, 10, tzinfo=timezone(timedelta(hours=8)))
+    monkeypatch.setattr(storage_module, "beijing_now", lambda: day_one)
+    entry = {
+        "episode_id": "episode-entry-1",
+        "evidence_snapshot_hash": "atomic-hash",
+        "research_assessment_hash": "research-hash",
+        "risk_state": {"risk_level": "high"},
+        "technical_state": {"technical_state": ["up", "bullish", "neutral"]},
+        "market_regime": {"market_regime": ["ready", "risk_on"]},
+        "event_state": {"event_state": []},
+    }
+    store.execute_paper_trade(
+        trade_id=str(uuid4()), symbol="600519", name="Moutai", side="BUY", quantity=100,
+        price=10, decision_id="entry-decision", reason="entry", entry_snapshot=entry,
+    )
+    store.execute_paper_trade(
+        trade_id=str(uuid4()), symbol="600519", name="Moutai", side="BUY", quantity=100,
+        price=11, decision_id="add-decision", reason="add", entry_snapshot={"episode_id": "must-not-replace"},
+    )
+    position = store.paper_account()["positions"][0]
+    assert position["entry_episode_id"] == "episode-entry-1"
+    assert position["entry_decision_id"] == "entry-decision"
+    assert position["entry_evidence_snapshot_hash"] == "atomic-hash"
+    assert position["entry_risk_state"] == {"risk_level": "high"}
+
+    monkeypatch.setattr(storage_module, "beijing_now", lambda: day_one.replace(day=13))
+    store.execute_paper_trade(
+        trade_id=str(uuid4()), symbol="600519", name="Moutai", side="SELL", quantity=200,
+        price=10, decision_id="exit-decision", reason="exit",
+    )
+    assert store.paper_account()["positions"] == []
+    with store._connect() as connection:
+        closed_at = connection.execute(
+            "SELECT closed_at FROM paper_position_episodes WHERE episode_id='episode-entry-1'"
+        ).fetchone()["closed_at"]
+    assert closed_at is not None
+
+
 def test_system_settings_waits_for_a_brief_concurrent_writer(tmp_path: Path) -> None:
     store = PortfolioStore(tmp_path / "locked-settings.db")
     lock_acquired = Event()

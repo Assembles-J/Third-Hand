@@ -91,10 +91,15 @@ class DecisionContinuityPolicy:
                 prior: Mapping[str, object] | None, input_changed: bool, material: bool,
                 reason: str, fingerprint: dict[str, object], components: tuple[str, ...]) -> DecisionMemory:
         prior_memory = prior.get("decision_memory") if isinstance(prior, Mapping) else None
+        entry_episode_id = getattr(getattr(context, "position", None), "entry_episode_id", None)
         episode_id = (
+            str(entry_episode_id)
+            if entry_episode_id
+            else (
             str(prior_memory.get("episode_id"))
             if isinstance(prior_memory, Mapping) and prior_memory.get("episode_id") and not material
             else self._episode_id(context.symbol, state, prior.get("decision_id") if prior else None)
+            )
         )
         generated_at = context.generated_at
         cooldown_until = (generated_at + timedelta(minutes=15)).isoformat() if action in {"BUY", "ADD", "REDUCE", "EXIT"} else None

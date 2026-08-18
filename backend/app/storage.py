@@ -1618,6 +1618,12 @@ class PortfolioStore:
             lots = [dict(item) for item in connection.execute(
                 "SELECT * FROM paper_position_lots WHERE quantity > 0"
             ).fetchall()]
+            episodes = {
+                str(item["symbol"]): dict(item)
+                for item in connection.execute(
+                    "SELECT * FROM paper_position_episodes WHERE closed_at IS NULL ORDER BY opened_at DESC"
+                ).fetchall()
+            }
             quotes = {str(item["symbol"]): json.loads(str(item["payload"])) for item in connection.execute("SELECT symbol,payload FROM market_quote_cache").fetchall()}
         lot_totals: dict[str, float] = {}
         next_sellable: dict[str, str] = {}
@@ -1631,6 +1637,21 @@ class PortfolioStore:
                 next_sellable[symbol] = candidate
         enriched_positions = []
         for position in positions:
+            episode = episodes.get(str(position["symbol"]))
+            entry = {}
+            if episode:
+                for field in ("entry_risk_state", "entry_technical_state", "entry_market_regime", "entry_event_state"):
+                    try:
+                        entry[field] = json.loads(str(episode[field]))
+                    except (KeyError, TypeError, ValueError, json.JSONDecodeError):
+                        entry[field] = None
+                entry.update({
+                    "entry_episode_id": episode.get("episode_id"),
+                    "entry_decision_id": episode.get("entry_decision_id"),
+                    "entry_evidence_snapshot_hash": episode.get("entry_evidence_snapshot_hash"),
+                    "entry_research_assessment_hash": episode.get("entry_research_assessment_hash"),
+                    "entry_price": episode.get("entry_price"),
+                })
             price = float((quotes.get(str(position["symbol"]), {}).get("price")) or position["average_cost"])
             market_value = float(position["quantity"]) * price
             cost_value = float(position["quantity"]) * float(position["average_cost"])
@@ -1644,6 +1665,7 @@ class PortfolioStore:
                 "market_value": market_value,
                 "unrealized_pnl": market_value - cost_value,
                 "unrealized_return_percent": (market_value / cost_value - 1) * 100 if cost_value else 0.0,
+                **entry,
             })
         positions = enriched_positions
         market_value = sum(float(position["market_value"]) for position in positions)
@@ -1898,7 +1920,7 @@ class PortfolioStore:
             )
         return True
 
-    def execute_paper_trade(self, *, trade_id: str, symbol: str, name: str, side: str, quantity: float, price: float, decision_id: str | None, reason: str, execution_quote_at: str | None = None, execution_quote_source: str | None = None, fill_price_mode: str = "NEXT_ELIGIBLE_OBSERVED_QUOTE") -> dict[str, object]:
+    def execute_paper_trade(self, *, trade_id: str, symbol: str, name: str, side: str, quantity: float, price: float, decision_id: str | None, reason: str, execution_quote_at: str | None = None, execution_quote_source: str | None = None, fill_price_mode: str = "NEXT_ELIGIBLE_OBSERVED_QUOTE", entry_snapshot: dict[str, object] | None = None) -> dict[str, object]:
         if quantity <= 0 or price <= 0: raise ValueError("quantity_and_price_must_be_positive")
         now_at = beijing_now()
         now = now_at.isoformat()
@@ -1978,6 +2000,19 @@ class PortfolioStore:
                         self._new_lot_sellable_at(market, now_at),
                     ),
                 )
+                if existing_quantity <= 1e-9:
+                    snapshot = dict(entry_snapshot or {})
+                    episode_id = str(snapshot.get("episode_id") or f"paper-episode-{uuid4()}")
+                    encode = lambda value: json.dumps(value if isinstance(value, dict) else {}, ensure_ascii=False, sort_keys=True)
+                    connection.execute(
+                        "INSERT INTO paper_position_episodes (episode_id,symbol,entry_decision_id,entry_evidence_snapshot_hash,entry_research_assessment_hash,entry_risk_state,entry_technical_state,entry_market_regime,entry_event_state,entry_price,opened_at,detail) VALUES (?,?,?,?,?,?,?,?,?,?,?,?)",
+                        (
+                            episode_id, symbol, decision_id, snapshot.get("evidence_snapshot_hash"),
+                            snapshot.get("research_assessment_hash"), encode(snapshot.get("risk_state")),
+                            encode(snapshot.get("technical_state")), encode(snapshot.get("market_regime")),
+                            encode(snapshot.get("event_state")), price, now, encode(snapshot),
+                        ),
+                    )
             elif side == "SELL":
                 lots = connection.execute(
                     "SELECT lot_id,quantity,sellable_quantity FROM paper_position_lots "
@@ -2007,7 +2042,9 @@ class PortfolioStore:
                 fee = max(5.0, gross * 0.0003) + gross * 0.001
                 cash_after = cash_before + gross - fee
                 remaining = existing_quantity - quantity
-                if remaining <= 1e-9: connection.execute("DELETE FROM paper_trading_positions WHERE symbol=?", (symbol,))
+                if remaining <= 1e-9:
+                    connection.execute("DELETE FROM paper_trading_positions WHERE symbol=?", (symbol,))
+                    connection.execute("UPDATE paper_position_episodes SET closed_at=? WHERE symbol=? AND closed_at IS NULL", (now, symbol))
                 else: connection.execute("UPDATE paper_trading_positions SET quantity=?, updated_at=? WHERE symbol=?", (remaining, now, symbol))
             else: raise ValueError("invalid_paper_trade_side")
             connection.execute("INSERT INTO account_cash (account_id,available_cash,updated_at) VALUES ('default', ?, ?) ON CONFLICT(account_id) DO UPDATE SET available_cash=excluded.available_cash, updated_at=excluded.updated_at", (cash_after, now))
