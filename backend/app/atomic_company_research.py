@@ -1,6 +1,6 @@
 """Point-in-time Company Intelligence enrichment for Atomic Evidence shadow mode.
 
-This source reads only persisted Research Local-First snapshots.  It never calls
+This source reads only persisted Research Local-First snapshots. It never calls
 providers and is invoked only after formal ActionPolicy candidates are frozen.
 The first schema-aware extraction intentionally targets normalized HK company
 margin/profit-driver datasets; other datasets still contribute deterministic
@@ -172,9 +172,9 @@ class CompanyResearchAtomicSource:
         conflicts: list[EvidenceConflictRecord],
     ) -> None:
         snapshot_id = str(ref.get("snapshot_id") or "")
-        available_at = _parse_datetime(ref.get("available_at"))
+        ref_available_at = _parse_datetime(ref.get("available_at"))
         source_keys = (f"company_context:{company_context_id}", f"research_snapshot:{snapshot_id}")
-        if available_at is None:
+        if ref_available_at is None:
             availability.append(EvidenceAvailabilityRecord(
                 capability=f"company_dataset.{dataset_key}",
                 status="degraded",
@@ -182,7 +182,7 @@ class CompanyResearchAtomicSource:
                 source_keys=source_keys,
             ))
             return
-        if available_at > context.generated_at:
+        if ref_available_at > context.generated_at:
             availability.append(EvidenceAvailabilityRecord(
                 capability=f"company_dataset.{dataset_key}",
                 status="missing",
@@ -190,6 +190,7 @@ class CompanyResearchAtomicSource:
                 source_keys=source_keys,
             ))
             return
+
         raw_snapshot = self.research_repository.get_snapshot(snapshot_id) if snapshot_id else None
         if raw_snapshot is None:
             availability.append(EvidenceAvailabilityRecord(
@@ -197,6 +198,44 @@ class CompanyResearchAtomicSource:
                 status="degraded",
                 reason_codes=("research_snapshot_reference_missing",),
                 source_keys=source_keys,
+            ))
+            return
+
+        raw_available_at = _parse_datetime(raw_snapshot.available_at)
+        if raw_available_at is None:
+            availability.append(EvidenceAvailabilityRecord(
+                capability=f"company_dataset.{dataset_key}",
+                status="degraded",
+                reason_codes=("research_snapshot_available_at_invalid",),
+                source_keys=source_keys,
+            ))
+            return
+        if raw_available_at > context.generated_at:
+            # The persisted ResearchDataSnapshot is the source-of-truth boundary.
+            # A stale/corrupt CompanyContext ref must never make future data
+            # visible to an earlier decision, even if the ref claims an older
+            # available_at value.
+            availability.append(EvidenceAvailabilityRecord(
+                capability=f"company_dataset.{dataset_key}",
+                status="missing",
+                reason_codes=("research_snapshot_not_available_at_decision_time",),
+                source_keys=source_keys,
+            ))
+            return
+        if raw_available_at != ref_available_at:
+            code = f"company_dataset_available_at_mismatch:{dataset_key}"
+            availability.append(EvidenceAvailabilityRecord(
+                capability=f"company_dataset.{dataset_key}",
+                status="conflicted",
+                reason_codes=(code,),
+                source_keys=source_keys,
+            ))
+            conflicts.append(EvidenceConflictRecord(
+                conflict_id=f"atomic.conflict.company.{dataset_key}.available_at",
+                code=code,
+                affected_sources=source_keys,
+                severity="high",
+                policy_effect="shadow_only_no_formal_authority",
             ))
             return
 
