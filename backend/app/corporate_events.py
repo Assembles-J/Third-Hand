@@ -21,8 +21,10 @@ from app.trading_calendar import TradingCalendarService
 CALENDAR_SOURCE = "Baidu 股市通财报日历 via AKShare"
 CALENDAR_SOURCE_REFERENCE = "https://gushitong.baidu.com/calendar"
 EVENT_LOOKAHEAD_SESSIONS = 3
+# Remote calendar refresh is a scheduler/maintenance responsibility. Formal
+# paper-decision cycles consume the persisted bundle only, preserving Local-First
+# behavior and avoiding a new network dependency on the action path.
 EVENT_REFRESH_TRIGGERS = frozenset({
-    "paper-trading-decision",
     "scheduler-trading-session",
     "scheduler-close-snapshot",
 })
@@ -289,7 +291,7 @@ def pre_event_policy_blockers(
 
 
 def install(m) -> None:
-    """Refresh scheduled-event cache before formal paper decisions use context."""
+    """Refresh scheduled-event cache on scheduler/maintenance inputs only."""
     if getattr(m, "_corporate_event_policy_installed", False):
         return
     m._corporate_event_policy_installed = True

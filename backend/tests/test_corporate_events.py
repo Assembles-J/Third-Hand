@@ -99,6 +99,7 @@ def test_next_session_earnings_blocks_new_risk_but_later_event_does_not():
     )
     assert pre_event_policy_blockers((far,), market="HK", analysis_at=analysis_at, calendar=FakeCalendar()) == ()
     assert config.PRE_EVENT_BLOCK_SESSIONS == 1
+    assert config.audit_version_snapshot()["corporate_event_policy_version"] == "corporate-event-v1-pre-earnings-gate"
 
 
 def test_event_policy_blocker_changes_open_add_gates_not_data_quality_or_defensive_gates():
@@ -204,7 +205,7 @@ def test_upcoming_earnings_evidence_is_neutral_policy_fact_not_directional_signa
     assert item.source_reference == "https://example.com/calendar"
 
 
-def test_runtime_install_refreshes_event_cache_after_derived_inputs_and_swallows_provider_failure(monkeypatch):
+def test_runtime_install_keeps_paper_decision_local_first_and_refreshes_on_scheduler(monkeypatch):
     order = []
 
     def derived(symbols, trigger, force_history=False, run_id=None):
@@ -224,14 +225,25 @@ def test_runtime_install_refreshes_event_cache_after_derived_inputs_and_swallows
     )
 
     install(module)
-    result = module.refresh_derived_cache(["01810"], "paper-trading-decision")
+    assert module.refresh_derived_cache(["01810"], "paper-trading-decision") == "derived-result"
+    assert order == [("derived", ("01810",), "paper-trading-decision")]
 
-    assert result == "derived-result"
-    assert order[0][:2] == ("derived", ("01810",))
-    assert order[1][0:2] == ("events", ("01810",))
+    assert module.refresh_derived_cache(["01810"], "scheduler-trading-session") == "derived-result"
+    assert order[-2] == ("derived", ("01810",), "scheduler-trading-session")
+    assert order[-1][0:2] == ("events", ("01810",))
 
+
+def test_runtime_scheduler_event_failure_does_not_abort_derived_refresh(monkeypatch):
     def failing_refresh(self, _store, _symbols, *, now):
         raise RuntimeError("calendar unavailable")
 
     monkeypatch.setattr(CorporateEventService, "refresh", failing_refresh)
-    assert module.refresh_derived_cache(["01810"], "paper-trading-decision") == "derived-result"
+    module = SimpleNamespace(
+        refresh_derived_cache=lambda *_args, **_kwargs: "derived-result",
+        store=object(),
+        beijing_now=lambda: datetime(2026, 8, 17, 16, 0, tzinfo=HK_TZ),
+        logger=SimpleNamespace(info=lambda *args, **kwargs: None, warning=lambda *args, **kwargs: None),
+    )
+
+    install(module)
+    assert module.refresh_derived_cache(["01810"], "scheduler-trading-session") == "derived-result"
