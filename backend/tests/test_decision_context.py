@@ -1,3 +1,5 @@
+from datetime import date, timedelta
+
 from app import decision_config as config
 from app.data_quality import summarize_data_quality
 from app.decision_context import DecisionContextBuilder
@@ -24,6 +26,20 @@ def _plan():
 
 def _open_gate(result):
     return next(gate for gate in result.action_gates if gate.action == "OPEN")
+
+
+def _sessions(market: str, count: int = 60) -> list[str]:
+    service = TradingCalendarService()
+    completed = service.latest_completed_session_date(market, beijing_now())
+    assert completed is not None
+    end = date.fromisoformat(completed)
+    sessions = service.session_dates(
+        market,
+        (end - timedelta(days=140)).isoformat(),
+        completed,
+    )
+    assert len(sessions) >= count
+    return sessions[-count:]
 
 
 def test_context_builder_has_stable_input_hash_and_does_not_need_an_action(tmp_path):
@@ -121,6 +137,13 @@ def test_session_aware_freshness_has_a_distinct_audit_version():
     assert config.FRESHNESS_POLICY_VERSION == "freshness-v2-session-aware"
 
 
+def test_market_identity_and_regime_scope_have_distinct_audit_versions():
+    versions = config.audit_version_snapshot()
+
+    assert versions["market_identity_policy_version"] == "market-identity-v2-instrument-authority"
+    assert versions["market_regime_policy_version"] == "market-regime-v2-market-scoped"
+
+
 def test_missing_trade_plan_is_exposed_as_a_non_enabled_editable_draft(tmp_path):
     store = PortfolioStore(tmp_path / "draft-plan.db")
     store.add("holding-1", "600519", "test", 100, 10)
@@ -151,3 +174,68 @@ def test_paper_context_override_uses_simulated_ledger_not_real_holding(tmp_path)
 
     assert context.position is None
     assert context.account.available_cash == 12_345
+
+
+def test_hk_context_rejects_cn_regime_and_accepts_market_scoped_hk_regime(tmp_path):
+    store = PortfolioStore(tmp_path / "hk-market-scope.db")
+    sessions = _sessions("HK")
+    completed = sessions[-1]
+    now = beijing_now()
+    store.save_available_cash(100_000)
+    store.save_quotes([{
+        "symbol": "01810", "price": 25.88, "currency": "HKD", "source": "test",
+        "as_of": completed, "retrieved_at": now.isoformat(),
+    }])
+    store.save_daily_prices("01810", [{
+        "trading_date": session, "open": 25, "close": 25.88, "high": 26, "low": 24.5,
+        "source": "test",
+    } for session in sessions])
+    store.save_risk({
+        "symbol": "01810", "as_of": completed, "sample_count": 60,
+        "historical_downside_probability": 10, "annualized_volatility_percent": 20,
+        "risk_level": "low",
+    })
+    store.save_instrument_metadata({
+        "symbol": "01810", "market": "HK", "currency": "HKD", "lot_size": 200,
+        "price_tick": "0.02", "source": "test", "as_of": completed,
+    })
+    store.save_market_intelligence("market_regime", {
+        "status": "ready", "regime": "supportive", "market": "CN",
+        "source": "test", "as_of": completed,
+    })
+
+    without_hk_regime = DecisionContextBuilder(store).build("01810")
+
+    assert without_hk_regime.instrument.market == "HK"
+    assert without_hk_regime.market_regime is None
+    assert "market_regime" in _open_gate(without_hk_regime.data_quality).unavailable_fields
+
+    store.save_market_intelligence("market_regime:HK", {
+        "status": "ready", "regime": "mixed", "market": "HK",
+        "source": "test", "as_of": completed,
+    })
+    with_hk_regime = DecisionContextBuilder(store).build("01810")
+
+    assert with_hk_regime.market_regime is not None
+    assert with_hk_regime.market_regime.regime == "mixed"
+    assert with_hk_regime.market_regime.source == "test"
+
+
+def test_instrument_metadata_market_is_context_authority_over_symbol_shape(tmp_path):
+    store = PortfolioStore(tmp_path / "instrument-authority.db")
+    store.save_available_cash(1000)
+    store.save_instrument_metadata({
+        "symbol": "600519", "market": "HK", "currency": "HKD", "lot_size": 100,
+        "price_tick": "0.01", "source": "synthetic-migration-test", "as_of": "2026-08-17",
+    })
+    store.save_market_intelligence("market_regime:HK", {
+        "status": "ready", "regime": "mixed", "market": "HK",
+        "source": "test", "as_of": "2026-08-17",
+    })
+
+    context = DecisionContextBuilder(store).build("600519")
+
+    assert TradingCalendarService.market_for_symbol("600519") == "CN"
+    assert context.instrument.market == "HK"
+    assert context.market_regime is not None
+    assert context.market_regime.regime == "mixed"

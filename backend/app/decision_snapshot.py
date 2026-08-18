@@ -1,6 +1,9 @@
 """Immutable, source-linked evidence snapshot for a portfolio review run."""
 from __future__ import annotations
 
+from app.market_regime import regime_matches_market
+from app.trading_calendar import TradingCalendarService
+
 
 def build_decision_snapshot(holding, quote, risk, rule, content_items, action: str, trade_plan=None, market_regime=None, relative_strength=None) -> dict[str, object]:
     symbol = str(holding["symbol"]).strip().upper()
@@ -42,6 +45,8 @@ def build_decision_snapshot(holding, quote, risk, rule, content_items, action: s
         "risk_review": "reduce_condition", "wait_for_confirmation": "entry_condition",
         "observe": "add_condition", "data_insufficient": "entry_condition",
     }.get(action)
+    symbol_market = TradingCalendarService.market_for_symbol(symbol)
+    scoped_regime = market_regime if regime_matches_market(market_regime, symbol_market) else None
     return {
         "symbol": symbol, "holding": {"average_cost": holding.get("average_cost"), "quantity": holding.get("quantity")},
         "quote": quote_snapshot, "risk": risk, "rule": rule, "event_evidence": events,
@@ -53,7 +58,7 @@ def build_decision_snapshot(holding, quote, risk, rule, content_items, action: s
             "max_position_percent": trade_plan.get("max_position_percent"),
             "risk_budget_percent": trade_plan.get("risk_budget_percent"),
         } if trade_plan and trade_plan.get("enabled") else None),
-        "market_regime": market_regime,
+        "market_regime": scoped_regime,
         "relative_strength": relative_strength,
         "confidence_definition": "该分数衡量证据完整度，不代表价格涨跌或操作正确概率。",
     }
