@@ -22,12 +22,12 @@ RESEARCH_DECISION_POLICY_VERSION = "research-decision-v1-adverse-new-risk-veto"
 RESEARCH_ADVERSE_MIN_EVIDENCE_CONFIDENCE = 0.60
 TIMEFRAME_AUTHORITY_POLICY_VERSION = "timeframe-authority-v2-weekly-context"
 DECISION_CONTINUITY_POLICY_VERSION = "decision-continuity-v3-material-fingerprint"
-MODEL_POLICY_VERSION = "model-policy-v2-adaptive-structured-recovery"
+MODEL_POLICY_VERSION = "model-policy-v3-compound-structured-recovery"
 FEEDBACK_POLICY_VERSION = "feedback-v1-audit-only-no-auto-tune"
 # v3 is a Day-0 correctness break: REDUCE now requires an existing position.
 # Bumping the version prevents historical v2 empty-position REDUCE reports from
 # remaining eligible for next-session execution after deployment.
-ACTION_POLICY_VERSION = "swing-policy-v3-position-action-semantics"
+ACTION_POLICY_VERSION = "swing-policy-v4-post-entry-coherence"
 OPEN_GATE_AUDIT_VERSION = "open-gate-audit-v1"
 # v2 records the Day-0 shift from wall-clock TTL checks for daily data to
 # latest-completed-exchange-session semantics. Thresholds are unchanged; the

@@ -252,6 +252,9 @@ Implement:
 Acceptance:
 - changed recommendation states what changed
 - repeated analyses cannot flip without material change unless a hard gate changed
+- an unchanged EvidenceSnapshot that permitted `BUY` when FLAT cannot produce
+  `REDUCE`/`EXIT` solely because the resulting position is now HOLDING; static
+  entry risk is not a post-entry deterioration signal
 - a full `input_hash` difference is retained for audit, while only a versioned
   strategic material fingerprint can permit an action flip; ordinary quote
   refreshes inside the same threshold state preserve the prior action
@@ -270,9 +273,10 @@ Implement:
 Acceptance:
 - every model run auditable by hashes/settings/usage
 - invalid output never mutates formal decision
-- a Flash schema/semantic failure retries once on Pro with a correction prompt;
-  a truncated thinking reply retries once with a larger non-thinking structured
-  budget, and every tier transition is recorded
+- the finite recovery graph is Flash -> Pro thinking -> Pro non-thinking
+  structured: schema/semantic failure promotes the next tier, while exhausted
+  empty-content or truncation failure uses the structured tier; every tier
+  transition is recorded
 - provider-specific maximum-reasoning tiers remain out of scope until the
   configured provider exposes a stable, tested capability contract
 

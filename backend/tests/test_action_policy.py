@@ -1,6 +1,6 @@
 from app.action_policy import ActionPolicyEngine
 from app.decision_context import DecisionContextBuilder
-from app.decision_models import EvidenceItem
+from app.decision_models import ActionGate, EvidenceItem
 from app.evidence_engine import EvidenceEngine
 from app.storage import PortfolioStore
 
@@ -52,6 +52,32 @@ def test_empty_position_can_never_generate_reduce_from_risk_evidence(tmp_path):
 
     assert candidates[0].action != "REDUCE"
     assert all(candidate.action != "REDUCE" for candidate in candidates)
+
+
+def test_static_risk_present_at_entry_cannot_immediately_reduce_after_buy(tmp_path):
+    held = _context(tmp_path, rule_cap=100)
+    gates = held.data_quality.model_copy(update={
+        "status": "ready",
+        "action_gates": (
+            ActionGate(action="OPEN", permission="allowed"),
+            ActionGate(action="ADD", permission="allowed"),
+        ),
+    })
+    flat = held.model_copy(update={"position": None, "data_quality": gates})
+    evidence = (
+        EvidenceItem(
+            evidence_id="trend.sma20_above_sma60", category="trend", direction="positive",
+            strength=.6, title="positive trend", description="entry support", source="test", fresh=True,
+        ),
+        EvidenceItem(
+            evidence_id="risk.annualized_volatility_high", category="risk", direction="negative",
+            strength=.7, title="static high volatility", description="baseline risk", source="test", fresh=True,
+        ),
+    )
+    policy = ActionPolicyEngine()
+
+    assert policy.evaluate(flat, evidence)[0].action == "OPEN"
+    assert policy.evaluate(held.model_copy(update={"data_quality": gates}), evidence)[0].action == "HOLD"
 
 
 def test_open_gate_audit_explains_existing_formal_preconditions(tmp_path):

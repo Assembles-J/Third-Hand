@@ -56,7 +56,10 @@ class DecisionAiService:
         messages = decision_research_messages(context, evidence, candidates, atomic_evidence=atomic_evidence)
         prompt_hash = _hash_json(messages)
         retry_path: list[dict[str, object]] = []
-        for attempt in range(2):
+        # The recovery graph is deliberately finite and auditable:
+        # Flash -> Pro thinking -> Pro non-thinking structured.  A provider
+        # retry happens inside one client call; these are distinct policy tiers.
+        for attempt in range(3):
             try:
                 response = self.client.chat_json(messages, model=selection.model, max_tokens=selection.max_tokens, thinking=selection.thinking)
                 assessment = AiResearchAssessment.model_validate_json(_json_object(response.content))
@@ -68,30 +71,31 @@ class DecisionAiService:
             except (LlmClientError, ValidationError, ValueError, json.JSONDecodeError) as error:
                 recovery_reason = (
                     error.code
-                    if isinstance(error, LlmClientError) and error.code == "output_truncated"
+                    if isinstance(error, LlmClientError) and error.code in {"output_truncated", "empty_content"}
                     else "schema_or_semantic_validation_failed"
                     if not isinstance(error, LlmClientError)
                     else None
                 )
-                if attempt == 0 and recovery_reason:
+                if attempt < 2 and recovery_reason:
                     next_selection = self.model_policy.recover(
                         selection, reason=recovery_reason, reasoning_model=reasoning_model,
                     )
-                    retry_path.append({
-                        "attempt": attempt + 1,
-                        "reason": recovery_reason,
-                        "error_type": type(error).__name__,
-                        "from_tier": selection.tier,
-                        "to_tier": next_selection.tier,
-                    })
-                    selection = next_selection
-                    if recovery_reason == "schema_or_semantic_validation_failed":
-                        messages = [*messages, {"role": "user", "content": _repair_instruction(error, evidence, candidates)}]
-                    prompt_hash = _hash_json(messages)
-                    continue
+                    if next_selection != selection:
+                        retry_path.append({
+                            "attempt": attempt + 1,
+                            "reason": recovery_reason,
+                            "error_type": type(error).__name__,
+                            "from_tier": selection.tier,
+                            "to_tier": next_selection.tier,
+                        })
+                        selection = next_selection
+                        if recovery_reason == "schema_or_semantic_validation_failed":
+                            messages = [*messages, {"role": "user", "content": _repair_instruction(error, evidence, candidates)}]
+                        prompt_hash = _hash_json(messages)
+                        continue
                 code = error.code if isinstance(error, LlmClientError) else "invalid_ai_output"
                 status_code = error.status_code if isinstance(error, LlmClientError) else None
-                model = getattr(getattr(self.client, "settings", None), "model", None)
+                model = selection.model
                 retry_path.append({"attempt": attempt + 1, "reason": code, "error_type": type(error).__name__})
                 self.store.save_decision_ai_run({**run, "status": "failed", "error_code": code, "payload": {}, "metadata": {**self._audit_metadata(selection, evidence_hash=evidence_hash, retry_path=tuple(retry_path)), "prompt_hash": prompt_hash, "model": model, "status_code": status_code, "provider_retry_codes": list(getattr(error, "retry_codes", ())), "validation": "failed"}})
                 logger.warning("Decision AI failed context_id=%s symbol=%s model=%s code=%s status=%s error_type=%s", context.context_id, context.symbol, model, code, status_code, type(error).__name__)

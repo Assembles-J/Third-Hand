@@ -131,6 +131,56 @@ def test_ai_service_promotes_flash_validation_failure_to_reasoning_model():
     assert metadata["retry_fallback_path"][0]["to_tier"] == "PRO_ESCALATION"
 
 
+def test_ai_service_recovers_compound_invalid_then_truncated_output():
+    valid = json.dumps({
+        "thesis_status": "unchanged", "preferred_action": "REDUCE",
+        "supporting_evidence_ids": [], "opposing_evidence_ids": [],
+        "missing_evidence": [], "reasoning_steps": [], "uncertainty": "low", "summary": "recovered",
+    })
+
+    class CompoundClient(Client):
+        def chat_json(self, *_args, **_kwargs):
+            self.calls += 1
+            if self.calls == 1:
+                return LlmResponse(content="not-json", model="flash", latency_ms=1, usage=LlmUsage())
+            if self.calls == 2:
+                raise LlmClientError("truncated", code="output_truncated", retryable=False)
+            return LlmResponse(content=valid, model="pro", latency_ms=1, usage=LlmUsage())
+
+    store = Store()
+    client = CompoundClient("")
+    result = DecisionAiService(store, client).assess(Context(), _evidence(), (_candidate(),))
+
+    assert result.status == "succeeded"
+    assert client.calls == 3
+    metadata = store.runs[-1]["metadata"]
+    assert metadata["model_tier"] == "PRO_STRUCTURED_RECOVERY"
+    assert [item["reason"] for item in metadata["retry_fallback_path"]] == [
+        "schema_or_semantic_validation_failed", "output_truncated",
+    ]
+
+
+def test_ai_service_recovers_empty_content_with_structured_fallback():
+    valid = json.dumps({
+        "thesis_status": "unchanged", "preferred_action": "REDUCE",
+        "supporting_evidence_ids": [], "opposing_evidence_ids": [],
+        "missing_evidence": [], "reasoning_steps": [], "uncertainty": "low", "summary": "recovered",
+    })
+
+    class EmptyThenValidClient(Client):
+        def chat_json(self, *_args, **_kwargs):
+            self.calls += 1
+            if self.calls == 1:
+                raise LlmClientError("empty", code="empty_content", retryable=True)
+            return LlmResponse(content=valid, model="pro", latency_ms=1, usage=LlmUsage())
+
+    store = Store()
+    result = DecisionAiService(store, EmptyThenValidClient("")).assess(Context(), _evidence(), (_candidate(),))
+
+    assert result.status == "succeeded"
+    assert store.runs[-1]["metadata"]["model_tier"] == "PRO_STRUCTURED_RECOVERY"
+
+
 def test_guard_rejects_ai_action_outside_policy_candidates():
     assessment = AiResearchAssessment(thesis_status="unknown", preferred_action="ADD", uncertainty="high", summary="add")
 

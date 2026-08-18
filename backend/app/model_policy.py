@@ -57,7 +57,9 @@ class ModelPolicy:
         internal reasoning cannot consume the entire JSON output budget.
         """
         reasons = tuple(dict.fromkeys((*previous.escalation_reasons, reason)))
-        if reason == "output_truncated":
+        if reason in {"output_truncated", "empty_content"}:
+            if previous.tier == "PRO_STRUCTURED_RECOVERY":
+                return previous
             return ModelSelection(
                 tier="PRO_STRUCTURED_RECOVERY",
                 model=reasoning_model or previous.model,
@@ -74,13 +76,14 @@ class ModelPolicy:
                     max_tokens=min(3200, max(1200, previous.max_tokens)),
                     escalation_reasons=reasons,
                 )
-            return ModelSelection(
-                tier="PRO_STRUCTURED_RECOVERY",
-                model=reasoning_model or previous.model,
-                thinking=False,
-                max_tokens=min(4800, max(2400, previous.max_tokens)),
-                escalation_reasons=reasons,
-            )
+            if previous.tier == "PRO_ESCALATION":
+                return ModelSelection(
+                    tier="PRO_STRUCTURED_RECOVERY",
+                    model=reasoning_model or previous.model,
+                    thinking=False,
+                    max_tokens=min(4800, max(2400, previous.max_tokens)),
+                    escalation_reasons=reasons,
+                )
         return previous
 
 

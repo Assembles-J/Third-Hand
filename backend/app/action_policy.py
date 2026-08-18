@@ -122,10 +122,15 @@ class ActionPolicyEngine:
 
     @staticmethod
     def _reduce_ids(ids: set[str]) -> set[str]:
-        # Deliberately excludes event/news/research evidence. A future event
-        # signal may enter policy only as a separately promoted deterministic
-        # feature with its own version and point-in-time validation.
-        direct = {"position.above_max", "risk.historical_downside_high", "risk.annualized_volatility_high"}
+        # A static risk label describes the conditions accepted at entry; it is
+        # not evidence that those conditions deteriorated after entry. Letting
+        # it directly REDUCE only when a position exists creates the invalid
+        # FLAT -> BUY -> HOLDING -> REDUCE loop on the identical snapshot.
+        # Baseline risk remains visible to deterministic sizing. A future risk
+        # reduction trigger must be an explicit deterioration or threshold
+        # crossing with its own point-in-time evidence and policy version.
+        # Deliberately excludes event/news/research evidence as well.
+        direct = {"position.above_max"}
         matched = ids.intersection(direct)
         defensive_weak = {"market.defensive", "relative.underperform_20d", "trend.below_sma20_and_sma60"}.issubset(ids)
         if defensive_weak:
@@ -141,9 +146,18 @@ class ActionPolicyEngine:
             return False
         if context.account.available_cash <= 0:
             return False
-        if "trend.below_sma20_and_sma60" in ids or "market.defensive" in ids:
+        if (
+            "trend.below_sma20_and_sma60" in ids
+            or "market.defensive" in ids
+            or ActionPolicyEngine._static_risk_ids(ids)
+        ):
             return False
         return bool(ActionPolicyEngine._positive_ids(ids))
+
+    @staticmethod
+    def _static_risk_ids(ids: set[str]) -> set[str]:
+        """Baseline risk constrains new/incremental risk, never causes a sell."""
+        return ids.intersection({"risk.historical_downside_high", "risk.annualized_volatility_high"})
 
     def _open_allowed(self, context: DecisionContext, ids: set[str]) -> bool:
         # Keep the formal predicate in lock-step with the audit checks. The
