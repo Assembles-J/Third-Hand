@@ -16,6 +16,7 @@ from app import decision_config as config
 from app.candidate_selection import CandidateSelection, select_candidates
 from app.execution_precheck import execution_quote_observed_at, precheck_fill
 from app.decision_semantics import execution_side, formal_action_from_report
+from app.paper_execution_contract import explicit_order_quantity, project_paper_holdings
 from app.paper_runtime import (
     candidate_pool_audit,
     current_candidate_selection,
@@ -194,19 +195,7 @@ def install(m) -> None:
         """Create/reuse formal decisions only for deterministic candidate symbols."""
         generated = 0
         paper_account = m.store.paper_account()
-        paper_holdings = [
-            {
-                "symbol": item["symbol"],
-                "name": item["name"],
-                "quantity": item["quantity"],
-                "average_cost": item["average_cost"],
-                "sellable_quantity": item.get("sellable_quantity"),
-                "locked_quantity": item.get("locked_quantity"),
-                "next_eligible_sell_at": item.get("next_eligible_sell_at"),
-                "created_at": item.get("updated_at"),
-            }
-            for item in paper_account.get("positions", [])
-        ]
+        paper_holdings = project_paper_holdings(m.store, paper_account)
         names = names or {
             str(item["symbol"]).strip().upper(): str(item.get("name") or item["symbol"])
             for item in paper_holdings
@@ -345,7 +334,7 @@ def install(m) -> None:
                 continue
             action = formal_action_from_report(report)
             sizing = report.get("sizing") or {}
-            quantity = float(sizing.get("suggested_quantity") or sizing.get("target_quantity") or 0)
+            quantity = explicit_order_quantity(sizing)
             price = float((quote or {}).get("price") or 0)
             side = execution_side(action)
             if not side or price <= 0 or (side != "SELL" and quantity <= 0):

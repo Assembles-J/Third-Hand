@@ -4,6 +4,7 @@ from __future__ import annotations
 from app import decision_config as config
 from app.canonical_snapshot import build_canonical_market_snapshot
 from app.decision_models import DecisionContext, EvidenceItem
+from app.position_cap_policy import effective_position_cap_percent
 from app.trading_calendar import TradingCalendarService
 
 
@@ -52,17 +53,19 @@ class EvidenceEngine:
     @staticmethod
     def _position(context: DecisionContext) -> list[EvidenceItem]:
         position, rule = context.position, context.personal_rule
-        if not position or not rule or position.position_percent is None:
+        if not position or position.position_percent is None:
             return []
         result: list[EvidenceItem] = []
-        percent, cap = position.position_percent, rule.max_position_percent
+        percent = position.position_percent
+        cap = effective_position_cap_percent(context)
+        rule_id = rule.rule_id if rule else None
         if percent > cap:
             excess_percent = (percent - cap) / cap * 100 if cap else 100
             strength = .5 if excess_percent <= config.POSITION_CAP_EXCESS_MILD_PERCENT else .7 if excess_percent <= config.POSITION_CAP_EXCESS_MEDIUM_PERCENT else .9
-            result.append(_item("position.above_max", "position", "negative", strength, "仓位超过上限", f"当前仓位 {percent:.2f}% 高于规则上限 {cap:.2f}%", value=percent, threshold=cap, source="decision_context", as_of=context.generated_at, rule_id=rule.rule_id))
+            result.append(_item("position.above_max", "position", "negative", strength, "仓位超过上限", f"当前仓位 {percent:.2f}% 高于有效上限 {cap:.2f}%", value=percent, threshold=cap, source="decision_context", as_of=context.generated_at, rule_id=rule_id))
         elif percent >= cap * config.NEAR_POSITION_CAP_RATIO:
-            result.append(_item("position.near_max", "position", "uncertain", .4, "仓位接近上限", f"当前仓位 {percent:.2f}% 接近规则上限 {cap:.2f}%", value=percent, threshold=cap, source="decision_context", as_of=context.generated_at, rule_id=rule.rule_id))
-        if position.unrealized_pnl_percent is not None and position.unrealized_pnl_percent <= -rule.loss_review_percent:
+            result.append(_item("position.near_max", "position", "uncertain", .4, "仓位接近上限", f"当前仓位 {percent:.2f}% 接近有效上限 {cap:.2f}%", value=percent, threshold=cap, source="decision_context", as_of=context.generated_at, rule_id=rule_id))
+        if rule and position.unrealized_pnl_percent is not None and position.unrealized_pnl_percent <= -rule.loss_review_percent:
             result.append(_item("position.loss_exceeds_review_threshold", "position", "negative", .7, "亏损达到复核阈值", f"浮动收益 {position.unrealized_pnl_percent:.2f}% 低于复核阈值 -{rule.loss_review_percent:.2f}%", value=position.unrealized_pnl_percent, threshold=-rule.loss_review_percent, source="decision_context", as_of=context.generated_at, rule_id=rule.rule_id))
         if position.unrealized_pnl_percent is not None and position.unrealized_pnl_percent >= config.LARGE_PROFIT_PERCENT:
             result.append(_item("position.profit_large", "position", "positive", .5, "浮盈较大", f"浮动收益 {position.unrealized_pnl_percent:.2f}%", value=position.unrealized_pnl_percent, threshold=config.LARGE_PROFIT_PERCENT, source="decision_context", as_of=context.generated_at))
