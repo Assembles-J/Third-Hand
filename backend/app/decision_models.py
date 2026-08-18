@@ -8,6 +8,7 @@ from pydantic import BaseModel, ConfigDict, Field
 
 from app.atomic_models import AtomicEvidenceSnapshot
 from app.research_assessment import ResearchAssessment, ResearchAssessmentValidation
+from app.decision_semantics import EntryDecision, PositionDecision
 
 
 class DecisionModel(BaseModel):
@@ -363,6 +364,8 @@ class DecisionReport(DecisionModel):
     atomic_evidence_shadow: AtomicEvidenceSnapshot | None = None
     research_assessment: ResearchAssessment | None = None
     research_assessment_validation: ResearchAssessmentValidation | None = None
+    entry_decision: EntryDecision | None = None
+    position_decision: PositionDecision | None = None
     action_candidates: tuple[ActionCandidate, ...]
     operation_items: tuple[OperationItem, ...] = ()
     ai_assessment: AiResearchAssessment | None = None

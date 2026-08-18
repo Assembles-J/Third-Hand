@@ -129,9 +129,15 @@ decision confidence. Remaining: expand domain policies beyond the initial
 fundamental/technical/event/expectation/market policies and introduce the formal
 DecisionArbiter with separate decision confidence.
 
-### Phase 4 — Decision semantics/state machine
+### Phase 4 — Decision semantics/state machine — ACTIVE
 
-Split EntryDecision from PositionDecision, remove generic no-entry-to-reduce mappings, introduce hard event gates and explicit timeframe authority.
+The compatibility slice now emits deterministic `EntryDecision` and
+`PositionDecision` values beside the legacy action. A flat `OPEN` maps to BUY,
+while a held-position WATCH maps to HOLD rather than REDUCE. The arbiter does
+not consume ResearchAssessment or model output.
+
+Remaining: make semantic actions the formal execution authority, add explicit
+position states, hard event-gate reason codes and multi-timeframe authority.
 
 ### Phase 5 — Market/execution adapters
 

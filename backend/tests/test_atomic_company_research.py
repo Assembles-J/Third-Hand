@@ -411,3 +411,6 @@ def test_xiaomi_frozen_shadow_benchmark_is_reproducible_and_action_isolated(tmp_
     assert shadow_report.research_assessment.decision_confidence is None
     assert shadow_report.research_assessment_validation is not None
     assert shadow_report.research_assessment_validation.valid is True
+    assert shadow_report.entry_decision is not None
+    assert shadow_report.entry_decision.action == "WAIT"
+    assert shadow_report.position_decision is None
