@@ -150,12 +150,16 @@ timeframes before granting them authority.
 ### Phase 5 — Market/execution adapters
 
 ACTIVE. Paper execution now resolves lot, settlement and fee rules from
-InstrumentMetadata/MarketAdapter. CN retains its existing T+1 and fee schedule;
-HK/US are conservatively blocked until their own fee/FX schedules and account
-currency boundary exist, rather than inheriting CN's 100-share lot, T+1 or fees.
+InstrumentMetadata/MarketAdapter. Each executed buy now persists a PositionLot;
+CN lots become sellable only after the acquisition date, and sells consume
+sellable lots in FIFO order. Sizing runs a market/currency/fee precheck before
+deriving a quantity. CN retains its existing T+1 and fee schedule; HK/US are
+conservatively blocked until their own fee/FX schedules and account currency
+boundary exist, rather than inheriting CN's 100-share lot, T+1 or fees.
 
-Remaining: PositionLot persistence, market-specific HK/US fee schedules, FX
-boundary and execution precheck before sizing.
+Remaining: migrate or explicitly reconcile legacy aggregate positions into
+PositionLots, add market-specific HK/US fee schedules, and add a multi-currency
+cash/FX ledger before enabling non-CN paper execution.
 
 ### Phase 6 — Decision continuity
 

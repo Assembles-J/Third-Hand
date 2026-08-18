@@ -272,6 +272,24 @@ class PortfolioStore:
                 connection.execute("CREATE TABLE IF NOT EXISTS paper_trading_cash_flows (id TEXT PRIMARY KEY, amount REAL NOT NULL, flow_type TEXT NOT NULL, note TEXT NOT NULL DEFAULT '', occurred_at TEXT NOT NULL)")
                 connection.execute("CREATE INDEX IF NOT EXISTS idx_paper_cash_flows_time ON paper_trading_cash_flows(occurred_at DESC)")
                 connection.execute("CREATE TABLE IF NOT EXISTS paper_trading_positions (symbol TEXT PRIMARY KEY, name TEXT NOT NULL, quantity REAL NOT NULL, average_cost REAL NOT NULL, updated_at TEXT NOT NULL)")
+                connection.execute("""
+                    CREATE TABLE IF NOT EXISTS paper_position_lots (
+                        lot_id TEXT PRIMARY KEY,
+                        symbol TEXT NOT NULL,
+                        market TEXT NOT NULL,
+                        currency TEXT NOT NULL,
+                        quantity REAL NOT NULL,
+                        acquired_at TEXT NOT NULL,
+                        cost_basis REAL NOT NULL,
+                        sellable_quantity REAL NOT NULL,
+                        settlement_state TEXT NOT NULL,
+                        updated_at TEXT NOT NULL
+                    )
+                """)
+                connection.execute(
+                    "CREATE INDEX IF NOT EXISTS idx_paper_position_lots_symbol_acquired "
+                    "ON paper_position_lots(symbol, acquired_at, lot_id)"
+                )
                 connection.execute("CREATE TABLE IF NOT EXISTS paper_trading_logs (id TEXT PRIMARY KEY, symbol TEXT NOT NULL, name TEXT NOT NULL, side TEXT NOT NULL, quantity REAL NOT NULL, price REAL NOT NULL, fee REAL NOT NULL DEFAULT 0, cash_before REAL NOT NULL, cash_after REAL NOT NULL, decision_id TEXT, reason TEXT NOT NULL, status TEXT NOT NULL DEFAULT 'executed', executed_at TEXT NOT NULL)")
                 connection.execute("CREATE INDEX IF NOT EXISTS idx_paper_trading_logs_symbol_time ON paper_trading_logs(symbol, executed_at DESC)")
                 connection.execute("CREATE TABLE IF NOT EXISTS paper_trading_equity_snapshots (id INTEGER PRIMARY KEY AUTOINCREMENT, total_equity REAL NOT NULL, available_cash REAL NOT NULL, market_value REAL NOT NULL, total_pnl REAL NOT NULL, recorded_at TEXT NOT NULL)")
@@ -1423,13 +1441,29 @@ class PortfolioStore:
             row = connection.execute("SELECT initial_cash FROM paper_trading_accounts WHERE account_id='default'").fetchone()
             flow_row = connection.execute("SELECT COALESCE(SUM(amount), 0) AS total FROM paper_trading_cash_flows").fetchone()
             positions = [dict(item) for item in connection.execute("SELECT * FROM paper_trading_positions ORDER BY updated_at DESC").fetchall()]
+            lot_totals = {
+                str(item["symbol"]): float(item["sellable_quantity"])
+                for item in connection.execute(
+                    "SELECT symbol, COALESCE(SUM(sellable_quantity), 0) AS sellable_quantity "
+                    "FROM paper_position_lots WHERE quantity > 0 GROUP BY symbol"
+                ).fetchall()
+            }
             quotes = {str(item["symbol"]): json.loads(str(item["payload"])) for item in connection.execute("SELECT symbol,payload FROM market_quote_cache").fetchall()}
         enriched_positions = []
         for position in positions:
             price = float((quotes.get(str(position["symbol"]), {}).get("price")) or position["average_cost"])
             market_value = float(position["quantity"]) * price
             cost_value = float(position["quantity"]) * float(position["average_cost"])
-            enriched_positions.append({**position, "last_price": price, "market_value": market_value, "unrealized_pnl": market_value - cost_value, "unrealized_return_percent": (market_value / cost_value - 1) * 100 if cost_value else 0.0})
+            sellable_quantity = min(float(position["quantity"]), lot_totals.get(str(position["symbol"]), 0.0))
+            enriched_positions.append({
+                **position,
+                "sellable_quantity": sellable_quantity,
+                "locked_quantity": max(0.0, float(position["quantity"]) - sellable_quantity),
+                "last_price": price,
+                "market_value": market_value,
+                "unrealized_pnl": market_value - cost_value,
+                "unrealized_return_percent": (market_value / cost_value - 1) * 100 if cost_value else 0.0,
+            })
         positions = enriched_positions
         market_value = sum(float(position["market_value"]) for position in positions)
         cash = float(cash_row["available_cash"]) if cash_row else 0.0
@@ -1464,6 +1498,18 @@ class PortfolioStore:
         with self._connect() as connection: rows = connection.execute(query, args).fetchall()
         return [dict(row) for row in rows]
 
+    def paper_position_lots(self, symbol: str | None = None) -> list[dict[str, object]]:
+        """Expose immutable-ish acquisition lots and their current sellability."""
+        query = (
+            "SELECT * FROM paper_position_lots WHERE symbol=? ORDER BY acquired_at, lot_id"
+            if symbol
+            else "SELECT * FROM paper_position_lots ORDER BY acquired_at, lot_id"
+        )
+        args = [str(symbol).strip().upper()] if symbol else []
+        with self._connect() as connection:
+            rows = connection.execute(query, args).fetchall()
+        return [dict(row) for row in rows]
+
     def record_paper_skip(self, *, symbol: str, name: str, decision_id: str | None, reason: str, price: float = 0.0) -> dict[str, object]:
         """Persist a non-execution so simulations can be audited, not just replayed."""
         now = beijing_now().isoformat()
@@ -1495,24 +1541,18 @@ class PortfolioStore:
             # scheduler from mistaking an unsellable T+1 position for a lot
             # sizing problem.
             if side == "SELL" and adapter.settlement_rule == "CN_A_T1_SELLABILITY":
-                position_for_availability = connection.execute(
-                    "SELECT quantity FROM paper_trading_positions WHERE symbol=?", (symbol,)
-                ).fetchone()
                 today = beijing_now().date().isoformat()
-                bought_today_for_availability = connection.execute(
-                    "SELECT COALESCE(SUM(quantity), 0) AS quantity FROM paper_trading_logs "
-                    "WHERE symbol=? AND side='BUY' AND status='executed' AND substr(executed_at, 1, 10)=?",
-                    (symbol, today),
-                ).fetchone()
-                position_quantity_for_availability = (
-                    float(position_for_availability["quantity"])
-                    if position_for_availability
-                    else 0.0
+                connection.execute(
+                    "UPDATE paper_position_lots SET sellable_quantity=quantity, "
+                    "settlement_state='SETTLED', updated_at=? "
+                    "WHERE symbol=? AND settlement_state='PENDING_T1' AND substr(acquired_at, 1, 10) < ?",
+                    (now, symbol, today),
                 )
-                sellable_for_availability = max(
-                    0.0,
-                    position_quantity_for_availability - float(bought_today_for_availability["quantity"]),
-                )
+                sellable_for_availability = float(connection.execute(
+                    "SELECT COALESCE(SUM(sellable_quantity), 0) AS quantity "
+                    "FROM paper_position_lots WHERE symbol=? AND quantity > 0",
+                    (symbol,),
+                ).fetchone()["quantity"])
                 if quantity > sellable_for_availability + 1e-9:
                     raise ValueError("paper_t1_unsellable_quantity")
             lot_size = int(metadata["lot_size"]) if metadata and metadata["lot_size"] else adapter.default_lot_size
@@ -1543,18 +1583,41 @@ class PortfolioStore:
                 average_cost = ((float(position["average_cost"]) * existing_quantity) + cost) / new_quantity if position else cost / quantity
                 cash_after = cash_before - cost
                 connection.execute("INSERT INTO paper_trading_positions VALUES (?,?,?,?,?) ON CONFLICT(symbol) DO UPDATE SET name=excluded.name,quantity=excluded.quantity,average_cost=excluded.average_cost,updated_at=excluded.updated_at", (symbol, name, new_quantity, average_cost, now))
-            elif side == "SELL":
-                today = beijing_now().date().isoformat()
-                bought_today = connection.execute(
-                    "SELECT COALESCE(SUM(quantity), 0) AS quantity FROM paper_trading_logs WHERE symbol=? AND side='BUY' AND status='executed' AND substr(executed_at, 1, 10)=?",
-                    (symbol, today),
-                ).fetchone()
-                sellable_quantity = (
-                    max(0.0, existing_quantity - float(bought_today["quantity"]))
-                    if adapter.settlement_rule == "CN_A_T1_SELLABILITY"
-                    else existing_quantity
+                connection.execute(
+                    "INSERT INTO paper_position_lots "
+                    "(lot_id,symbol,market,currency,quantity,acquired_at,cost_basis,sellable_quantity,settlement_state,updated_at) "
+                    "VALUES (?,?,?,?,?,?,?,?,?,?)",
+                    (
+                        str(uuid4()), symbol, market, adapter.trading_currency, quantity, now,
+                        cost / quantity, 0.0 if adapter.settlement_rule == "CN_A_T1_SELLABILITY" else quantity,
+                        "PENDING_T1" if adapter.settlement_rule == "CN_A_T1_SELLABILITY" else "SETTLED", now,
+                    ),
                 )
+            elif side == "SELL":
+                lots = connection.execute(
+                    "SELECT lot_id,quantity,sellable_quantity FROM paper_position_lots "
+                    "WHERE symbol=? AND quantity > 0 ORDER BY acquired_at, lot_id",
+                    (symbol,),
+                ).fetchall()
+                sellable_quantity = sum(float(lot["sellable_quantity"]) for lot in lots)
                 if quantity > sellable_quantity + 1e-9: raise ValueError("paper_t1_unsellable_quantity")
+                quantity_remaining_to_sell = quantity
+                for lot in lots:
+                    if quantity_remaining_to_sell <= 1e-9:
+                        break
+                    sell_from_lot = min(quantity_remaining_to_sell, float(lot["sellable_quantity"]))
+                    quantity_remaining_to_sell -= sell_from_lot
+                    remaining_lot_quantity = float(lot["quantity"]) - sell_from_lot
+                    connection.execute(
+                        "UPDATE paper_position_lots SET quantity=?, sellable_quantity=?, settlement_state=?, updated_at=? WHERE lot_id=?",
+                        (
+                            remaining_lot_quantity,
+                            max(0.0, float(lot["sellable_quantity"]) - sell_from_lot),
+                            "CLOSED" if remaining_lot_quantity <= 1e-9 else "SETTLED",
+                            now,
+                            lot["lot_id"],
+                        ),
+                    )
                 gross = quantity * price
                 fee = max(5.0, gross * 0.0003) + gross * 0.001
                 cash_after = cash_before + gross - fee

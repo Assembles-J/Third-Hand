@@ -5,6 +5,7 @@ from math import floor
 
 from app import decision_config as config
 from app.decision_models import DecisionContext, PositionSizingResult
+from app.market_adapter import adapter_for_market
 
 
 class PositionSizingEngine:
@@ -28,6 +29,9 @@ class PositionSizingEngine:
         if assets is None: missing.append("account.total_assets")
         if missing:
             return PositionSizingResult(status="blocked", blocked_reasons=tuple(missing), **common)
+        execution_blockers = self._execution_precheck(context, action)
+        if execution_blockers:
+            return PositionSizingResult(status="blocked", blocked_reasons=execution_blockers, **common)
         lot, entry = instrument.lot_size, quote.price
         if action == "REDUCE":
             # The workbench has one transparent, system-wide sizing policy instead
@@ -58,3 +62,28 @@ class PositionSizingEngine:
     @staticmethod
     def _round_down(quantity: float, lot_size: int) -> float:
         return float(floor(max(0, quantity) / lot_size) * lot_size)
+
+    @staticmethod
+    def _execution_precheck(context: DecisionContext, action: str) -> tuple[str, ...]:
+        """Check market execution prerequisites before deriving a trade size.
+
+        This is intentionally stricter than research eligibility: an instrument
+        can be researched without a paper ledger capable of settling its
+        currency.  The guard prevents a numeric sizing result from suggesting a
+        trade that the execution boundary must reject anyway.
+        """
+        if action not in {"OPEN", "ADD", "REDUCE", "EXIT"}:
+            return ()
+        instrument = context.instrument
+        if instrument is None:
+            return ("execution_instrument_metadata_required",)
+        adapter = adapter_for_market(instrument.market)
+        if adapter is None:
+            return ("execution_market_rule_unavailable",)
+        if instrument.currency != adapter.trading_currency:
+            return ("execution_instrument_currency_conflict",)
+        if context.account.account_currency != instrument.currency:
+            return ("execution_account_currency_mismatch",)
+        if adapter.paper_fee_schedule == "UNCONFIGURED":
+            return ("execution_fee_schedule_unconfigured",)
+        return ()

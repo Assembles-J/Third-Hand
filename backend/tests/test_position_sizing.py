@@ -60,3 +60,26 @@ def test_watch_does_not_produce_a_quantity(tmp_path):
 
     assert result.status == "not_applicable"
     assert result.suggested_quantity is None
+
+
+def test_market_execution_precheck_blocks_currency_mismatch_before_sizing(tmp_path):
+    context = _context(tmp_path)
+    hk_instrument = context.instrument.model_copy(update={"market": "HK", "currency": "HKD", "lot_size": 200})
+    result = PositionSizingEngine().size(context.model_copy(update={"instrument": hk_instrument}), "ADD")
+
+    assert result.status == "blocked"
+    assert result.suggested_quantity is None
+    assert result.blocked_reasons == ("execution_account_currency_mismatch",)
+
+
+def test_market_execution_precheck_never_sizes_unconfigured_fee_market(tmp_path):
+    context = _context(tmp_path)
+    hk_instrument = context.instrument.model_copy(update={"market": "HK", "currency": "HKD", "lot_size": 200})
+    hk_account = context.account.model_copy(update={"account_currency": "HKD"})
+    result = PositionSizingEngine().size(
+        context.model_copy(update={"instrument": hk_instrument, "account": hk_account}), "ADD"
+    )
+
+    assert result.status == "blocked"
+    assert result.suggested_quantity is None
+    assert result.blocked_reasons == ("execution_fee_schedule_unconfigured",)
