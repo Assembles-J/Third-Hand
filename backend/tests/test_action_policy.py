@@ -106,6 +106,11 @@ def test_add_requires_every_hard_precondition(tmp_path):
 
 def test_research_only_negative_event_cannot_change_policy_action(tmp_path):
     context = _context(tmp_path, rule_cap=100)
+    # Keep this test focused on RESEARCH_ONLY authority, not concentration. The
+    # system hard cap is now a formal authority even when a personal rule is looser.
+    context = context.model_copy(update={
+        "position": context.position.model_copy(update={"position_percent": 10.0})
+    })
     evidence = (*EvidenceEngine().build(context), EvidenceItem(
         evidence_id="event.negative.synthetic",
         category="event",
