@@ -62,35 +62,45 @@ def test_explicit_provider_metadata_is_never_overridden_by_symbol_shape():
 
 
 def test_installed_policy_repairs_existing_legacy_row_on_read(tmp_path):
-    original_save = PortfolioStore.save_instrument_metadata
-    original_read = PortfolioStore.instrument_metadata
-    had_flag = hasattr(PortfolioStore, "_instrument_metadata_policy_installed")
-    previous_flag = getattr(PortfolioStore, "_instrument_metadata_policy_installed", None)
-    try:
-        if had_flag:
-            delattr(PortfolioStore, "_instrument_metadata_policy_installed")
-        PortfolioStore.save_instrument_metadata = original_save
-        PortfolioStore.instrument_metadata = original_read
+    install()
+    store = PortfolioStore(tmp_path / "instrument-policy.db")
+    legacy = _legacy("01810")
 
-        store = PortfolioStore(tmp_path / "instrument-policy.db")
-        original_save(store, _legacy("01810"))
-        assert original_read(store, "01810")["market"] == "CN"
+    # Simulate an installation that already persisted the pre-v3 synthetic row.
+    # Insert directly so this test remains independent of whether an earlier test
+    # already installed the runtime wrapper on PortfolioStore.
+    with store._connect() as connection:
+        connection.execute(
+            """INSERT INTO instrument_metadata
+            (symbol, market, currency, lot_size, price_tick, source, as_of, updated_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?)""",
+            (
+                legacy["symbol"], legacy["market"], legacy["currency"],
+                legacy["lot_size"], legacy["price_tick"], legacy["source"],
+                legacy["as_of"], "2026-08-18T00:00:00+08:00",
+            ),
+        )
+        raw = connection.execute(
+            "SELECT market, source FROM instrument_metadata WHERE symbol='01810'"
+        ).fetchone()
+        assert raw["market"] == "CN"
+        assert raw["source"] == LEGACY_PAPER_DEFAULT_SOURCE
 
-        install()
-        repaired = store.instrument_metadata("01810")
+    repaired = store.instrument_metadata("01810")
 
-        assert repaired is not None
-        assert repaired["market"] == "HK"
-        assert repaired["currency"] == "HKD"
-        assert repaired["lot_size"] is None
-        assert repaired["source"] == NORMALIZED_PAPER_DEFAULT_SOURCE
-        persisted = original_read(store, "01810")
-        assert persisted["market"] == "HK"
-        assert persisted["source"] == NORMALIZED_PAPER_DEFAULT_SOURCE
-    finally:
-        PortfolioStore.save_instrument_metadata = original_save
-        PortfolioStore.instrument_metadata = original_read
-        if hasattr(PortfolioStore, "_instrument_metadata_policy_installed"):
-            delattr(PortfolioStore, "_instrument_metadata_policy_installed")
-        if had_flag:
-            PortfolioStore._instrument_metadata_policy_installed = previous_flag
+    assert repaired is not None
+    assert repaired["market"] == "HK"
+    assert repaired["currency"] == "HKD"
+    assert repaired["lot_size"] is None
+    assert repaired["price_tick"] is None
+    assert repaired["source"] == NORMALIZED_PAPER_DEFAULT_SOURCE
+
+    with store._connect() as connection:
+        persisted = connection.execute(
+            "SELECT market, currency, lot_size, price_tick, source FROM instrument_metadata WHERE symbol='01810'"
+        ).fetchone()
+    assert persisted["market"] == "HK"
+    assert persisted["currency"] == "HKD"
+    assert persisted["lot_size"] is None
+    assert persisted["price_tick"] is None
+    assert persisted["source"] == NORMALIZED_PAPER_DEFAULT_SOURCE
