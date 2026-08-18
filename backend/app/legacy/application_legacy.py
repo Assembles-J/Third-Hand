@@ -46,6 +46,7 @@ from app.recommendations import candidate as build_candidate, first_fill, evalua
 from app.opportunity_scoring import score_opportunity
 from app.decision_context import DecisionContextBuilder
 from app.execution_precheck import validate_daily_execution
+from app.decision_semantics import execution_side, formal_action_from_report
 from app.research_report import ResearchReportBuilder
 from app.research_thesis import ResearchThesisService
 from app.decision_models import DecisionContext, ResearchReport, ThesisVersion
@@ -1772,11 +1773,11 @@ def execute_due_paper_decisions(symbols: list[str], names: dict[str, str], run_i
             }, name=symbol_name)
             _record_simulation_stage(run_id, "execution", "skipped", symbol=symbol, detail={"terminal_state": terminal_state, "reason": check.reason}, started_at=stage_started_at)
             continue
-        action = str(report.get("action") or "").upper()
+        action = formal_action_from_report(report)
         sizing = report.get("sizing") or {}
         quantity = float(sizing.get("suggested_quantity") or sizing.get("target_quantity") or 0)
         price = float((quote or {}).get("price") or 0)
-        side = "BUY" if action in {"OPEN", "ADD"} else "SELL" if action in {"REDUCE", "EXIT"} else None
+        side = execution_side(action)
         if not side or quantity <= 0 or price <= 0:
             _record_simulation_symbol_state(run_id, symbol, "skipped_execution", {
                 "decision_id": str(report.get("decision_id") or ""),

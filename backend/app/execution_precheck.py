@@ -4,6 +4,8 @@ from __future__ import annotations
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 
+from app.decision_semantics import action_gate_for, formal_action_from_report
+
 
 BEIJING_TZ = timezone(timedelta(hours=8))
 
@@ -67,8 +69,9 @@ def validate_daily_execution(report: dict[str, object], quote: dict[str, object]
         return ExecutionCheck(False, "execution_not_due_later_quote")
 
     gates = ((report.get("data_quality") or {}).get("action_gates") or [])
-    action = str(report.get("action") or "").upper()
-    gate = next((item for item in gates if str(item.get("action") or "").upper() == action), None)
-    if action in {"OPEN", "ADD"} and (not gate or gate.get("permission") != "allowed"):
+    formal_action = formal_action_from_report(report)
+    gate_action = action_gate_for(formal_action)
+    gate = next((item for item in gates if str(item.get("action") or "").upper() == gate_action), None)
+    if gate_action and (not gate or gate.get("permission") != "allowed"):
         return ExecutionCheck(False, "execution_action_gate_blocked")
     return ExecutionCheck(True)

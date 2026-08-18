@@ -131,13 +131,15 @@ DecisionArbiter with separate decision confidence.
 
 ### Phase 4 — Decision semantics/state machine — ACTIVE
 
-The compatibility slice now emits deterministic `EntryDecision` and
-`PositionDecision` values beside the legacy action. A flat `OPEN` maps to BUY,
-while a held-position WATCH maps to HOLD rather than REDUCE. The arbiter does
-not consume ResearchAssessment or model output.
+The semantic action is now the formal execution authority, while the legacy
+action remains a compatibility/audit field. A flat `OPEN` maps to BUY, while a
+held-position WATCH maps to HOLD rather than REDUCE; paper execution reads the
+formal action and maps BUY back to the existing OPEN quality gate. Old frozen
+reports safely replay through the same mapping. The arbiter does not consume
+ResearchAssessment or model output.
 
-Remaining: make semantic actions the formal execution authority, add explicit
-position states, hard event-gate reason codes and multi-timeframe authority.
+Remaining: add explicit position states, hard event-gate reason codes and
+multi-timeframe authority.
 
 ### Phase 5 — Market/execution adapters
 

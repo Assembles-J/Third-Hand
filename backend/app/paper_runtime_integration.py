@@ -13,6 +13,7 @@ from uuid import uuid4
 from app import decision_config as config
 from app.candidate_selection import CandidateSelection, select_candidates
 from app.execution_precheck import execution_quote_observed_at
+from app.decision_semantics import execution_side, formal_action_from_report
 from app.paper_runtime import (
     candidate_pool_audit,
     current_candidate_selection,
@@ -283,11 +284,11 @@ def install(m) -> None:
                 m._record_simulation_symbol_state(run_id, symbol, terminal_state, detail, name=symbol_name)
                 m._record_simulation_stage(run_id, "execution", "skipped", symbol=symbol, detail={"terminal_state": terminal_state, **detail}, started_at=stage_started_at)
                 continue
-            action = str(report.get("action") or "").upper()
+            action = formal_action_from_report(report)
             sizing = report.get("sizing") or {}
             quantity = float(sizing.get("suggested_quantity") or sizing.get("target_quantity") or 0)
             price = float((quote or {}).get("price") or 0)
-            side = "BUY" if action in {"OPEN", "ADD"} else "SELL" if action in {"REDUCE", "EXIT"} else None
+            side = execution_side(action)
             if not side or quantity <= 0 or price <= 0:
                 detail = {"name": symbol_name, "decision_id": str(report.get("decision_id") or ""), "reason": "invalid_side_or_sizing", "action": action, "quantity": quantity, "price": price}
                 m._record_simulation_symbol_state(run_id, symbol, "skipped_execution", detail, name=symbol_name)

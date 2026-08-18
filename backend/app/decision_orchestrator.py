@@ -90,6 +90,7 @@ class DecisionOrchestrator:
             research_assessment_validation=research_validation,
             entry_decision=semantic_decision if context.position is None else None,
             position_decision=semantic_decision if context.position is not None else None,
+            formal_action=semantic_decision.action,
             action_candidates=candidates,
             operation_items=self._operation_items(context, action, candidates[0].blocked_reasons, sizing, canonical.display_price),
             ai_assessment=assessment, ai_status=ai_outcome.status, ai_error_code=ai_outcome.error_code,

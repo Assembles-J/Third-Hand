@@ -101,3 +101,14 @@ def test_open_still_requires_allowed_action_gate():
 
     assert check.allowed is False
     assert check.reason == "execution_action_gate_blocked"
+
+
+def test_formal_buy_uses_the_legacy_open_gate_during_compatibility_migration():
+    report = _report("WATCH")
+    report["formal_action"] = "BUY"
+    report["data_quality"] = {"action_gates": [{"action": "OPEN", "permission": "blocked"}]}
+
+    check = validate_daily_execution(report, _quote())
+
+    assert check.allowed is False
+    assert check.reason == "execution_action_gate_blocked"

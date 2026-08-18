@@ -6,7 +6,7 @@ non-entry candidate for a held position becomes HOLD, never REDUCE.
 """
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, Literal
+from typing import TYPE_CHECKING, Literal, Mapping
 
 from pydantic import BaseModel, ConfigDict, Field
 
@@ -14,6 +14,9 @@ from app import decision_config as config
 
 if TYPE_CHECKING:
     from app.decision_models import ActionCandidate, DecisionContext
+
+
+FormalDecisionAction = Literal["BUY", "WAIT", "HOLD", "ADD", "REDUCE", "EXIT", "BLOCKED"]
 
 
 class DecisionSemanticModel(BaseModel):
@@ -78,4 +81,38 @@ class DecisionArbiter:
         )
 
 
-__all__ = ["DecisionArbiter", "EntryDecision", "PositionDecision"]
+def formal_action_from_report(report: Mapping[str, object]) -> FormalDecisionAction:
+    """Read the semantic authority from a report with a safe legacy fallback."""
+    allowed = {"BUY", "WAIT", "HOLD", "ADD", "REDUCE", "EXIT", "BLOCKED"}
+    formal = str(report.get("formal_action") or "").upper()
+    if formal in allowed:
+        return formal  # type: ignore[return-value]
+    for field in ("entry_decision", "position_decision"):
+        decision = report.get(field)
+        if isinstance(decision, Mapping):
+            action = str(decision.get("action") or "").upper()
+            if action in allowed:
+                return action  # type: ignore[return-value]
+    legacy = str(report.get("action") or "").upper()
+    return {
+        "OPEN": "BUY", "WATCH": "WAIT", "HOLD": "HOLD", "ADD": "ADD",
+        "REDUCE": "REDUCE", "EXIT": "EXIT", "BLOCKED": "BLOCKED",
+    }.get(legacy, "BLOCKED")  # type: ignore[return-value]
+
+
+def execution_side(formal_action: FormalDecisionAction) -> Literal["BUY", "SELL"] | None:
+    if formal_action in {"BUY", "ADD"}:
+        return "BUY"
+    if formal_action in {"REDUCE", "EXIT"}:
+        return "SELL"
+    return None
+
+
+def action_gate_for(formal_action: FormalDecisionAction) -> Literal["OPEN", "ADD"] | None:
+    return {"BUY": "OPEN", "ADD": "ADD"}.get(formal_action)  # type: ignore[return-value]
+
+
+__all__ = [
+    "DecisionArbiter", "EntryDecision", "FormalDecisionAction", "PositionDecision",
+    "action_gate_for", "execution_side", "formal_action_from_report",
+]
