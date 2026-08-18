@@ -19,10 +19,10 @@ def load_legacy_application() -> ModuleType:
     singletons. Paper runtime governance then patches that exact module object.
     Adaptive scheduling narrows cadence/scope without changing policy authority.
     Session-aware data scheduling narrows when provider-backed refreshes may run.
-    Corporate-event policy then wraps the already-local-first derived refresh so
-    a bounded cached event calendar is available before formal paper decisions.
-    Finally, additive non-conflicting v2 routes receive dependencies from
-    bootstrap.
+    Corporate-event policy wraps the already-local-first derived refresh. Finally,
+    the Phase-2 Atomic Evidence runtime adds persisted Company Intelligence only
+    to the shadow builder that runs after formal candidates are frozen; it does
+    not alter DecisionContext, AI prompts or execution inputs.
     """
     from app.daily_history_policy import install as install_daily_history_policy
     from app.daily_history_compat import install as install_daily_history_compat
@@ -37,11 +37,13 @@ def load_legacy_application() -> ModuleType:
     from app.adaptive_paper_runtime import install as install_adaptive_paper_runtime
     from app.data_scheduling_policy import install as install_data_scheduling_policy
     from app.corporate_events import install as install_corporate_event_policy
+    from app.atomic_evidence_runtime import install as install_atomic_evidence_runtime
     from app.bootstrap.v2_routes import register_v2_routes
 
     install_paper_runtime_governance(application)
     install_adaptive_paper_runtime(application)
     install_data_scheduling_policy(application)
     install_corporate_event_policy(application)
+    install_atomic_evidence_runtime(application)
     register_v2_routes(application)
     return application

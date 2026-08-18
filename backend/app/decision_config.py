@@ -6,9 +6,9 @@ import os
 # v3 changes POLICY evidence authority: technical price/location uses the
 # canonical quote/daily view and stale/conflicted risk evidence is research-only.
 EVIDENCE_VERSION = "evidence-v3-canonical-market-inputs"
-# Phase 2 runs this compact fact representation beside current evidence. It is
-# persisted for audit only and has no action authority yet.
-ATOMIC_EVIDENCE_VERSION = "atomic-evidence-shadow-v1"
+# Phase 2 runs this compact fact representation beside current evidence. v2 adds
+# point-in-time persisted Company Intelligence facts without formal authority.
+ATOMIC_EVIDENCE_VERSION = "atomic-evidence-shadow-v2-company-research"
 # v3 is a Day-0 correctness break: REDUCE now requires an existing position.
 # Bumping the version prevents historical v2 empty-position REDUCE reports from
 # remaining eligible for next-session execution after deployment.
