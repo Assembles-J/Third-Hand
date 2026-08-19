@@ -26,6 +26,7 @@ _spec.loader.exec_module(_suite)
 setup_function = _suite.setup_function
 
 _REPLACED = {
+    "test_decision_shadow_endpoint_persists_policy_candidates_without_legacy_recommendations",
     "test_decision_shadow_endpoint_persists_policy_candidates_without_replacing_recommendations",
     "test_derived_refresh_uses_sufficient_local_history_without_remote_fetch",
     "test_paper_run_persists_run_stages_and_symbol_terminal_state",
@@ -114,7 +115,8 @@ def test_decision_shadow_endpoint_persists_policy_candidates_without_replacing_r
     assert response.json()["sizing"] is None
     assert response.json()["policy_version"] == config.ACTION_POLICY_VERSION
     assert _suite.store.shadow_reports("600519")[0]["shadow_id"] == response.json()["shadow_id"]
-    assert _suite.client.get("/v1/research-recommendations").json() == []
+    legacy_response = _suite.client.get("/v1/research-recommendations")
+    assert legacy_response.status_code == 404
 
 
 def test_derived_refresh_uses_sufficient_local_history_without_remote_fetch(monkeypatch):
