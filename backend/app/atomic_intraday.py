@@ -110,7 +110,10 @@ class IntradayTimeframeAtomicSource:
                 retrieval_freshness=freshness,
                 polarity="NEUTRAL_MATERIAL",
                 materiality=materiality,  # type: ignore[arg-type]
-                comparison_adequacy="not_applicable",
+                # Intraday facts describe a completed timeframe state but do not
+                # carry a calibrated directional comparison yet. `partial` is
+                # the existing AtomicFactRecord contract for that situation.
+                comparison_adequacy="partial",
                 confidence=confidence,
                 provenance_hash=provenance,
             ))
