@@ -563,3 +563,19 @@ Also preserve:
 - provider lineage
 - no automatic production tuning from Feedback or AI experiment performance
 - no AI direct write to authoritative paper execution state
+
+## J. Delivery update — 2026-08-19
+
+- **N1 StrategyProfile / SWING_V1:** `PRODUCT_DONE` via #63. The immutable
+  `SWING_V1` identity and policy-version lineage are serialized in DecisionReport
+  and rendered in Android stock detail together with structured timeframe
+  authority. Formal action semantics were unchanged and full backend + Android
+  CI passed before merge.
+- **P0 #46 paper-execution visibility:** backend/API sellability and deferral
+  facts were already authoritative. The Android Trading surface now consumes
+  `sellable_quantity`, `locked_quantity`, `next_eligible_sell_at`, runtime
+  `state_source`, and active execution deferrals and renders explicit T+1/
+  next-review reasons. This advances #46 to `ANDROID_VISIBLE / OBSERVABLE` for
+  the user-facing slice; **Phase 5 remains open** until the deployed-container
+  acceptance matrix in #46 passes. This UI slice does not change Paper Broker,
+  ExecutionPrecheck, sizing, session, freshness or T+1 authority.

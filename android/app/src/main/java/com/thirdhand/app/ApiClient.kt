@@ -46,7 +46,6 @@ data class HoldingDraftDto(
     val quantity: Double,
     val average_cost: Double,
     val created_at: String,
-    // Gson can deserialize explicit JSON null values despite Kotlin defaults.
     val lookup_status: String? = "pending",
     val lookup_message: String = "等待后台查询证券代码",
     val lookup_updated_at: String? = null,
@@ -253,7 +252,33 @@ data class AdminOverviewDto(
 data class SystemConfigDto(val update_check_enabled: Boolean = true, val paper_trading_enabled: Boolean = false, val paper_trading_interval_seconds: Int = 600)
 data class PaperTradingConfigDto(val available_cash: Double)
 data class PaperTradingCapitalReconciliationDto(val net_contributions: Double)
-data class PaperTradingPositionDto(val symbol: String, val name: String, val quantity: Double, val average_cost: Double, val last_price: Double = 0.0, val market_value: Double = 0.0, val unrealized_pnl: Double = 0.0, val unrealized_return_percent: Double = 0.0, val updated_at: String)
+data class PaperTradingPositionDto(
+    val symbol: String,
+    val name: String,
+    val quantity: Double,
+    val average_cost: Double,
+    val last_price: Double = 0.0,
+    val market_value: Double = 0.0,
+    val unrealized_pnl: Double = 0.0,
+    val unrealized_return_percent: Double = 0.0,
+    val sellable_quantity: Double? = null,
+    val locked_quantity: Double? = null,
+    val next_eligible_sell_at: String? = null,
+    val updated_at: String,
+)
+data class PaperExecutionDeferralDto(
+    val decision_id: String,
+    val symbol: String,
+    val action: String,
+    val requested_quantity: Double = 0.0,
+    val max_executable_quantity: Double = 0.0,
+    val reason_code: String = "",
+    val next_eligible_at: String,
+    val state: String,
+    val created_at: String? = null,
+    val resolved_at: String? = null,
+    val detail: Map<String, Any> = emptyMap(),
+)
 data class PaperEquitySnapshotDto(val total_equity: Double, val available_cash: Double, val market_value: Double, val total_pnl: Double, val recorded_at: String)
 data class PaperTradingRunDto(val status: String, val message: String, val symbols: List<String> = emptyList(), val executed: Int = 0, val skipped: Int = 0, val run_id: String? = null)
 data class PaperTradingStatusDto(
@@ -269,6 +294,7 @@ data class PaperTradingStatusDto(
     val last_symbols: List<String> = emptyList(),
     val seconds_until_next_run: Int = 0,
     val last_run_id: String? = null,
+    val state_source: String = "memory",
 )
 data class PaperTradingDashboardDto(
     val account: PaperTradingAccountDto,
@@ -345,7 +371,6 @@ data class TechnicalSnapshotDto(
 )
 data class DecisionEventDto(val id: String, val title: String, val impact: String, val summary: String, val source_url: String? = null, val published_at: String? = null)
 data class CalibrationHorizonDto(val sample_count: Int = 0, val average_return_percent: Double? = null, val rule_alignment_rate_percent: Double? = null)
-// Gson may deserialize an explicit JSON null despite the Kotlin default value.
 data class HistoricalCalibrationDto(val action: String = "", val definition: String = "", val horizons: Map<String, CalibrationHorizonDto>? = emptyMap())
 data class MarketIndexRegimeDto(val symbol: String, val name: String, val five_day_return_percent: Double, val trend: String, val above_sma20: Boolean)
 data class MarketRegimeDto(val status: String = "unavailable", val regime: String = "unknown", val indexes: List<MarketIndexRegimeDto> = emptyList(), val source: String = "", val note: String = "")
@@ -549,6 +574,8 @@ interface ThirdHandApi {
     suspend fun reconcilePaperTradingContributions(@Body config: PaperTradingCapitalReconciliationDto): PaperTradingAccountDto
     @GET("v1/paper-trading/logs")
     suspend fun paperTradingLogs(@Query("symbol") symbol: String? = null, @Query("limit") limit: Int = 100): List<PaperTradingLogDto>
+    @GET("v1/paper-trading/execution-deferrals")
+    suspend fun paperExecutionDeferrals(@Query("symbol") symbol: String? = null, @Query("state") state: String? = null, @Query("limit") limit: Int = 100): List<PaperExecutionDeferralDto>
     @GET("v1/paper-trading/equity-snapshots")
     suspend fun paperTradingEquitySnapshots(@Query("limit") limit: Int = 120): List<PaperEquitySnapshotDto>
     @GET("v1/paper-trading/status")
@@ -656,7 +683,6 @@ interface ThirdHandApi {
     @POST("v1/market/quotes/batch")
     suspend fun quotes(@Body request: MarketQuoteBatchRequestDto): List<MarketQuoteDto>
 
-    // Compatibility endpoint for servers deployed before batch POST was added.
     @GET("v1/market/quotes")
     suspend fun quotesLegacy(
         @Query("symbols") symbols: List<String>,
@@ -779,11 +805,6 @@ object ApiClient {
         }
     }
 
-    /**
-     * Some production servers may still expose only the original GET endpoint.
-     * A 405 is an API-version mismatch, so retrying with GET is safe and avoids
-     * presenting it to the user as a market-data failure.
-     */
     suspend fun marketQuotes(api: ThirdHandApi, request: MarketQuoteBatchRequestDto): List<MarketQuoteDto> = try {
         api.quotes(request)
     } catch (error: HttpException) {
@@ -792,12 +813,6 @@ object ApiClient {
         api.quotesLegacy(request.symbols, request.refresh)
     }
 
-    /**
-     * Request a server-side refresh and return the best immediately available
-     * snapshot.  A refresh may be fulfilled asynchronously by the server, so
-     * waiting for every timestamp to change here would keep the holdings UI in
-     * a loading state and repeatedly query the same cache.
-     */
     suspend fun latestMarketQuotes(api: ThirdHandApi, symbols: List<String>): List<MarketQuoteDto> {
         val requested = symbols.distinct().filter { it.isNotBlank() }
         if (requested.isEmpty()) return emptyList()
@@ -813,8 +828,6 @@ object ApiClient {
             .client(
                 OkHttpClient.Builder()
                     .addInterceptor(marketDebugInterceptor)
-                    // A forced refresh queries public data sources.  Their full-market
-                    // snapshots can legitimately take longer than OkHttp's 10s default.
                     .callTimeout(45, TimeUnit.SECONDS)
                     .build(),
             )
@@ -841,9 +854,6 @@ object EndpointStore {
     }
 
     private fun String.normalizeBaseUrl(): String {
-        // Cloudflare redirects the production HTTP endpoint to HTTPS.  OkHttp
-        // changes redirected POST requests into GET requests, producing 405 on
-        // write endpoints.  Keep plain HTTP unchanged for LAN development URLs.
         val httpsUrl = trim().replaceFirst(
             Regex("^http://groupim\\.cn(?=[:/]|$)", RegexOption.IGNORE_CASE),
             "https://groupim.cn",
