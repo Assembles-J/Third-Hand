@@ -41,15 +41,32 @@ def _official_release_pending(store, symbol: str) -> bool:
     return False
 
 
+def _company_service(m):
+    """Resolve the authoritative Company Intelligence runtime service.
+
+    Architecture Refactor v2 registers the production service as
+    ``company_intelligence_service_v2``.  Keep the legacy name only as a
+    compatibility fallback for isolated tests/older embeddings; production
+    bootstrap must not depend on a retired alias being present.
+    """
+    return (
+        getattr(m, "company_intelligence_service_v2", None)
+        or getattr(m, "company_intelligence_service", None)
+    )
+
+
 def install(m) -> None:
     if getattr(m, "_financial_release_refresh_runtime_installed", False):
         return
-    m._financial_release_refresh_runtime_installed = True
-    service = getattr(m, "company_intelligence_service", None)
+
+    service = _company_service(m)
     store = getattr(m, "store", None)
     if service is None or store is None:
+        # Do not mark the adapter installed when its required v2 dependency is
+        # absent; bootstrap ordering bugs must stay observable and retryable.
         return
 
+    m._financial_release_refresh_runtime_installed = True
     original_requirements = service.requirements
     original_build_context = service.build_context
 
