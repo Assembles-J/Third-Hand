@@ -135,6 +135,7 @@ class DecisionWorkspaceService:
             "status": str(bundle.get("status") or "unavailable"),
             "retrieved_at": bundle.get("retrieved_at"),
             "official_source_status": bundle.get("official_source_status"),
+            "unavailable_dates": list(bundle.get("unavailable_dates") or []),
             "active_events": active,
             "recent_history": history,
             # These facts are frozen inside the current DecisionReport and explain

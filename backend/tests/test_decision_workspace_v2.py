@@ -100,6 +100,7 @@ class _Store:
             "status": "ready",
             "retrieved_at": "2026-08-19T13:50:00+08:00",
             "official_source_status": "ready",
+            "unavailable_dates": [],
             "events": [
                 {
                     "event_id": "event-results",
@@ -162,11 +163,33 @@ def test_workspace_exposes_frozen_financial_currentness_and_separates_current_ev
     assert events["scope"] == "CURRENT_PERSISTED"
     assert events["status"] == "ready"
     assert events["official_source_status"] == "ready"
+    assert events["unavailable_dates"] == []
     assert events["active_events"][0]["lifecycle_status"] == "SCHEDULED"
     assert events["active_events"][0]["verification_level"] == "official"
     assert events["recent_history"][0]["lifecycle_status"] == "VERIFIED"
     assert events["decision_evidence"][0]["scheduled_at"] == "2026-08-20"
     assert events["decision_evidence"][0]["polarity"] == "NEUTRAL_MATERIAL"
+
+
+def test_workspace_preserves_partial_event_coverage_instead_of_implying_no_event():
+    class PartialStore(_Store):
+        def cached_market_intelligence(self, key):
+            assert key == "corporate_events:600000"
+            return {
+                "status": "partial",
+                "retrieved_at": "2026-08-19T13:50:00+08:00",
+                "official_source_status": "stale_fallback",
+                "unavailable_dates": ["2026-08-20", "2026-08-21"],
+                "events": [],
+                "event_history": [],
+            }
+
+    events = DecisionWorkspaceService(PartialStore()).latest("600000")["corporate_events"]
+
+    assert events["status"] == "partial"
+    assert events["official_source_status"] == "stale_fallback"
+    assert events["unavailable_dates"] == ["2026-08-20", "2026-08-21"]
+    assert events["active_events"] == []
 
 
 def test_workspace_keeps_financial_and_event_sections_explicit_when_legacy_data_is_missing():
@@ -183,6 +206,7 @@ def test_workspace_keeps_financial_and_event_sections_explicit_when_legacy_data_
 
     assert workspace["financial_currentness"] is None
     assert workspace["corporate_events"]["status"] == "unavailable"
+    assert workspace["corporate_events"]["unavailable_dates"] == []
     assert workspace["corporate_events"]["active_events"] == []
     assert workspace["corporate_events"]["decision_evidence"] == []
 
