@@ -611,3 +611,12 @@ Also preserve:
   visibility to `API_VISIBLE / ANDROID_VISIBLE / OBSERVABLE`; N2 remains **not
   `PRODUCT_DONE`** until the remaining partial/stale/blocked section states and
   end-to-end acceptance under #62 are closed.
+- **N2 CorporateEvent completeness slice:** the Workspace now also carries
+  persisted `unavailable_dates` alongside the CorporateEvent bundle status.
+  Android treats `partial` as an explicit incomplete-coverage state, lists known
+  unavailable dates, surfaces `stale_fallback`, and never turns an empty event
+  list under partial coverage into “no event”. This closes the known
+  partial/stale CorporateEvent presentation gap without changing event or
+  trading authority. N2 remains **not `PRODUCT_DONE`** until the remaining
+  recoverable section-state architecture and device-level UI acceptance under
+  #62 are completed.

@@ -99,6 +99,7 @@ data class DecisionWorkspaceCorporateEventsDto(
     val status: String = "unavailable",
     val retrieved_at: String? = null,
     val official_source_status: String? = null,
+    val unavailable_dates: List<String> = emptyList(),
     val active_events: List<DecisionWorkspaceCorporateEventDto> = emptyList(),
     val recent_history: List<DecisionWorkspaceCorporateEventDto> = emptyList(),
     val decision_evidence: List<DecisionWorkspaceEventEvidenceDto> = emptyList(),
@@ -352,9 +353,32 @@ private fun DecisionWorkspaceCompanyEventState(
             }
         }
 
+        val partial = events.status == "partial"
+        if (partial) {
+            Text(
+                buildString {
+                    append("CorporateEvent 数据仅部分可用；不能据此断言“没有事件”。")
+                    if (events.unavailable_dates.isNotEmpty()) {
+                        append(" 缺失日期：").append(events.unavailable_dates.joinToString("、"))
+                    }
+                    if (events.official_source_status == "stale_fallback") {
+                        append(" 官方源当前使用旧快照回退。")
+                    }
+                },
+                style = MaterialTheme.typography.bodySmall,
+                fontWeight = FontWeight.SemiBold,
+                color = MaterialTheme.colorScheme.error,
+            )
+        }
+
         when {
             events.status == "unavailable" -> Text(
                 "当前 CorporateEvent lifecycle 未提供；不会把“没有数据”显示成“没有事件”。",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+            partial && events.active_events.isEmpty() -> Text(
+                "当前未返回活动财报事件，但事件覆盖不完整，因此本状态只能视为未知/待补齐。",
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
