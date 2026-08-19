@@ -12,28 +12,47 @@ acceptance tests. If a README, code comment, UI label, or deployment variable
 conflicts with these two documents, these two documents win and the conflicting
 text must be corrected in the same change.
 
+`ThirdHand_v3_Strategy_AI_Lab_Design.md` and
+`ThirdHand_v3_Fullstack_Technical_Roadmap.md` are approved subordinate design
+specifications for the next v3 delivery stages. They may add implementation
+clarity, but they may not override the authority, safety or status contracts in
+this document and the paired ledger. Stable decisions from those documents are
+promoted here before runtime authority changes are accepted.
+
 The current repository already has strong production invariants around DataHub quality, provider lineage, DecisionPackage hashing, AI isolation, and unified freeze. v3 extends those mechanisms; it does not replace them with a parallel stack.
 
 ## 0.1 Current implementation conformance
 
 | Area | Status | Code truth |
 |---|---|---|
-| Data, identity, events and canonical price/time | Complete | Instrument metadata, market-scoped regime, canonical snapshot and event gates are formal inputs. |
+| Data, identity, events and canonical price/time | Complete, with live acceptance still active for the newest financial/event wiring | Instrument metadata, market-scoped regime, canonical snapshot and event gates are formal inputs. Report-period currentness and persistent event lifecycle are implemented, while the latest deployed Xiaomi/HK acceptance remains tracked separately. |
 | Atomic evidence and deterministic aggregation | Complete | Fact/availability/conflict provenance, point-in-time Company Intelligence, versioned aggregation and semantic validation are persisted. |
-| Decision semantics | Partial | Entry/Position actions and formal action authority exist. High-confidence deterministic adverse research may veto new BUY/ADD risk only; it never upgrades an action or creates REDUCE/EXIT. A traceable weekly snapshot is aggregated from completed daily bars; 60m/15m/5m inputs remain explicitly unavailable and ActionPolicy remains daily-only. |
-| Market/execution adapters | Partial at the CNY-only scope | CN lot/T+1/fee and PositionLot FIFO are enforced at the ledger boundary. Sellable/locked quantity and read-only lot evidence feed the formal Context and execution precheck. HK Stock Connect retains HKD trading-price metadata and actual RMB broker-settlement receipts as audit facts. HK/US have no paper-execution path. |
-| Decision continuity | Complete | Prior decision, entry-bound position episode, full-input audit change, versioned material fingerprint, cooldown/review fields and position age are persisted. Only a strategic fingerprint transition or a hard gate/position-state transition may replace the prior formal action. ExecutionPrecheck rejects fills before `cooldown_until`; the deterministic runtime promotes `review_after` into a separately audited decision-refresh obligation. |
-| Model policy and audit | Complete for configured-provider bounded recovery | Atomic prompt projection, Flash/Pro routing, schema/semantic checks, hashes, usage and retry traces are persisted. The finite recovery graph is Flash -> Pro thinking -> Pro non-thinking structured: a schema/semantic failure promotes the next tier, while exhausted empty-content or truncation failures use the structured tier. A generic multi-provider capability registry and a provider-specific maximum-reasoning capability tier are deliberately not implemented. |
-| Feedback | Complete as an audit dataset | Frozen decision/execution lineage, actual-vs-hypothetical outcomes and read-only policy-version export exist; there is no automatic tuning. |
+| Decision semantics | Complete for the current versioned multi-timeframe authority; StrategyProfile remains the next explicit abstraction | Entry/Position actions and formal action authority exist. High-confidence deterministic adverse research may veto new BUY/ADD risk only; it never upgrades an action or creates REDUCE/EXIT. Weekly/daily plus governed 60m/15m/5m Evidence feed a versioned asymmetric Multi-Timeframe ActionPolicy. Lower timeframes may preserve, delay or downgrade new risk but may not manufacture BUY/ADD or create REDUCE/EXIT by themselves. |
+| Market/execution adapters | Partial at the CNY-only scope | CN lot/T+1/fee and PositionLot FIFO are enforced at the ledger boundary. Sellable/locked quantity and read-only lot evidence feed the formal Context and execution precheck. HK Stock Connect retains HKD trading-price metadata and actual RMB broker-settlement receipts as audit facts. HK/US have no paper-execution path. Deployed Phase 5 acceptance remains open. |
+| Decision continuity | Complete | Prior decision, entry-bound position episode, full-input audit change, versioned material fingerprint, cooldown/review fields and position age are persisted. Only a strategic fingerprint transition or a hard gate/position-state transition may replace the prior formal action. Approved timeframe states participate in the material fingerprint while raw timestamp/hash noise does not. ExecutionPrecheck rejects fills before `cooldown_until`; the deterministic runtime promotes `review_after` into a separately audited decision-refresh obligation. |
+| Model policy and audit | Complete for configured-provider bounded recovery; live provider acceptance remains open | Atomic prompt projection, Flash/Pro routing, schema/semantic checks, hashes, usage and retry traces are persisted. The finite recovery graph is Flash -> Pro thinking -> Pro non-thinking structured. A generic multi-provider capability registry and a provider-specific maximum-reasoning capability tier are deliberately not implemented. |
+| Feedback | Complete as an audit dataset | Frozen decision/execution lineage, actual-vs-hypothetical outcomes and read-only policy-version export exist; there is no automatic tuning. Strategy Evaluation and AI calibration are the next explicit consumers of this audit foundation. |
 
-The target diagram below is deliberately broader than the current formal action
-path. The current path is `DecisionContext -> EvidenceEngine -> ActionPolicy ->
-Atomic Evidence -> ResearchAssessment -> DecisionArbiter -> DecisionContinuity
--> formal_action`. Candidates are frozen before Atomic Evidence is built;
-the snapshot has no direct sizing or execution authority. `ResearchAssessment`
-has one explicit, bounded authority: sufficiently
-evidenced ADVERSE research can veto a new BUY/ADD risk. It cannot upgrade an
-action, create REDUCE/EXIT, or bypass a hard gate; AI has no formal action path.
+The current formal action path is:
+
+```text
+DecisionContext
+  -> EvidenceEngine
+  -> ActionPolicy
+  -> Atomic Evidence
+  -> ResearchAssessment
+  -> DecisionArbiter
+  -> Multi-Timeframe ActionPolicy
+  -> DecisionContinuity
+  -> formal_action
+  -> ExecutionPrecheck
+```
+
+Candidates are frozen before Atomic Evidence is built; the snapshot has no
+direct sizing or execution authority. `ResearchAssessment` has one explicit,
+bounded authority: sufficiently evidenced ADVERSE research can veto a new
+BUY/ADD risk. It cannot upgrade an action, create REDUCE/EXIT, or bypass a hard
+gate; AI has no formal action path.
 
 ## 0.2 Production verification record and current execution gap
 
@@ -63,8 +82,10 @@ Keep and build on:
 - `DecisionPackage` evidence/package hashes.
 - deterministic rule status separated from executable status.
 - `freeze_trade_plan` as the single formal freeze boundary.
-- AI forbidden from changing deterministic rule status, buy zone, position quantity, hard stop, and execution permission.
+- AI forbidden from changing deterministic rule status, buy zone, position quantity, hard stop, and execution permission in the Formal Decision System.
 - one analysis authority time (`analysis_started_at`).
+- versioned multi-timeframe authority that is asymmetric toward new risk.
+- DecisionContinuity that excludes raw refresh noise from material-change permission.
 
 ## 2. Target architecture
 
@@ -91,8 +112,8 @@ Raw Providers
                  |                           |
                  v                           v
         AI Research Interpreter      Deterministic Facts
-        (Flash default / Pro         (quality, availability,
-         escalation)                 event dates, price/time,
+        (bounded advisory)           (quality, availability,
+                 |                    event dates, price/time,
                  |                    settlement, metadata)
                  +-------------+-------------+
                                |
@@ -116,11 +137,17 @@ Raw Providers
                                |
                                v
                         Decision Arbiter
+                               |
+                               v
+                  Multi-Timeframe ActionPolicy
                         /              \
                        v                v
                 EntryDecision     PositionDecision
                        \                /
                         +--------------+
+                               |
+                               v
+                     Decision Continuity
                                |
                                v
                       Execution Precheck
@@ -138,10 +165,14 @@ Raw Providers
                  Decision Memory / Feedback
 ```
 
+The next v3 extension adds `StrategyProfile` above policy composition and adds a
+parallel AI Strategy Lab that consumes frozen Evidence but cannot mutate the
+Formal Decision System. Section 12 defines that boundary.
+
 ## 3. Authority boundaries
 
 ### Deterministic authority
-The LLM must never own:
+The LLM must never own in the Formal Decision System:
 - canonical price or authoritative market time;
 - missing/stale/conflicted truth;
 - event date or event distance;
@@ -160,6 +191,11 @@ AI may:
 - identify counter-evidence and unresolved ambiguity;
 - summarize complex disclosures and management guidance;
 - produce cited narrative research.
+
+A separately isolated AI Strategy Lab may own **paper intent** inside its own
+experiment account, but never canonical facts, RiskPolicy, Paper Broker
+execution truth, or the production Formal ActionPolicy. Lab authority is
+specified in section 13.
 
 ## 4. Core v3 domain models
 
@@ -237,6 +273,10 @@ Split:
 - research conviction
 - decision confidence
 
+These formal confidence layers are not equivalent to the AI Strategy Lab's
+probability calibration. A Lab probability must bind to a testable forecast
+contract as defined in section 13.
+
 ### Decision memory
 Store:
 `prior_decision_id`, `episode_id`, `last_action`, `position_age`,
@@ -248,10 +288,11 @@ and invalidation conditions.
 not itself permission to replace an existing formal action. The versioned
 `material_fingerprint` contains only strategic state: hard action gates,
 position state/quantity, enabled plan contract, invalidation threshold crossing,
-daily technical state, risk and market-regime state, policy-eligible events and
-the bounded adverse-research veto. Quote refresh timestamps and price movement
-within the same threshold state therefore preserve continuity. The precise
-changed fingerprint components are persisted whenever a new episode is allowed.
+approved weekly/daily/60m/15m/5m timeframe states, risk and market-regime state,
+policy-eligible events and the bounded adverse-research veto. Quote refresh
+timestamps, raw bar timestamps, raw prices and source hashes therefore do not
+by themselves create permission for an action flip. The precise changed
+fingerprint components are persisted whenever a new episode is allowed.
 
 `cooldown_until` is enforced at `ExecutionPrecheck` against the independently
 observed fill quote. `review_after` is not a trade: when due, it authorizes a
@@ -284,6 +325,7 @@ Versioned policy objects:
 - ResearchAggregationPolicy
 - EventRiskPolicy
 - DecisionArbiterPolicy
+- MultiTimeframeActionPolicy
 
 The Xiaomi T4-E weights are benchmark-only; they are not production defaults.
 
@@ -543,27 +585,32 @@ Split technical interpretation into:
 - volume_state
 - support/resistance
 
-Timeframe authority:
-- weekly/daily = strategic
-- 60m = position management
-- 15m/5m = execution timing
-- realtime = hard risk/execution trigger only
+Current formal timeframe authority is versioned and asymmetric:
+- weekly/daily = strategic structure;
+- 60m = position/setup management;
+- 15m/5m = execution timing;
+- realtime = hard risk/execution trigger only.
 
-Completed daily bars now produce a deterministic weekly 4/12-SMA snapshot with
-its own source hash. It is visible in the frozen context and timeframe audit,
-but remains research/strategic input only; the formal ActionPolicy still uses
-the daily technical snapshot until an explicit multi-timeframe action policy is
-versioned. Accordingly, the weekly snapshot is excluded from the current
-daily-only formal `input_hash`; its separate source hash preserves auditability
-without allowing asynchronous history maintenance to alter job identity.
+Completed bars now feed a governed 60m/15m/5m Evidence plane. The approved
+Multi-Timeframe ActionPolicy runs after deterministic research/DecisionArbiter
+and before DecisionContinuity. Its rules are:
 
-Technical anchor lifecycle/rebase is deferred until a strategy-specific contract is defined.
+- lower timeframes may preserve an already-permitted BUY/ADD when confirmation is present;
+- missing/stale/conflicted lower-timeframe state cannot fabricate PASS and may delay new risk;
+- 60m weakness, or joint 15m+5m weakness, may delay/downgrade new risk;
+- lower-timeframe strength cannot upgrade WAIT/BLOCKED/HOLD into BUY/ADD;
+- lower-timeframe weakness alone cannot create REDUCE/EXIT;
+- bullish intraday state cannot override higher-timeframe structural conflict;
+- only discrete approved timeframe states participate in DecisionContinuity material fingerprints; raw bar timestamps, prices, retrieval times and source hashes do not.
+
+Technical anchor lifecycle/rebase remains strategy-specific and is deferred to
+an explicit StrategyProfile contract rather than being added as another global rule.
 
 ## 9. Model policy
 - Fast/non-thinking model: explain already deterministic conclusions.
 - Default reasoning model: compact Atomic Evidence interpretation.
 - Deep model escalation: complex unstructured disclosures, material conflicts, ambiguous accounting/guidance, or validator failure.
-- Max reasoning: rare escalation only.
+- Maximum reasoning/capability tiers remain bounded and provider-contract dependent rather than assumed globally.
 
 Persist observable execution audit:
 model/provider, reasoning mode/effort, prompt hash, evidence hash, schema version,
@@ -584,10 +631,12 @@ FeedbackEvent:
 - explicit feedback
 - review label
 
-No automatic production policy tuning until labels and offline evaluation are reliable.
+No automatic production policy tuning until labels and offline/forward evaluation
+are reliable. Feedback is the raw substrate for the Evaluation System, not a
+write path back into ActionPolicy.
 
 ## 11. Explicitly rejected v3 designs
-1. LLM as final BUY/WAIT/SELL authority.
+1. LLM as final BUY/WAIT/SELL authority in the Formal Decision System.
 2. `NO_TRADE -> REDUCE` because a holding exists.
 3. One generic confidence field.
 4. Source-level polarity for mixed source documents.
@@ -595,9 +644,203 @@ No automatic production policy tuning until labels and offline evaluation are re
 6. A second freeze path outside unified freeze.
 7. Market rules inferred only from symbol shape.
 8. Global A-share T+1/100-share assumptions.
-9. Auto-tuning from one Xiaomi benchmark.
+9. Auto-tuning from one Xiaomi benchmark or one profitable experiment.
 10. Persisting raw hidden reasoning.
-11. A generic backtest or Stock Connect fee formula inside the CNY-only paper
-    ledger; actual broker receipts remain audit facts.
-12. Legacy portfolio decision snapshots, future-close calibration, or impact
-    graphs as alternate evidence/freeze/feedback authority.
+11. A generic backtest or Stock Connect fee formula inside the CNY-only paper ledger; actual broker receipts remain audit facts.
+12. Legacy portfolio decision snapshots, future-close calibration, or impact graphs as alternate evidence/freeze/feedback authority.
+13. A naked AI "reliability 72%" without a defined forecast event, sample size and uncertainty.
+14. Shared cash/positions between independent AI experiments.
+15. Letting an AI Strategy Lab agent write the paper ledger directly or bypass RiskPolicy/ExecutionPrecheck/Paper Broker.
+16. Automatically promoting LAB performance into Formal ActionPolicy authority.
+17. Marking a user-facing capability `PRODUCT_DONE` when only backend/domain code exists and the required API/Android observability surface is absent.
+
+## 12. StrategyProfile architecture
+
+Strategy becomes a first-class policy composition boundary instead of letting
+all Evidence compete in one global scoring system.
+
+Target model:
+
+```text
+StrategyProfile
+  strategy_id
+  strategy_version
+  holding_horizon
+  strategic_timeframes
+  setup_timeframes
+  timing_timeframes
+  risk_timeframes
+  allowed_evidence
+  authority_matrix
+  entry_policy
+  position_policy
+  exit_policy
+  risk_policy
+  review_policy
+  universe_policy
+  sizing_policy
+  evaluation_policy
+  outcome_policy
+```
+
+Every frozen formal decision must eventually persist `strategy_id`,
+`strategy_version` and the policy versions that composed it.
+
+The first explicit production profile is `SWING_V1`, targeting roughly 3-20
+trading-session episodes. Its starting authority contract is:
+
+| Evidence | SWING_V1 role |
+| --- | --- |
+| weekly | strategic structure |
+| daily | primary trend/setup |
+| 60m | setup maturity / position management |
+| 15m/5m | execution timing |
+| realtime | hard risk/execution only |
+| fundamentals | quality/risk context |
+| financial currentness | historical trend + current confirmation |
+| CorporateEvent | deterministic risk gate |
+| market regime | strategic context |
+| news | research context |
+| order flow | timing evidence only until separately evaluated |
+| AI interpretation | research/explanation only in Formal System |
+
+Do not implement VALUE/POSITION/SWING/SHORT/INTRADAY simultaneously and do not
+collapse them into a universal weighted score. Additional strategies require
+separate StrategyProfile versions.
+
+## 13. AI Strategy Lab authority
+
+The AI Strategy Lab is a parallel experiment system, not an alternate production
+arbiter.
+
+```text
+Frozen EvidenceSnapshot
+        |                         |
+        v                         v
+ Formal Decision Engine      AI Strategy Agent
+        |                         |
+ Formal Decision             AI Paper Intent
+        |                         |
+        +-----------+-------------+
+                    v
+                RiskPolicy
+                    v
+                Paper Broker
+                    v
+                  Ledger
+                    v
+                Evaluation
+```
+
+Inside an isolated experiment account, an AI agent may form simulated
+`BUY/WAIT/HOLD/ADD/REDUCE/EXIT` intents. The following remain deterministic and
+outside AI authority:
+
+- experiment account cash/position truth;
+- market session/calendar;
+- quote freshness and observed time;
+- lot/tick/T+1/sellability;
+- fees/slippage and maximum executable quantity;
+- RiskPolicy and default SizingPolicy;
+- final Paper Broker fill.
+
+Every AI probability must bind to a testable `ForecastContract`, for example a
+10-session `TARGET_BEFORE_STOP` event. A naked model confidence percentage is
+not an evaluation contract.
+
+Each experiment has an isolated ledger and immutable identity including model,
+prompt, Evidence schema, StrategyProfile, UniversePolicy, RiskPolicy,
+SizingPolicy and execution-policy versions. A material version change starts a
+new experiment result set rather than silently pooling history.
+
+Historical replay must be point-in-time correct. Live forward paper trading is
+the preferred reliability evidence because the agent cannot observe future data.
+
+AI maturity is explicit and non-automatic:
+
+```text
+LAB -> OBSERVED -> VALIDATED -> ADVISORY
+```
+
+`ADVISORY` is the first production ceiling. It may display an opinion beside the
+Formal Decision but may not mutate Formal ActionPolicy.
+
+## 14. Evaluation and calibration
+
+The Evaluation System measures both economic performance and forecast quality.
+It must not equate win rate with reliability.
+
+Minimum economic metrics:
+- total and benchmark-relative return;
+- max drawdown;
+- win rate;
+- average win/loss and payoff ratio;
+- expectancy;
+- Profit Factor;
+- max consecutive losses;
+- holding duration;
+- turnover;
+- fees/slippage;
+- MFE/MAE;
+- regime and action-type breakdowns.
+
+Minimum forecast/calibration metrics:
+- confidence bucket event rate;
+- Brier score;
+- Expected Calibration Error or a versioned equivalent;
+- sample size and sample-quality state;
+- uncertainty/confidence interval.
+
+The UI must not display a single reliability percentage without its event
+contract, sample count and uncertainty. Insufficient samples must be labeled
+explicitly rather than rendered with false precision.
+
+Benchmarks should include, where applicable, buy-and-hold, equal-weight eligible
+universe, `FORMAL_SWING_V1`, and a neutral/random diagnostic baseline.
+
+Evaluation has no automatic write path back into production policy. Promotion
+requires an explicit version change, acceptance tests and review.
+
+## 15. Full-stack delivery and product observability
+
+A user-facing milestone is not complete merely because backend/domain code
+exists. Delivery states are:
+
+```text
+DESIGNED
+  -> BACKEND_READY
+  -> API_VISIBLE
+  -> ANDROID_VISIBLE
+  -> OBSERVABLE
+  -> PRODUCT_DONE
+```
+
+For every user-facing capability, `PRODUCT_DONE` requires the complete path when
+applicable:
+
+```text
+Domain/Persistence
+  -> Application Service
+  -> API/DTO
+  -> Android Repository
+  -> ViewModel immutable UiState
+  -> Screen/component
+  -> loading/empty/error/stale/degraded states
+  -> audit/reason visibility
+  -> end-to-end acceptance
+```
+
+Backend-only work may be marked `BACKEND_READY`, but not `PRODUCT_DONE`.
+Likewise, a decorative Android card disconnected from authoritative data is not
+complete.
+
+The next-stage full-stack sequence is governed by
+`ThirdHand_v3_Fullstack_Technical_Roadmap.md`. The core visible surfaces are:
+
+- Decision Workspace: Formal Decision, SWING_V1, timeframe authority, company/event state, risk/T+1, AI research, later AI Lab opinion, What Changed;
+- Lab: experiment state, PnL, benchmark, drawdown, sample quality and calibration;
+- Review: good/bad entries/exits, missed opportunities, over/under-confidence, regime/data/execution failures;
+- Home: only the day's material changes, review obligations, risk changes, events and Formal-vs-AI disagreements.
+
+The Android and backend codebases should be modularized incrementally around
+these vertical slices rather than through a big-bang rewrite.
