@@ -127,14 +127,16 @@ fun StockDetailDecisionRoute(
                     Text("${if (rise) "↑" else "↓"} ${(it.change ?: 0.0).signedMoney()}  ${(it.change_percent ?: 0.0).signedPercent()}", color = if (rise) MaterialTheme.marketColors.rise else MaterialTheme.marketColors.fall, fontWeight = FontWeight.SemiBold)
                 }
                 holding?.let { Text("持仓 ${it.quantity.formatQuantity()} · 成本 ${it.average_cost.money()}", style = MaterialTheme.typography.bodyMedium) }
-                paperPosition?.let { Text("持仓 ${it.quantity.formatQuantity()} 股 · 成本 ${it.average_cost.money()} · 浮盈 ${it.unrealized_return_percent.signedPercent()}", style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.primary) }
+                paperPosition?.let { Text("模拟持仓 ${it.quantity.formatQuantity()} · 成本 ${it.average_cost.money()} · 浮盈 ${it.unrealized_return_percent.signedPercent()}", style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.primary) }
                 Text("行情来源 ${quote?.source ?: "—"} · ${quote?.freshness_note ?: "等待行情"}", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
             }
         }
         error?.let { message -> item { ErrorCard("行情不可用", message, ::load) } }
         if (loading && quote == null) item { LoadingCard("正在读取行情…") }
+        item { RiskAndFreshnessBanner(quote, report) }
         item { DenseDivider() }
-        item { TradingPeriodKLinePanel(symbol = target.symbol, quote = quote) }
+        item { StrategyProfileCard(report) }
+        item { DenseDivider() }
         item {
             CompanyIntelligencePanel(
                 symbol = target.symbol,
@@ -142,38 +144,37 @@ fun StockDetailDecisionRoute(
             )
         }
         item { DenseDivider() }
-        item { StrategyProfileCard(report) }
+        item { TradingPeriodKLinePanel(symbol = target.symbol, quote = quote) }
+        item { DenseDivider() }
+        item {
+            Column(Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 10.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                Text("AI Research · 解释层", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
+                if (report == null) {
+                    Text("尚无正式决策报告。AI Research 可以补充研究问题，但不会自行产生可执行动作。", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                } else {
+                    Text("Formal ${report!!.action.actionLabel()} 已由确定性决策链产生；AI 只负责解释证据、冲突与不确定性。", style = MaterialTheme.typography.bodyMedium, fontWeight = FontWeight.SemiBold)
+                    report!!.strategy?.let { strategy ->
+                        Text("策略 ${strategy.strategy_id} · v${strategy.strategy_version}", style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.primary)
+                    }
+                    Text("报告 ${report!!.decision_id.take(8)} · ${report!!.generated_at.take(16)} · 行情截至 ${report!!.market_as_of ?: "未知"}", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                }
+                FilledTonalButton(onClick = { onResearch(target) }, modifier = Modifier.fillMaxWidth()) {
+                    Icon(Icons.Filled.AutoGraph, "打开 AI Research")
+                    Spacer(Modifier.width(8.dp))
+                    Text(if (report == null) "打开 AI Research" else "用 AI Research 解释这份正式决策")
+                }
+            }
+        }
         item { DenseDivider() }
         item {
             Column(Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 10.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
                 Text("交易操作记录", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
-                Text("B / S 为交易账套成交；点击任一记录查看结构化操作分析。", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                Text("B / S 为模拟交易账套成交；点击任一记录查看结构化操作分析。", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
                 if (paperLogs.isEmpty()) Text("暂无该股票的交易操作记录。", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
             }
         }
         items(paperLogs.take(20), key = { it.id }) { log -> StockDetailPaperLogRow(log, onOpenAnalysis = { selectedPaperDecisionId = log.decision_id }) }
-        item { DenseDivider() }
-        item {
-            Column(Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 10.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
-                Text("AI 分析工作台", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
-                if (report == null) {
-                    Text("尚无已保存的统一分析。可在 AI 研究中提问，系统会先生成并保存一份分析报告。", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                } else {
-                    Text("${report!!.action.actionLabel()} · ${report!!.status}", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold)
-                    report!!.strategy?.let { strategy ->
-                        Text("策略 ${strategy.strategy_id} · v${strategy.strategy_version}", style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.primary)
-                    }
-                    Text(report!!.summary, style = MaterialTheme.typography.bodySmall)
-                    Text("报告 ${report!!.decision_id.take(8)} · ${report!!.generated_at.take(16)} · 行情截至 ${report!!.market_as_of ?: "未知"}", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                }
-                FilledTonalButton(onClick = { onResearch(target) }, modifier = Modifier.fillMaxWidth()) {
-                    Icon(Icons.Filled.AutoGraph, "打开 AI 研究")
-                    Spacer(Modifier.width(8.dp))
-                    Text(if (report == null) "开始 AI 分析" else "在 AI 研究中解释这份报告")
-                }
-            }
-        }
-        item { Text("交易操作请在“交易”页执行。", modifier = Modifier.padding(horizontal = 12.dp, vertical = 10.dp), style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant) }
+        item { Text("真实/模拟交易操作请在“交易”页处理；本页用于理解正式决策、研究证据和复盘。", modifier = Modifier.padding(horizontal = 12.dp, vertical = 10.dp), style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant) }
     }
     if (selectedPaperDecisionId != null) PaperDecisionAuditDialog(paperDecision, paperDecisionContext, paperDecisionLoading, paperDecisionError, onDismiss = { selectedPaperDecisionId = null })
 }
