@@ -598,3 +598,16 @@ Also preserve:
   `PRODUCT_DONE`** until financial/currentness + CorporateEvent state is joined
   into the workspace surface and the remaining partial/stale/blocked states are
   accepted end-to-end under #62.
+- **N2 financial-currentness / CorporateEvent visibility slice:** the existing
+  Decision Workspace read model now projects the frozen DecisionReport's
+  `FinancialCurrentnessSnapshot` separately from the newest locally persisted
+  CorporateEvent lifecycle. The API marks those scopes explicitly as
+  `FROZEN_DECISION` and `CURRENT_PERSISTED`, exposes active/recent event source,
+  lifecycle and conflict facts, and performs no remote acquisition or policy
+  re-evaluation. Android renders current-confirmation status, latest observed
+  period, expected report date, event lifecycle/source/conflict state and the
+  event evidence frozen into the Formal Decision. Missing lifecycle data is
+  shown as unavailable rather than “no event”. This advances N2 financial/event
+  visibility to `API_VISIBLE / ANDROID_VISIBLE / OBSERVABLE`; N2 remains **not
+  `PRODUCT_DONE`** until the remaining partial/stale/blocked section states and
+  end-to-end acceptance under #62 are closed.
