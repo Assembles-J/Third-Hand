@@ -10,6 +10,8 @@ from __future__ import annotations
 
 from functools import wraps
 
+from app.corporate_event_verification_runtime import reconcile_company_context
+
 
 FINANCIAL_DATA_TYPES = (
     "company_financial_summary",
@@ -33,6 +35,10 @@ def _official_release_pending(store, symbol: str) -> bool:
             continue
         if str(item.get("verification_level") or "") != "official":
             continue
+        if str(item.get("lifecycle_status") or "") == "VERIFIED":
+            # A normalized financial snapshot already closed this obligation;
+            # do not repeatedly force-refresh the same report on every read.
+            continue
         # CorporateEvent date-state projection may classify a same-day official
         # release as DUE/RELEASE_EXPECTED for compatibility. `announced_at` is
         # the first-party fact that a newer report has actually been published.
@@ -45,7 +51,7 @@ def _company_service(m):
     """Resolve the authoritative Company Intelligence runtime service.
 
     Architecture Refactor v2 registers the production service as
-    ``company_intelligence_service_v2``.  Keep the legacy name only as a
+    ``company_intelligence_service_v2``. Keep the legacy name only as a
     compatibility fallback for isolated tests/older embeddings; production
     bootstrap must not depend on a retired alias being present.
     """
@@ -108,13 +114,22 @@ def install(m) -> None:
         if allow_remote and _official_release_pending(store, normalized):
             forced = tuple(dict.fromkeys((*forced, *FINANCIAL_DATA_TYPES)))
             reason = reason or REFRESH_REASON
-        return original_build_context(
+
+        company_context = original_build_context(
             normalized,
             research_priority=research_priority,
             allow_remote=allow_remote,
             force_refresh_data_types=forced,
             refresh_reason=reason,
         )
+
+        # Reconcile immediately after the authoritative Company Intelligence
+        # build returns. If the refreshed payload now contains the official
+        # report period, close the event lifecycle with snapshot lineage before
+        # downstream frozen evidence/currentness is evaluated.
+        if isinstance(company_context, dict):
+            reconcile_company_context(store, normalized, company_context)
+        return company_context
 
     service.requirements = requirements
     service.build_context = build_context
