@@ -5,9 +5,10 @@ import os
 
 # v4 makes the effective position-cap authority explicit and shared with sizing.
 EVIDENCE_VERSION = "evidence-v4-effective-position-cap"
-# v4 adds governed research-only 60m/15m/5m facts and availability while
-# preserving financial currentness semantics from v3.
-ATOMIC_EVIDENCE_VERSION = "atomic-evidence-shadow-v4-intraday-research"
+# Atomic v3 remains the current schema/currentness contract. Intraday is an
+# additive research source with its own separately persisted policy/authority
+# versions below, so the Atomic schema identifier itself does not change.
+ATOMIC_EVIDENCE_VERSION = "atomic-evidence-shadow-v3-financial-currentness"
 # Phase 3 makes evidence aggregation reproducible and auditable. Phase 4 may
 # use only its deterministic adverse new-risk veto; research never upgrades an
 # action or manufactures an exit/reduce recommendation.
