@@ -1,6 +1,7 @@
 """Reliable OpenAI-compatible client for DeepSeek chat completions."""
 from __future__ import annotations
 
+import hashlib
 import logging
 import os
 import time
@@ -35,6 +36,14 @@ def _env_bool(name: str, default: bool) -> bool:
     if value is None:
         return default
     return value.strip().lower() not in {"0", "false", "no", "off"}
+
+
+def _text_fingerprint(value: object) -> tuple[bool, int, str | None]:
+    """Return presence/length/hash without retaining provider text."""
+    if not isinstance(value, str) or not value:
+        return False, 0, None
+    encoded = value.encode("utf-8")
+    return True, len(value), hashlib.sha256(encoded).hexdigest()
 
 
 class DeepSeekSettings(BaseModel):
@@ -87,9 +96,19 @@ class LlmResponse(BaseModel):
     latency_ms: int
     attempt_count: int = 1
     retry_codes: tuple[str, ...] = ()
+    reasoning_present: bool = False
+    reasoning_length: int = 0
+    reasoning_hash: str | None = None
 
 
 class LlmClientError(RuntimeError):
+    """Provider/runtime error with audit-safe diagnostics only.
+
+    Raw response content and raw hidden reasoning are intentionally never stored
+    on the exception. The Decision AI audit can persist only presence, length,
+    hash, retry lineage and finish metadata.
+    """
+
     def __init__(
         self,
         message: str,
@@ -97,11 +116,29 @@ class LlmClientError(RuntimeError):
         code: str,
         retryable: bool,
         status_code: int | None = None,
+        finish_reason: str | None = None,
+        content_present: bool = False,
+        content_length: int = 0,
+        content_hash: str | None = None,
+        reasoning_present: bool = False,
+        reasoning_length: int = 0,
+        reasoning_hash: str | None = None,
+        usage: LlmUsage | None = None,
     ) -> None:
         super().__init__(message)
         self.code = code
         self.retryable = retryable
         self.status_code = status_code
+        self.finish_reason = finish_reason
+        self.content_present = content_present
+        self.content_length = content_length
+        self.content_hash = content_hash
+        self.reasoning_present = reasoning_present
+        self.reasoning_length = reasoning_length
+        self.reasoning_hash = reasoning_hash
+        self.usage = usage or LlmUsage()
+        self.attempt_count = 0
+        self.retry_codes: tuple[str, ...] = ()
 
 
 class DeepSeekClient:
@@ -153,7 +190,8 @@ class DeepSeekClient:
                     return result.model_copy(update={"attempt_count": attempt + 1, "retry_codes": tuple(retry_codes)})
                 except LlmClientError as error:
                     if not error.retryable or attempt >= self.settings.max_retries:
-                        error.retry_codes = tuple(retry_codes)  # type: ignore[attr-defined]
+                        error.attempt_count = attempt + 1
+                        error.retry_codes = tuple(retry_codes)
                         self._record_failure()
                         logger.warning(
                             "DeepSeek 请求失败 model=%s code=%s status=%s attempts=%s",
@@ -217,26 +255,59 @@ class DeepSeekClient:
         try:
             body: dict[str, Any] = response.json()
             choice = body["choices"][0]
-            content = choice["message"]["content"]
-        except (ValueError, KeyError, IndexError, TypeError) as error:
+            message = choice["message"]
+            content = message.get("content")
+            reasoning_content = message.get("reasoning_content")
+        except (ValueError, KeyError, IndexError, TypeError, AttributeError) as error:
             raise LlmClientError("DeepSeek 响应结构无效。", code="invalid_response", retryable=True) from error
-        if not isinstance(content, str) or not content.strip():
-            raise LlmClientError("DeepSeek 返回空内容。", code="empty_content", retryable=True)
-        if choice.get("finish_reason") == "length":
-            raise LlmClientError("DeepSeek 输出被截断。", code="output_truncated", retryable=False)
 
-        usage = body.get("usage") or {}
+        finish_reason = choice.get("finish_reason")
+        content_present, content_length, content_hash = _text_fingerprint(content)
+        reasoning_present, reasoning_length, reasoning_hash = _text_fingerprint(reasoning_content)
+        usage_payload = body.get("usage") or {}
+        usage = LlmUsage(
+            prompt_tokens=int(usage_payload.get("prompt_tokens") or 0),
+            completion_tokens=int(usage_payload.get("completion_tokens") or 0),
+            total_tokens=int(usage_payload.get("total_tokens") or 0),
+        )
+        diagnostics = {
+            "finish_reason": finish_reason,
+            "content_present": content_present,
+            "content_length": content_length,
+            "content_hash": content_hash,
+            "reasoning_present": reasoning_present,
+            "reasoning_length": reasoning_length,
+            "reasoning_hash": reasoning_hash,
+            "usage": usage,
+        }
+
+        # A length stop is its own recoverable policy signal even when the
+        # provider emitted no final content because thinking consumed the budget.
+        if finish_reason == "length":
+            raise LlmClientError(
+                "DeepSeek 输出被截断。",
+                code="output_truncated",
+                retryable=False,
+                **diagnostics,
+            )
+        if not content_present or not isinstance(content, str):
+            raise LlmClientError(
+                "DeepSeek 返回空内容。",
+                code="empty_content",
+                retryable=True,
+                **diagnostics,
+            )
+
         result = LlmResponse(
             content=content.strip(),
             response_id=str(body["id"]) if body.get("id") else None,
             model=str(body.get("model") or model),
-            finish_reason=choice.get("finish_reason"),
-            usage=LlmUsage(
-                prompt_tokens=int(usage.get("prompt_tokens") or 0),
-                completion_tokens=int(usage.get("completion_tokens") or 0),
-                total_tokens=int(usage.get("total_tokens") or 0),
-            ),
+            finish_reason=finish_reason,
+            usage=usage,
             latency_ms=max(0, int((self._monotonic() - started_at) * 1000)),
+            reasoning_present=reasoning_present,
+            reasoning_length=reasoning_length,
+            reasoning_hash=reasoning_hash,
         )
         logger.info(
             "DeepSeek 请求成功 model=%s response_id=%s latency_ms=%s total_tokens=%s",
