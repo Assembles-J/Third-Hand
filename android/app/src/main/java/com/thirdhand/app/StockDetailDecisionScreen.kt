@@ -142,6 +142,8 @@ fun StockDetailDecisionRoute(
             )
         }
         item { DenseDivider() }
+        item { StrategyProfileCard(report) }
+        item { DenseDivider() }
         item {
             Column(Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 10.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
                 Text("交易操作记录", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
@@ -158,6 +160,9 @@ fun StockDetailDecisionRoute(
                     Text("尚无已保存的统一分析。可在 AI 研究中提问，系统会先生成并保存一份分析报告。", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
                 } else {
                     Text("${report!!.action.actionLabel()} · ${report!!.status}", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold)
+                    report!!.strategy?.let { strategy ->
+                        Text("策略 ${strategy.strategy_id} · v${strategy.strategy_version}", style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.primary)
+                    }
                     Text(report!!.summary, style = MaterialTheme.typography.bodySmall)
                     Text("报告 ${report!!.decision_id.take(8)} · ${report!!.generated_at.take(16)} · 行情截至 ${report!!.market_as_of ?: "未知"}", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
                 }
@@ -385,6 +390,8 @@ private fun StockDetailDecisionScreen(
                 researchPriority = if (state.holding != null) "L3" else "L2",
             )
         }
+        item { DenseDivider() }
+        item { StrategyProfileCard(state.decision) }
         item { DenseDivider() }
         item {
             ActionPlanCard(

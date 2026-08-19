@@ -5,6 +5,7 @@ import logging
 from uuid import uuid4
 
 from app import decision_config as config
+from app.application_services.strategy import swing_v1_profile
 from app.atomic_evidence import AtomicEvidenceSnapshotBuilder
 from app.canonical_snapshot import build_canonical_market_snapshot
 from app.decision_ai import DecisionAiOutcome
@@ -20,7 +21,7 @@ logger = logging.getLogger(__name__)
 
 
 class DecisionOrchestrator:
-    def __init__(self, evidence_engine, policy_engine, sizing_engine, ai_service, guard, atomic_evidence_builder=None, research_aggregator=None, research_validator=None, decision_arbiter=None, timeframe_policy=None, prior_report_loader=None, continuity_policy=None) -> None:
+    def __init__(self, evidence_engine, policy_engine, sizing_engine, ai_service, guard, atomic_evidence_builder=None, research_aggregator=None, research_validator=None, decision_arbiter=None, timeframe_policy=None, prior_report_loader=None, continuity_policy=None, strategy_profile=None) -> None:
         self.evidence_engine, self.policy_engine = evidence_engine, policy_engine
         self.sizing_engine, self.ai_service, self.guard = sizing_engine, ai_service, guard
         self.atomic_evidence_builder = atomic_evidence_builder or AtomicEvidenceSnapshotBuilder()
@@ -30,6 +31,12 @@ class DecisionOrchestrator:
         self.timeframe_policy = timeframe_policy or TimeframeAuthorityPolicy()
         self.prior_report_loader = prior_report_loader
         self.continuity_policy = continuity_policy or DecisionContinuityPolicy()
+        self.strategy_profile = strategy_profile or swing_v1_profile(
+            action_policy_version=str(self.policy_engine.version),
+            timeframe_policy_version=str(
+                getattr(self.timeframe_policy, "version", config.TIMEFRAME_AUTHORITY_POLICY_VERSION)
+            ),
+        )
 
     def generate(self, context, *, candidate_audit: dict[str, object] | None = None) -> DecisionReport:
         evidence = self.evidence_engine.build(context)
@@ -133,6 +140,7 @@ class DecisionOrchestrator:
             formal_action=formal_action,
             decision_memory=decision_memory,
             timeframe_authority=timeframe_authority,
+            strategy=self.strategy_profile,
             action_candidates=candidates,
             operation_items=self._operation_items(context, action, candidates[0].blocked_reasons, sizing, canonical.display_price),
             ai_assessment=assessment, ai_status=ai_outcome.status, ai_error_code=ai_outcome.error_code,
