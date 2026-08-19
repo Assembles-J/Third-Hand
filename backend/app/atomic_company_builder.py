@@ -7,6 +7,7 @@ from app.atomic_models import AtomicEvidenceSnapshot
 from app.atomic_company_research import CompanyResearchAtomicSource
 from app.atomic_intraday import IntradayTimeframeAtomicSource
 from app.domain.research.data_gateway import canonical_hash
+from app.financial_announcement_enrichment import FinancialAnnouncementEnricher
 from app.financial_currentness import FinancialCurrentnessPolicy
 
 
@@ -22,17 +23,20 @@ class CompanyAwareAtomicEvidenceBuilder:
         company_source=None,
         intraday_source=None,
         financial_currentness_policy=None,
+        financial_announcement_enricher=None,
     ) -> None:
         self.base_builder = base_builder or AtomicEvidenceSnapshotBuilder()
         self.company_source = company_source or CompanyResearchAtomicSource(store)
         self.intraday_source = intraday_source or IntradayTimeframeAtomicSource(store)
         self.financial_currentness_policy = financial_currentness_policy or FinancialCurrentnessPolicy()
+        self.financial_announcement_enricher = financial_announcement_enricher or FinancialAnnouncementEnricher(store)
 
     def build(self, context, evidence) -> AtomicEvidenceSnapshot:
         base = self.base_builder.build(context, evidence)
         company = self.company_source.build(context)
         intraday = self.intraday_source.build(context)
-        raw_facts = tuple(sorted((*base.facts, *company.facts, *intraday.facts), key=lambda item: item.fact_id))
+        company_facts = self.financial_announcement_enricher.enrich(context, company.facts)
+        raw_facts = tuple(sorted((*base.facts, *company_facts, *intraday.facts), key=lambda item: item.fact_id))
         availability = tuple(sorted(
             (*base.availability, *company.availability, *intraday.availability),
             key=lambda item: item.capability,
