@@ -119,6 +119,18 @@ def test_decision_report_uses_canonical_daily_display_when_quote_conflicts(tmp_p
     assert report.execution_eligible_after is None
     assert report.operation_items[0].reference_price == 25.88
 
+    # StrategyProfile is identity/audit metadata around the existing authority
+    # chain; it must bind to the actual policies without changing the action.
+    assert report.strategy is not None
+    assert report.strategy.strategy_id == "SWING_V1"
+    assert report.strategy.strategy_version == "1.0.0"
+    assert report.strategy.policy_versions["action_policy"] == report.policy_version
+    assert report.timeframe_authority is not None
+    assert (
+        report.strategy.policy_versions["timeframe_authority"]
+        == report.timeframe_authority.policy_version
+    )
+
 
 def test_consistency_conflict_cannot_generate_reduce_from_stale_position_valuation(tmp_path):
     store = _store_with_hk_conflict(tmp_path, with_position=True)
