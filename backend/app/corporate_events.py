@@ -180,8 +180,27 @@ def _event_from_row(
 
 def _merge_event_candidates(candidates: list[dict[str, object]], *, today: date) -> tuple[list[dict[str, object]], list[dict[str, object]]]:
     """Select one active authority per logical event while retaining audit history."""
-    grouped: dict[str, list[dict[str, object]]] = {}
+    # Repeated refreshes can see the same event from today's provider response
+    # and from the previous durable bundle. Collapse exact observations before
+    # source arbitration so a no-op refresh is byte-for-byte idempotent.
+    unique: dict[tuple[object, ...], dict[str, object]] = {}
     for candidate in candidates:
+        identity = (
+            candidate.get("event_id"),
+            candidate.get("source"),
+            candidate.get("scheduled_at"),
+            candidate.get("verification_level"),
+        )
+        current = unique.get(identity)
+        if current is None:
+            unique[identity] = dict(candidate)
+            continue
+        # Keep the richer persisted record when the observation is identical.
+        if len(candidate) > len(current):
+            unique[identity] = dict(candidate)
+
+    grouped: dict[str, list[dict[str, object]]] = {}
+    for candidate in unique.values():
         grouped.setdefault(str(candidate.get("event_key") or candidate.get("event_id")), []).append(dict(candidate))
 
     active: list[dict[str, object]] = []
@@ -415,12 +434,17 @@ class CorporateEventService:
 
             previous = store.cached_market_intelligence(f"corporate_events:{symbol}") or {}
             previous_history = [dict(item) for item in previous.get("event_history", []) if isinstance(item, dict)]
+            current_ids = {str(item.get("event_id") or "") for item in candidates if item.get("event_id")}
             # A previously known unresolved event is a durable obligation. Do not
             # erase it when its scheduled date falls out of the forward window.
+            # If the same exact event is present in this refresh, do not add it a
+            # second time merely because it also exists in the durable bundle.
             for item in previous.get("events", []):
                 if not isinstance(item, dict):
                     continue
                 previous_event = dict(item)
+                if str(previous_event.get("event_id") or "") in current_ids:
+                    continue
                 previous_event["lifecycle_status"] = _lifecycle_for_date(
                     previous_event.get("scheduled_at"),
                     today=today,
