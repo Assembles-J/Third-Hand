@@ -5,8 +5,9 @@ import os
 
 # v4 makes the effective position-cap authority explicit and shared with sizing.
 EVIDENCE_VERSION = "evidence-v4-effective-position-cap"
-# v3 adds deterministic financial report-period currentness while preserving the
-# existing retrieval-freshness field for compatibility.
+# Atomic v3 remains the current schema/currentness contract. Intraday is an
+# additive research source with its own separately persisted policy/authority
+# versions below, so the Atomic schema identifier itself does not change.
 ATOMIC_EVIDENCE_VERSION = "atomic-evidence-shadow-v3-financial-currentness"
 # Phase 3 makes evidence aggregation reproducible and auditable. Phase 4 may
 # use only its deterministic adverse new-risk veto; research never upgrades an
@@ -21,6 +22,8 @@ DECISION_ARBITER_POLICY_VERSION = "decision-arbiter-v4-adverse-research-new-risk
 RESEARCH_DECISION_POLICY_VERSION = "research-decision-v1-adverse-new-risk-veto"
 RESEARCH_ADVERSE_MIN_EVIDENCE_CONFIDENCE = 0.60
 TIMEFRAME_AUTHORITY_POLICY_VERSION = "timeframe-authority-v2-weekly-context"
+INTRADAY_TIMEFRAME_POLICY_VERSION = "intraday-timeframe-evidence-v1-completed-bars"
+INTRADAY_RESEARCH_AUTHORITY_VERSION = "intraday-research-authority-v1-no-formal-effect"
 DECISION_CONTINUITY_POLICY_VERSION = "decision-continuity-v3-material-fingerprint"
 MODEL_POLICY_VERSION = "model-policy-v3-compound-structured-recovery"
 FEEDBACK_POLICY_VERSION = "feedback-v1-audit-only-no-auto-tune"
@@ -89,6 +92,8 @@ def audit_version_snapshot() -> dict[str, str]:
         "decision_arbiter_policy_version": DECISION_ARBITER_POLICY_VERSION,
         "research_decision_policy_version": RESEARCH_DECISION_POLICY_VERSION,
         "timeframe_authority_policy_version": TIMEFRAME_AUTHORITY_POLICY_VERSION,
+        "intraday_timeframe_policy_version": INTRADAY_TIMEFRAME_POLICY_VERSION,
+        "intraday_research_authority_version": INTRADAY_RESEARCH_AUTHORITY_VERSION,
         "decision_continuity_policy_version": DECISION_CONTINUITY_POLICY_VERSION,
         "model_policy_version": MODEL_POLICY_VERSION,
         "feedback_policy_version": FEEDBACK_POLICY_VERSION,
