@@ -1,30 +1,46 @@
-"""Store-aware Atomic Evidence builder for persisted Company Intelligence facts."""
+"""Store-aware Atomic Evidence builder for persisted research facts."""
 from __future__ import annotations
 
 from app import decision_config as config
 from app.atomic_evidence import AtomicEvidenceSnapshotBuilder
 from app.atomic_models import AtomicEvidenceSnapshot
 from app.atomic_company_research import CompanyResearchAtomicSource
+from app.atomic_intraday import IntradayTimeframeAtomicSource
 from app.domain.research.data_gateway import canonical_hash
 from app.financial_currentness import FinancialCurrentnessPolicy
 
 
 class CompanyAwareAtomicEvidenceBuilder:
-    """Enrich the base shadow snapshot without changing formal decision inputs."""
+    """Enrich the base snapshot without changing direct ActionPolicy inputs."""
 
     version = config.ATOMIC_EVIDENCE_VERSION
 
-    def __init__(self, store, base_builder=None, company_source=None, financial_currentness_policy=None) -> None:
+    def __init__(
+        self,
+        store,
+        base_builder=None,
+        company_source=None,
+        intraday_source=None,
+        financial_currentness_policy=None,
+    ) -> None:
         self.base_builder = base_builder or AtomicEvidenceSnapshotBuilder()
         self.company_source = company_source or CompanyResearchAtomicSource(store)
+        self.intraday_source = intraday_source or IntradayTimeframeAtomicSource(store)
         self.financial_currentness_policy = financial_currentness_policy or FinancialCurrentnessPolicy()
 
     def build(self, context, evidence) -> AtomicEvidenceSnapshot:
         base = self.base_builder.build(context, evidence)
         company = self.company_source.build(context)
-        raw_facts = tuple(sorted((*base.facts, *company.facts), key=lambda item: item.fact_id))
-        availability = tuple(sorted((*base.availability, *company.availability), key=lambda item: item.capability))
-        conflicts = tuple(sorted((*base.conflicts, *company.conflicts), key=lambda item: item.conflict_id))
+        intraday = self.intraday_source.build(context)
+        raw_facts = tuple(sorted((*base.facts, *company.facts, *intraday.facts), key=lambda item: item.fact_id))
+        availability = tuple(sorted(
+            (*base.availability, *company.availability, *intraday.availability),
+            key=lambda item: item.capability,
+        ))
+        conflicts = tuple(sorted(
+            (*base.conflicts, *company.conflicts, *intraday.conflicts),
+            key=lambda item: item.conflict_id,
+        ))
 
         if len({item.fact_id for item in raw_facts}) != len(raw_facts):
             raise ValueError("combined atomic fact IDs must be unique")
