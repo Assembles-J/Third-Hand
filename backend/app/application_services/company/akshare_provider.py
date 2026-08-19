@@ -1,7 +1,7 @@
 """AKShare adapters for persisted Company Intelligence datasets.
 
 These adapters are intentionally narrow and normalize all DataFrame values before
-crossing ResearchDataGateway.  They provide research evidence only; they never
+crossing ResearchDataGateway. They provide research evidence only; they never
 feed ActionPolicy or PositionSizing directly.
 """
 from __future__ import annotations
@@ -91,6 +91,46 @@ def _as_of_from_rows(rows: list[dict[str, Any]], *keys: str) -> str:
     return beijing_now().isoformat()
 
 
+def _hk_report_type(row: dict[str, Any]) -> str:
+    """Normalize Eastmoney DATE_TYPE while preserving non-calendar issuers."""
+    label = str(row.get("DATE_TYPE") or row.get("REPORT_TYPE") or "").strip().lower()
+    if any(token in label for token in ("中报", "中期", "interim", "half")):
+        return "interim"
+    if any(token in label for token in ("一季", "first quarter", "q1")):
+        return "q1"
+    if any(token in label for token in ("三季", "third quarter", "q3")):
+        return "q3"
+    if any(token in label for token in ("年报", "年度", "annual", "final")):
+        return "annual"
+    # Fallback is used only when provider DATE_TYPE is absent. It is compatible
+    # with calendar-year issuers such as Xiaomi while DATE_TYPE remains the
+    # preferred authority for non-calendar fiscal years.
+    text = str(row.get("REPORT_DATE") or row.get("START_DATE") or "")[:10]
+    suffix = text[5:] if len(text) >= 10 else ""
+    return {
+        "03-31": "q1",
+        "06-30": "interim",
+        "09-30": "q3",
+        "12-31": "annual",
+    }.get(suffix, "report_period")
+
+
+def _hk_report_period_rows(ak, symbol: str, *, limit: int = 12) -> list[dict[str, Any]]:
+    # AKShare documents `indicator` as accepting both 年度 and 报告期. Report
+    # period is required here so an interim disclosure can become the latest
+    # observation instead of a freshly retrieved old annual row.
+    rows = _records(
+        ak.stock_financial_hk_analysis_indicator_em(symbol=symbol, indicator="报告期"),
+        limit=limit,
+    )
+    enriched = []
+    for row in rows:
+        item = dict(row)
+        item["report_type"] = _hk_report_type(item)
+        enriched.append(item)
+    return enriched
+
+
 class CompanyAkshareProvider:
     """Dispatch normalized company datasets to documented AKShare interfaces."""
 
@@ -129,6 +169,9 @@ class CompanyAkshareProvider:
                 "market": "HK" if _is_hk(symbol) else "CN",
                 "normalized": True,
                 "usage_scope": "RESEARCH_ONLY",
+                "report_period_semantics": "报告期" if _is_hk(symbol) and request.data_type in {
+                    "company_financial_summary", "company_margin_structure", "company_profit_cashflow_drivers",
+                } else None,
             },
         )
 
@@ -168,14 +211,11 @@ class CompanyAkshareProvider:
 
     def _company_financial_summary(self, ak, symbol: str):
         if _is_hk(symbol):
-            rows = _records(
-                ak.stock_financial_hk_analysis_indicator_em(symbol=symbol, indicator="年度"),
-                limit=6,
-            )
+            rows = _hk_report_period_rows(ak, symbol)
             return (
-                {"annual_indicators": rows},
+                {"report_period_indicators": rows, "annual_indicators": rows},
                 _as_of_from_rows(rows, "REPORT_DATE", "START_DATE"),
-                "Eastmoney/AKShare stock_financial_hk_analysis_indicator_em",
+                "Eastmoney/AKShare stock_financial_hk_analysis_indicator_em?indicator=报告期",
             )
         rows = _records(ak.stock_financial_analysis_indicator_em(symbol=symbol), limit=8)
         return (
@@ -186,12 +226,11 @@ class CompanyAkshareProvider:
 
     def _company_margin_structure(self, ak, symbol: str):
         if _is_hk(symbol):
-            rows = _records(
-                ak.stock_financial_hk_analysis_indicator_em(symbol=symbol, indicator="年度"),
-                limit=6,
-            )
+            rows = _hk_report_period_rows(ak, symbol)
             margins = [{
                 "report_date": row.get("REPORT_DATE") or row.get("START_DATE"),
+                "report_type": row.get("report_type"),
+                "date_type": row.get("DATE_TYPE"),
                 "revenue": row.get("OPERATE_INCOME"),
                 "gross_profit": row.get("GROSS_PROFIT"),
                 "gross_margin_percent": row.get("GROSS_PROFIT_RATIO"),
@@ -200,7 +239,7 @@ class CompanyAkshareProvider:
             return (
                 {"company_margin_history": margins, "segment_margin_available": False},
                 _as_of_from_rows(rows, "REPORT_DATE", "START_DATE"),
-                "Eastmoney/AKShare stock_financial_hk_analysis_indicator_em",
+                "Eastmoney/AKShare stock_financial_hk_analysis_indicator_em?indicator=报告期",
             )
         rows = _records(ak.stock_zygc_em(symbol=_em_symbol(symbol)))
         latest_date = max((str(row.get("报告日期") or "")[:10] for row in rows), default="")
@@ -213,12 +252,11 @@ class CompanyAkshareProvider:
 
     def _company_profit_cashflow_drivers(self, ak, symbol: str):
         if _is_hk(symbol):
-            rows = _records(
-                ak.stock_financial_hk_analysis_indicator_em(symbol=symbol, indicator="年度"),
-                limit=6,
-            )
+            rows = _hk_report_period_rows(ak, symbol)
             drivers = [{
                 "report_date": row.get("REPORT_DATE") or row.get("START_DATE"),
+                "report_type": row.get("report_type"),
+                "date_type": row.get("DATE_TYPE"),
                 "revenue": row.get("OPERATE_INCOME"),
                 "revenue_yoy_percent": row.get("OPERATE_INCOME_YOY"),
                 "gross_profit": row.get("GROSS_PROFIT"),
@@ -230,9 +268,14 @@ class CompanyAkshareProvider:
                 "roic_percent": row.get("ROIC_YEARLY"),
             } for row in rows]
             return (
-                {"annual_driver_history": drivers},
+                {
+                    # Compatibility key retained while the payload now contains
+                    # all report periods rather than annual-only observations.
+                    "annual_driver_history": drivers,
+                    "report_period_driver_history": drivers,
+                },
                 _as_of_from_rows(rows, "REPORT_DATE", "START_DATE"),
-                "Eastmoney/AKShare stock_financial_hk_analysis_indicator_em",
+                "Eastmoney/AKShare stock_financial_hk_analysis_indicator_em?indicator=报告期",
             )
         rows = _records(ak.stock_financial_analysis_indicator_em(symbol=symbol), limit=8)
         return (

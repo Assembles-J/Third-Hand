@@ -21,10 +21,11 @@ def load_legacy_application() -> ModuleType:
     Session-aware data scheduling narrows when provider-backed refreshes may run.
     Corporate-event policy wraps the already-local-first derived refresh; the
     HKEX Tier-1 fetcher is then registered on that bounded acquisition service.
-    Finally, v2 research services are registered before the Mandatory Acquisition
-    preflight is installed, so formal Decision entrypoints can convert
-    LOCAL_MISS/stale coverage into bounded fetch attempts without moving remote
-    I/O into DecisionContextBuilder, Evidence, AI, Arbiter or execution policy.
+    Finally, v2 research services are registered, official release-aware Company
+    Intelligence refresh is installed, and only then Mandatory Acquisition is
+    allowed to turn LOCAL_MISS/stale coverage into bounded provider attempts.
+    DecisionContextBuilder, Evidence, AI, Arbiter and execution stay remote-I/O
+    free.
     """
     from app.daily_history_policy import install as install_daily_history_policy
     from app.daily_history_compat import install as install_daily_history_compat
@@ -42,6 +43,7 @@ def load_legacy_application() -> ModuleType:
     from app.hkex_corporate_event_runtime import install as install_hkex_corporate_event_runtime
     from app.atomic_evidence_runtime import install as install_atomic_evidence_runtime
     from app.bootstrap.v2_routes import register_v2_routes
+    from app.financial_release_refresh_runtime import install as install_financial_release_refresh_runtime
     from app.mandatory_acquisition import install as install_mandatory_acquisition
 
     install_paper_runtime_governance(application)
@@ -51,5 +53,6 @@ def load_legacy_application() -> ModuleType:
     install_hkex_corporate_event_runtime(application)
     install_atomic_evidence_runtime(application)
     register_v2_routes(application)
+    install_financial_release_refresh_runtime(application)
     install_mandatory_acquisition(application)
     return application

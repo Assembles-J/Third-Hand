@@ -52,7 +52,21 @@ class ResearchDataGateway:
             return False
         return (now - self._parse(snapshot.fetched_at)).total_seconds() <= request.max_age_seconds
 
-    def get_or_fetch(self, request: ResearchDataRequest, *, fetcher: ResearchFetcher) -> ResearchDataResult:
+    def get_or_fetch(
+        self,
+        request: ResearchDataRequest,
+        *,
+        fetcher: ResearchFetcher,
+        force_refresh: bool = False,
+        refresh_reason: str | None = None,
+    ) -> ResearchDataResult:
+        """Resolve Local-First data with an explicit bounded refresh escape hatch.
+
+        ``force_refresh`` does not alter query identity or TTL. It is reserved for
+        deterministic lifecycle events (for example an official earnings release)
+        proving that a newer observation should now exist even while the cached
+        snapshot is still inside its ordinary research TTL.
+        """
         started = beijing_now()
         existing = self.repository.latest(
             data_type=request.data_type,
@@ -62,7 +76,7 @@ class ResearchDataGateway:
         )
         missing = self._missing_coverage(request, existing)
 
-        if self._fresh(request, existing, now=started):
+        if not force_refresh and self._fresh(request, existing, now=started):
             finished = beijing_now()
             self.repository.record_attempt(
                 data_type=request.data_type,
@@ -82,7 +96,9 @@ class ResearchDataGateway:
             )
             return ResearchDataResult(existing, "LOCAL_FRESH_HIT", 0)
 
-        cache_status = "LOCAL_MISS" if existing is None else "LOCAL_STALE_OR_INCOMPLETE"
+        cache_status = "LOCAL_MISS" if existing is None else (
+            "EVENT_FORCED_REFRESH" if force_refresh else "LOCAL_STALE_OR_INCOMPLETE"
+        )
         try:
             fetched = fetcher(request, missing, existing)
             fetched_at = beijing_now()
@@ -127,6 +143,8 @@ class ResearchDataGateway:
                     "persist_before_return": True,
                     "source_reference": fetched.source_reference,
                     "provider_detail": dict(fetched.detail),
+                    "force_refresh": bool(force_refresh),
+                    "refresh_reason": refresh_reason,
                 },
                 started_at=started.isoformat(),
                 finished_at=finished.isoformat(),
@@ -152,7 +170,12 @@ class ResearchDataGateway:
                 missing_coverage=missing,
                 snapshot_id=fallback.snapshot_id if fallback else None,
                 error=error,
-                detail={"local_first": True, "stale_local_returned": bool(fallback)},
+                detail={
+                    "local_first": True,
+                    "stale_local_returned": bool(fallback),
+                    "force_refresh": bool(force_refresh),
+                    "refresh_reason": refresh_reason,
+                },
                 started_at=started.isoformat(),
                 finished_at=finished.isoformat(),
             )
