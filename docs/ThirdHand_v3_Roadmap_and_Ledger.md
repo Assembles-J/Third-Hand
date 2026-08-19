@@ -588,3 +588,13 @@ Also preserve:
   continuity-and-execution-risk slice. N2 is **not `PRODUCT_DONE` yet**: the
   action-first stock-detail reorder plus integrated financial/event and AI
   Research sections remain follow-up work under #62.
+- **N2 action-first stock-detail slice:** Android stock detail now orders the
+  user flow as risk/freshness/invalidation -> Formal Decision + What Changed +
+  Strategy/Timeframe -> Company Intelligence -> K-line timing -> AI Research ->
+  execution history. K-line/market detail no longer hides the formal decision
+  below the fold, and the AI surface is explicitly labeled as an explanation
+  layer that cannot create executable action. This advances N2 Android product
+  hierarchy while preserving all existing backend authority. N2 remains **not
+  `PRODUCT_DONE`** until financial/currentness + CorporateEvent state is joined
+  into the workspace surface and the remaining partial/stale/blocked states are
+  accepted end-to-end under #62.
