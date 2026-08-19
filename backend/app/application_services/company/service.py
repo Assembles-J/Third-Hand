@@ -140,6 +140,8 @@ class CompanyIntelligenceService:
         *,
         research_priority: str | None = None,
         allow_remote: bool = True,
+        force_refresh_data_types: tuple[str, ...] = (),
+        refresh_reason: str | None = None,
     ) -> dict[str, object]:
         symbol = self._symbol(symbol)
         candidate = self._candidate(symbol)
@@ -149,6 +151,7 @@ class CompanyIntelligenceService:
         refs: list[CompanyDatasetRef] = []
         missing: list[str] = []
         stale: list[str] = []
+        forced = {str(item).strip().lower() for item in force_refresh_data_types if str(item).strip()}
 
         for spec in required_dataset_specs(priority):
             request = ResearchDataRequest(
@@ -163,7 +166,12 @@ class CompanyIntelligenceService:
             fetcher = self.provider_registry.get(spec.data_type) if supported else None
             try:
                 result = (
-                    self.gateway.get_or_fetch(request, fetcher=fetcher)
+                    self.gateway.get_or_fetch(
+                        request,
+                        fetcher=fetcher,
+                        force_refresh=spec.data_type in forced,
+                        refresh_reason=refresh_reason if spec.data_type in forced else None,
+                    )
                     if allow_remote and fetcher is not None
                     else self._local_only(request)
                 )
