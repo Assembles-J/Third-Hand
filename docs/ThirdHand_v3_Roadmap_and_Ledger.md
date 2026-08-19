@@ -620,3 +620,13 @@ Also preserve:
   trading authority. N2 remains **not `PRODUCT_DONE`** until the remaining
   recoverable section-state architecture and device-level UI acceptance under
   #62 are completed.
+- **N2 Android state-architecture slice:** Decision Workspace networking is now
+  isolated behind `DecisionWorkspaceRepository`, route transitions are owned by
+  an immutable `DecisionWorkspaceUiState` controller, and the Compose content is
+  a stateless renderer that can be exercised without network I/O. Initial load,
+  empty/not-found, recoverable endpoint failure, refresh-in-progress and
+  refresh-failure-with-last-good-data are explicit states. Android CI now runs
+  focused JVM controller tests before Debug/Release builds. This closes the
+  ad-hoc mutable route-state gap; N2 remains **not `PRODUCT_DONE`** until focused
+  screenshot/preview state coverage and device/emulator visual acceptance are
+  completed under #62.

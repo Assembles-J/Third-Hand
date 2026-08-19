@@ -18,161 +18,24 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
-import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
-import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import kotlinx.coroutines.launch
-import okhttp3.OkHttpClient
-import retrofit2.Retrofit
-import retrofit2.converter.gson.GsonConverterFactory
-import retrofit2.http.GET
-import retrofit2.http.Path
 import java.time.OffsetDateTime
 import java.time.ZoneOffset
 import java.time.format.DateTimeFormatter
 import java.util.Locale
-import java.util.concurrent.TimeUnit
-
-data class DecisionWorkspaceWhatChangedDto(
-    val prior_decision_id: String? = null,
-    val prior_action: String? = null,
-    val current_action: String? = null,
-    val input_changed: Boolean = false,
-    val material_change: Boolean = false,
-    val material_change_reason: String = "unavailable",
-    val material_change_components: List<String> = emptyList(),
-    val position_age: Int? = null,
-    val cooldown_until: String? = null,
-    val review_after: String? = null,
-    val invalidation_conditions: List<String> = emptyList(),
-    val continuity_policy_version: String? = null,
-)
-
-data class DecisionWorkspaceFinancialCurrentnessDto(
-    val scope: String = "FROZEN_DECISION",
-    val policy_version: String? = null,
-    val latest_observed_period: String? = null,
-    val expected_report_at: String? = null,
-    val latest_period_status: String? = null,
-    val current_confirmation: String? = null,
-    val reason_codes: List<String> = emptyList(),
-)
-
-data class DecisionWorkspaceEventEvidenceDto(
-    val evidence_id: String? = null,
-    val metric: String? = null,
-    val scheduled_at: String? = null,
-    val source_name: String? = null,
-    val source_reference: String? = null,
-    val freshness_status: String? = null,
-    val polarity: String? = null,
-    val confidence: Double? = null,
-)
-
-data class DecisionWorkspaceCorporateEventDto(
-    val event_id: String? = null,
-    val title: String? = null,
-    val event_type: String? = null,
-    val scheduled_at: String? = null,
-    val period: String? = null,
-    val lifecycle_status: String? = null,
-    val verification_level: String? = null,
-    val source: String? = null,
-    val source_rank: Int? = null,
-    val source_reference: String? = null,
-    val conflict_status: String? = null,
-    val conflict_dates: List<String> = emptyList(),
-    val policy_eligible: Boolean = false,
-    val announced_at: String? = null,
-    val verified_at: String? = null,
-)
-
-data class DecisionWorkspaceCorporateEventsDto(
-    val scope: String = "CURRENT_PERSISTED",
-    val status: String = "unavailable",
-    val retrieved_at: String? = null,
-    val official_source_status: String? = null,
-    val unavailable_dates: List<String> = emptyList(),
-    val active_events: List<DecisionWorkspaceCorporateEventDto> = emptyList(),
-    val recent_history: List<DecisionWorkspaceCorporateEventDto> = emptyList(),
-    val decision_evidence: List<DecisionWorkspaceEventEvidenceDto> = emptyList(),
-)
-
-data class DecisionWorkspaceDeferralDto(
-    val decision_id: String? = null,
-    val action: String? = null,
-    val reason_code: String? = null,
-    val next_eligible_at: String? = null,
-    val state: String? = null,
-)
-
-data class DecisionWorkspacePaperRiskDto(
-    val position_present: Boolean = false,
-    val quantity: Double? = null,
-    val sellable_quantity: Double? = null,
-    val locked_quantity: Double? = null,
-    val next_eligible_sell_at: String? = null,
-    val active_deferrals: List<DecisionWorkspaceDeferralDto> = emptyList(),
-)
-
-data class DecisionWorkspaceQualityDto(
-    val status: String? = null,
-    val score_percent: Int? = null,
-    val missing_fields: List<String> = emptyList(),
-    val stale_fields: List<String> = emptyList(),
-    val warnings: List<String> = emptyList(),
-)
-
-data class DecisionWorkspaceDto(
-    val symbol: String,
-    val name: String = "",
-    val decision_id: String = "",
-    val generated_at: String? = null,
-    val formal_action: String? = null,
-    val summary: String = "",
-    val strategy: StrategyProfileDto? = null,
-    val timeframe_authority: TimeframeAuthorityDto? = null,
-    val what_changed: DecisionWorkspaceWhatChangedDto = DecisionWorkspaceWhatChangedDto(),
-    val financial_currentness: DecisionWorkspaceFinancialCurrentnessDto? = null,
-    val corporate_events: DecisionWorkspaceCorporateEventsDto = DecisionWorkspaceCorporateEventsDto(),
-    val paper_risk: DecisionWorkspacePaperRiskDto = DecisionWorkspacePaperRiskDto(),
-    val data_quality: DecisionWorkspaceQualityDto = DecisionWorkspaceQualityDto(),
-)
-
-private interface DecisionWorkspaceApi {
-    @GET("v1/decisions/{symbol}/workspace")
-    suspend fun latest(@Path("symbol") symbol: String): DecisionWorkspaceDto
-}
-
-private object DecisionWorkspaceClient {
-    private var configuredBaseUrl = ""
-    private var configuredService: DecisionWorkspaceApi? = null
-
-    fun service(context: android.content.Context): DecisionWorkspaceApi {
-        val baseUrl = EndpointStore.baseUrl(context)
-        if (configuredService == null || configuredBaseUrl != baseUrl) {
-            configuredBaseUrl = baseUrl
-            configuredService = Retrofit.Builder()
-                .baseUrl(baseUrl)
-                .client(OkHttpClient.Builder().callTimeout(45, TimeUnit.SECONDS).build())
-                .addConverterFactory(GsonConverterFactory.create())
-                .build()
-                .create(DecisionWorkspaceApi::class.java)
-        }
-        return requireNotNull(configuredService)
-    }
-}
 
 /**
- * Visible projection of persisted formal-decision continuity and paper risk.
- * This component is read-only and never infers a new action from presentation text.
+ * Route-level container for the Decision Workspace summary.
+ * Network access and mutable loading/error transitions live outside the pure content composable.
  */
 @Composable
 fun DecisionWorkspaceSummaryPanel(
@@ -180,21 +43,36 @@ fun DecisionWorkspaceSummaryPanel(
     modifier: Modifier = Modifier,
 ) {
     val context = LocalContext.current
-    val api = remember(context) { DecisionWorkspaceClient.service(context) }
+    val controller = remember(context) {
+        DecisionWorkspaceController(NetworkDecisionWorkspaceRepository(context.applicationContext))
+    }
+    val state by controller.state.collectAsState()
     val scope = rememberCoroutineScope()
-    var workspace by remember(symbol) { mutableStateOf<DecisionWorkspaceDto?>(null) }
-    var loading by remember(symbol) { mutableStateOf(true) }
-    var error by remember(symbol) { mutableStateOf<String?>(null) }
 
-    suspend fun load() {
-        loading = true
-        runCatching { api.latest(symbol) }
-            .onSuccess { workspace = it; error = null }
-            .onFailure { error = it.message ?: "决策工作区暂不可用" }
-        loading = false
+    LaunchedEffect(symbol) {
+        controller.load(symbol)
     }
 
-    LaunchedEffect(symbol) { load() }
+    DecisionWorkspaceContent(
+        state = state,
+        modifier = modifier,
+        onRefresh = { scope.launch { controller.refresh(symbol) } },
+    )
+}
+
+/**
+ * Stateless renderer for Decision Workspace route state.
+ * It is intentionally internal so screenshot/preview fixtures can render state without network I/O.
+ */
+@Composable
+internal fun DecisionWorkspaceContent(
+    state: DecisionWorkspaceUiState,
+    onRefresh: () -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    val refreshing = state is DecisionWorkspaceUiState.Ready && state.refreshing
+    val busy = state is DecisionWorkspaceUiState.Loading || refreshing
+    val refreshEnabled = !busy && (state !is DecisionWorkspaceUiState.Error || state.recoverable)
 
     Card(
         modifier = modifier.fillMaxWidth(),
@@ -212,21 +90,39 @@ fun DecisionWorkspaceSummaryPanel(
                     Text("正式决策 · 发生了什么变化", style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.Bold)
                     Text("只读 DecisionMemory / Atomic Evidence / Paper Ledger", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
                 }
-                TextButton(onClick = { scope.launch { load() } }, enabled = !loading) {
-                    if (loading) CircularProgressIndicator(Modifier.width(15.dp), strokeWidth = 2.dp)
+                TextButton(onClick = onRefresh, enabled = refreshEnabled) {
+                    if (busy) CircularProgressIndicator(Modifier.width(15.dp), strokeWidth = 2.dp)
                     else Icon(Icons.Filled.Refresh, contentDescription = "刷新决策变化")
                     Spacer(Modifier.width(4.dp))
-                    Text("刷新")
+                    Text(if (refreshing) "刷新中" else "刷新")
                 }
             }
 
-            when {
-                loading && workspace == null -> Text("正在读取最新正式决策与连续性记录…", style = MaterialTheme.typography.bodySmall)
-                workspace == null && error != null -> Text("工作区暂不可用：$error", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.error)
-                workspace != null -> DecisionWorkspaceSummaryBody(requireNotNull(workspace))
-            }
-            error?.takeIf { workspace != null }?.let {
-                Text("刷新失败，继续显示上次可用结果：$it", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.error)
+            when (state) {
+                DecisionWorkspaceUiState.Loading -> Text(
+                    "正在读取最新正式决策与连续性记录…",
+                    style = MaterialTheme.typography.bodySmall,
+                )
+                is DecisionWorkspaceUiState.Empty -> Text(
+                    state.message,
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+                is DecisionWorkspaceUiState.Error -> Text(
+                    "工作区暂不可用：${state.message}",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.error,
+                )
+                is DecisionWorkspaceUiState.Ready -> {
+                    DecisionWorkspaceSummaryBody(state.workspace)
+                    state.refreshError?.let {
+                        Text(
+                            "刷新失败，继续显示上次可用结果：$it",
+                            style = MaterialTheme.typography.labelSmall,
+                            color = MaterialTheme.colorScheme.error,
+                        )
+                    }
+                }
             }
         }
     }
