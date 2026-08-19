@@ -572,10 +572,19 @@ Also preserve:
   authority. Formal action semantics were unchanged and full backend + Android
   CI passed before merge.
 - **P0 #46 paper-execution visibility:** backend/API sellability and deferral
-  facts were already authoritative. The Android Trading surface now consumes
+  facts were already authoritative. Android Trading now consumes
   `sellable_quantity`, `locked_quantity`, `next_eligible_sell_at`, runtime
   `state_source`, and active execution deferrals and renders explicit T+1/
-  next-review reasons. This advances #46 to `ANDROID_VISIBLE / OBSERVABLE` for
-  the user-facing slice; **Phase 5 remains open** until the deployed-container
-  acceptance matrix in #46 passes. This UI slice does not change Paper Broker,
-  ExecutionPrecheck, sizing, session, freshness or T+1 authority.
+  next-review reasons. This slice is `ANDROID_VISIBLE / OBSERVABLE`; **Phase 5
+  remains open** until the deployed-container acceptance matrix in #46 passes.
+  The UI does not change Paper Broker, ExecutionPrecheck, sizing, session,
+  freshness or T+1 authority.
+- **N2 Decision Workspace first slice:** a v2-native read-only workspace facade
+  composes persisted Formal Decision, DecisionMemory, Strategy/Timeframe metadata
+  and paper-ledger sellability/active-deferral facts without re-running policy.
+  Android renders the formal action, material-change/no-material-change reason,
+  review/cooldown timing and T+1 execution risk beside the Strategy section.
+  This advances N2 to `API_VISIBLE / ANDROID_VISIBLE / OBSERVABLE` for the
+  continuity-and-execution-risk slice. N2 is **not `PRODUCT_DONE` yet**: the
+  action-first stock-detail reorder plus integrated financial/event and AI
+  Research sections remain follow-up work under #62.
