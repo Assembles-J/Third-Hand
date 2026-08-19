@@ -279,6 +279,8 @@ class CompanyResearchAtomicSource:
     @staticmethod
     def _facts_from_row(context, dataset_key, ref, raw_snapshot, row, stale) -> Iterable[AtomicFactRecord]:
         report_date = str(row.get("report_date") or "")[:10]
+        announced_at = str(row.get("announced_at") or "").strip() or None
+        report_type = str(row.get("report_type") or "annual").strip() or None
         metrics = (
             "revenue",
             "revenue_yoy_percent",
@@ -305,8 +307,11 @@ class CompanyResearchAtomicSource:
                 "dataset_key": dataset_key,
                 "metric": metric,
                 "period_end": report_date,
+                "report_type": report_type,
+                "announced_at": announced_at,
                 "value": value,
                 "available_at": raw_snapshot.available_at,
+                "retrieved_at": raw_snapshot.fetched_at,
             })
             results.append(AtomicFactRecord(
                 fact_id=_fact_id(dataset_key, report_date, metric),
@@ -318,14 +323,18 @@ class CompanyResearchAtomicSource:
                 value=value,
                 unit=unit,
                 period_end=report_date or None,
+                report_type=report_type,
+                announced_at=announced_at,
                 comparison_type=comparison_type,
                 source_evidence_id=f"research_snapshot:{raw_snapshot.snapshot_id}",
                 source_name=str(ref.get("provider") or raw_snapshot.provider),
                 source_reference=raw_snapshot.source_reference,
                 source_timestamp=str(ref.get("as_of") or raw_snapshot.as_of),
                 available_at=raw_snapshot.available_at,
+                retrieved_at=raw_snapshot.fetched_at,
                 observed_at=context.generated_at,
                 freshness_status="stale" if stale else "fresh",
+                retrieval_freshness="stale" if stale else "fresh",
                 polarity=_polarity(metric, value),
                 materiality=materiality,
                 comparison_adequacy=adequacy,

@@ -6,6 +6,7 @@ from app.atomic_evidence import AtomicEvidenceSnapshotBuilder
 from app.atomic_models import AtomicEvidenceSnapshot
 from app.atomic_company_research import CompanyResearchAtomicSource
 from app.domain.research.data_gateway import canonical_hash
+from app.financial_currentness import FinancialCurrentnessPolicy
 
 
 class CompanyAwareAtomicEvidenceBuilder:
@@ -13,23 +14,34 @@ class CompanyAwareAtomicEvidenceBuilder:
 
     version = config.ATOMIC_EVIDENCE_VERSION
 
-    def __init__(self, store, base_builder=None, company_source=None) -> None:
+    def __init__(self, store, base_builder=None, company_source=None, financial_currentness_policy=None) -> None:
         self.base_builder = base_builder or AtomicEvidenceSnapshotBuilder()
         self.company_source = company_source or CompanyResearchAtomicSource(store)
+        self.financial_currentness_policy = financial_currentness_policy or FinancialCurrentnessPolicy()
 
     def build(self, context, evidence) -> AtomicEvidenceSnapshot:
         base = self.base_builder.build(context, evidence)
         company = self.company_source.build(context)
-        facts = tuple(sorted((*base.facts, *company.facts), key=lambda item: item.fact_id))
+        raw_facts = tuple(sorted((*base.facts, *company.facts), key=lambda item: item.fact_id))
         availability = tuple(sorted((*base.availability, *company.availability), key=lambda item: item.capability))
         conflicts = tuple(sorted((*base.conflicts, *company.conflicts), key=lambda item: item.conflict_id))
 
-        if len({item.fact_id for item in facts}) != len(facts):
+        if len({item.fact_id for item in raw_facts}) != len(raw_facts):
             raise ValueError("combined atomic fact IDs must be unique")
         if len({item.capability for item in availability}) != len(availability):
             raise ValueError("combined atomic availability capabilities must be unique")
         if len({item.conflict_id for item in conflicts}) != len(conflicts):
             raise ValueError("combined atomic conflict IDs must be unique")
+
+        has_financial_conflict = any(
+            source.startswith("research_snapshot:")
+            for conflict in conflicts
+            for source in conflict.affected_sources
+        )
+        facts, financial_currentness = self.financial_currentness_policy.evaluate(
+            raw_facts,
+            has_financial_conflict=has_financial_conflict,
+        )
 
         snapshot_hash = canonical_hash({
             "version": self.version,
@@ -39,6 +51,7 @@ class CompanyAwareAtomicEvidenceBuilder:
             "facts": [item.model_dump(mode="json", exclude={"observed_at"}) for item in facts],
             "availability": [item.model_dump(mode="json") for item in availability],
             "conflicts": [item.model_dump(mode="json") for item in conflicts],
+            "financial_currentness": financial_currentness.model_dump(mode="json"),
         })
         return AtomicEvidenceSnapshot(
             version=self.version,
@@ -50,6 +63,7 @@ class CompanyAwareAtomicEvidenceBuilder:
             facts=facts,
             availability=availability,
             conflicts=conflicts,
+            financial_currentness=financial_currentness,
             snapshot_hash=snapshot_hash,
         )
 

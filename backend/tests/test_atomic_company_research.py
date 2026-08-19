@@ -291,7 +291,7 @@ def test_company_aware_builder_changes_only_atomic_shadow_hash_and_keeps_formal_
 
     snapshot = CompanyAwareAtomicEvidenceBuilder(store).build(context, ())
 
-    assert snapshot.version == config.ATOMIC_EVIDENCE_VERSION == "atomic-evidence-shadow-v2-company-research"
+    assert snapshot.version == config.ATOMIC_EVIDENCE_VERSION == "atomic-evidence-shadow-v3-financial-currentness"
     assert any(fact.domain == "fundamental" for fact in snapshot.facts)
     assert any(item.capability == "company_research" for item in snapshot.availability)
     assert context.input_hash == "formal-input-does-not-contain-company-research"

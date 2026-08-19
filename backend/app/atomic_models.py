@@ -22,6 +22,21 @@ AtomicPolarity = Literal[
     "MISSING",
 ]
 FreshnessStatus = Literal["fresh", "stale", "unknown", "unavailable"]
+FinancialObservationCurrentness = Literal[
+    "CURRENT",
+    "HISTORICAL_VALID",
+    "PENDING_EXPECTED_REPORT",
+    "STALE_RELATIVE_TO_EXPECTED_REPORT",
+    "UNKNOWN",
+]
+FinancialLatestPeriodStatus = Literal[
+    "CURRENT",
+    "HISTORICAL_VALID",
+    "PENDING_EXPECTED_REPORT",
+    "STALE_RELATIVE_TO_EXPECTED_REPORT",
+    "UNKNOWN",
+]
+FinancialCurrentConfirmation = Literal["CONFIRMED", "PENDING", "UNKNOWN", "CONFLICTED"]
 AvailabilityStatus = Literal["available", "degraded", "missing", "stale", "conflicted"]
 Materiality = Literal["low", "medium", "high"]
 ComparisonAdequacy = Literal["adequate", "partial", "not_applicable", "unknown"]
@@ -42,14 +57,23 @@ class AtomicFactRecord(AtomicModel):
     unit: str | None = None
     period_start: str | None = None
     period_end: str | None = None
+    report_type: str | None = None
+    announced_at: str | None = None
     comparison_type: str | None = None
     source_evidence_id: str | None = None
     source_name: str | None = None
     source_reference: str | None = None
     source_timestamp: str | None = None
     available_at: str | None = None
+    retrieved_at: str | None = None
     observed_at: datetime
+    # Compatibility field: existing producers/consumers use freshness_status as
+    # retrieval/data-plane freshness. Financial report-period currentness is
+    # deliberately separate below.
     freshness_status: FreshnessStatus
+    retrieval_freshness: FreshnessStatus | None = None
+    observation_currentness: FinancialObservationCurrentness = "UNKNOWN"
+    expected_report_at: str | None = None
     polarity: AtomicPolarity
     materiality: Materiality
     comparison_adequacy: ComparisonAdequacy
@@ -72,6 +96,15 @@ class EvidenceConflictRecord(AtomicModel):
     policy_effect: str
 
 
+class FinancialCurrentnessSnapshot(AtomicModel):
+    policy_version: str
+    latest_observed_period: str | None = None
+    expected_report_at: str | None = None
+    latest_period_status: FinancialLatestPeriodStatus
+    current_confirmation: FinancialCurrentConfirmation
+    reason_codes: tuple[str, ...] = ()
+
+
 class AtomicEvidenceSnapshot(AtomicModel):
     version: str
     context_id: str
@@ -82,6 +115,7 @@ class AtomicEvidenceSnapshot(AtomicModel):
     facts: tuple[AtomicFactRecord, ...]
     availability: tuple[EvidenceAvailabilityRecord, ...]
     conflicts: tuple[EvidenceConflictRecord, ...]
+    financial_currentness: FinancialCurrentnessSnapshot | None = None
     snapshot_hash: str = Field(pattern="^[a-f0-9]{64}$")
     shadow_mode: Literal[True] = True
 
@@ -92,4 +126,8 @@ __all__ = [
     "AtomicPolarity",
     "EvidenceAvailabilityRecord",
     "EvidenceConflictRecord",
+    "FinancialCurrentnessSnapshot",
+    "FinancialCurrentConfirmation",
+    "FinancialLatestPeriodStatus",
+    "FinancialObservationCurrentness",
 ]

@@ -12,7 +12,12 @@ from typing import Literal
 from pydantic import BaseModel, ConfigDict, Field
 
 from app import decision_config as config
-from app.atomic_models import AtomicEvidenceSnapshot, AtomicFactRecord
+from app.atomic_models import (
+    AtomicEvidenceSnapshot,
+    AtomicFactRecord,
+    FinancialCurrentConfirmation,
+    FinancialLatestPeriodStatus,
+)
 
 
 ResearchState = Literal[
@@ -37,7 +42,15 @@ class DimensionAssessment(ResearchModel):
 
 class FundamentalVector(ResearchModel):
     dimensions: tuple[DimensionAssessment, ...]
+    # Compatibility field: this remains the deterministic historical evidence
+    # aggregate. New callers should read historical_trend explicitly.
     aggregate_bias: ResearchState
+    historical_trend: ResearchState = "INSUFFICIENT"
+    current_confirmation: FinancialCurrentConfirmation = "UNKNOWN"
+    latest_observed_period: str | None = None
+    expected_report_at: str | None = None
+    latest_period_status: FinancialLatestPeriodStatus = "UNKNOWN"
+    currentness_reason_codes: tuple[str, ...] = ()
 
 
 class ResearchAssessment(ResearchModel):
@@ -201,9 +214,17 @@ class ResearchAggregator:
             )
             for name, metrics in _FUNDAMENTAL_DIMENSIONS.items()
         )
+        historical_trend = self.fundamental_policy.aggregate(fundamental_dimensions)
+        currentness = snapshot.financial_currentness
         fundamental = FundamentalVector(
             dimensions=fundamental_dimensions,
-            aggregate_bias=self.fundamental_policy.aggregate(fundamental_dimensions),
+            aggregate_bias=historical_trend,
+            historical_trend=historical_trend,
+            current_confirmation=currentness.current_confirmation if currentness else "UNKNOWN",
+            latest_observed_period=currentness.latest_observed_period if currentness else None,
+            expected_report_at=currentness.expected_report_at if currentness else None,
+            latest_period_status=currentness.latest_period_status if currentness else "UNKNOWN",
+            currentness_reason_codes=currentness.reason_codes if currentness else ("financial_currentness_unavailable",),
         )
         technical = self.dimension_aggregator.assess(
             "technical",
@@ -226,11 +247,16 @@ class ResearchAggregator:
             tuple(fact for fact in snapshot.facts if fact.dimension in {"market_context", "relative_strength"}),
         )
         states = (*fundamental_dimensions, technical, event, expectation, market)
-        unresolved = tuple(sorted(
+        unresolved_items = [
             f"availability:{item.capability}"
             for item in snapshot.availability
             if item.status in {"missing", "stale", "conflicted"}
-        ))
+        ]
+        if currentness is not None and fundamental.current_confirmation != "CONFIRMED":
+            unresolved_items.append(
+                f"currentness:fundamental_current_confirmation:{fundamental.current_confirmation}"
+            )
+        unresolved = tuple(sorted(unresolved_items))
         facts = tuple(sorted(snapshot.facts, key=lambda item: item.fact_id))
         evidence_confidence = sum(item.confidence for item in facts) / len(facts) if facts else 0.0
         if snapshot.conflicts:
@@ -261,6 +287,7 @@ class ResearchAggregator:
             aggregation_policy_versions={
                 "fact_polarity": self.dimension_aggregator.polarity_policy.version,
                 "dimension": self.dimension_aggregator.version,
+                "financial_currentness": currentness.policy_version if currentness else config.FINANCIAL_CURRENTNESS_POLICY_VERSION,
                 "fundamental": self.fundamental_policy.version,
                 "research": self.research_policy.version,
             },
@@ -297,6 +324,13 @@ class SemanticInvariantValidator:
             violations.append("decision_confidence_requires_phase4_decision_arbiter")
         if assessment.evidence_snapshot_hash != snapshot.snapshot_hash:
             violations.append("evidence_snapshot_hash_mismatch")
+        if assessment.fundamental_vector.historical_trend != assessment.fundamental_vector.aggregate_bias:
+            violations.append("historical_trend_must_match_compat_aggregate_bias")
+        if snapshot.financial_currentness is not None:
+            if assessment.fundamental_vector.current_confirmation != snapshot.financial_currentness.current_confirmation:
+                violations.append("financial_current_confirmation_mismatch")
+            if assessment.fundamental_vector.latest_period_status != snapshot.financial_currentness.latest_period_status:
+                violations.append("financial_latest_period_status_mismatch")
         return ResearchAssessmentValidation(
             valid=not violations,
             violations=tuple(sorted(violations)),
