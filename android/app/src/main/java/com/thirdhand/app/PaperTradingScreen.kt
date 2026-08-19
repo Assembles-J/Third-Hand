@@ -202,7 +202,7 @@ fun PaperTradingScreen(onOpenDetail: (ResearchTargetDto) -> Unit) {
                     color = MaterialTheme.colorScheme.primary,
                     fontWeight = FontWeight.SemiBold,
                 )
-                status?.last_finished_at?.let { Text("最近完成：${paperBeijingTimestamp(it)} · 执行 ${status.last_executed} 笔", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant) }
+                status?.last_finished_at?.let { Text("最近完成：${paperBeijingTimestamp(it)} · 执行 ${status.last_executed} 笔 · 状态来源 ${if (status.state_source == "persisted") "持久化恢复" else "当前进程"}", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant) }
             }
         }
         item {
@@ -229,7 +229,8 @@ fun PaperTradingScreen(onOpenDetail: (ResearchTargetDto) -> Unit) {
             TradingRowDivider()
         }
         error?.let { item { Text(it, Modifier.padding(horizontal = 20.dp, vertical = 8.dp), color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.bodySmall) } }
-        item { TradingSection("持仓", "成本、现价、涨跌方向和盈亏都来自这套独立账本") }
+        item { TradingSection("持仓", "成本、现价、可卖/T+1 与盈亏都来自这套独立账本") }
+        item { PaperExecutionSafetyPanel(account?.positions.orEmpty()) }
         if (account?.positions.isNullOrEmpty()) item {
             Text("当前没有持仓。可点击“立即运行一轮”，或开启自动执行后等待下一轮决策。", Modifier.padding(horizontal = 20.dp, vertical = 14.dp), style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
         }
@@ -262,7 +263,8 @@ fun PaperTradingScreen(onOpenDetail: (ResearchTargetDto) -> Unit) {
                     PaperPositionMetric("市值", "¥${position.market_value.money()}", Modifier.weight(1f))
                     PaperPositionMetric("浮盈", "¥${position.unrealized_pnl.money()}", Modifier.weight(1f), valueColor = directionColor)
                 }
-                Text("持仓 ${position.quantity.clean()} 股 · ${if (isUp) "盈利保护关注" else "回撤风险关注"}", Modifier.padding(top = 6.dp), style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                Text("持仓 ${position.quantity.clean()} 股 · 可卖 ${position.sellable_quantity?.clean() ?: "未提供"} · T+1锁定 ${position.locked_quantity?.clean() ?: "未提供"}", Modifier.padding(top = 6.dp), style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                position.next_eligible_sell_at?.let { next -> Text("下次可卖/复核 ${paperBeijingTimestamp(next)}", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant) }
                 Spacer(Modifier.height(8.dp)); TradingRowDivider()
             }
         }
