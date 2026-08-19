@@ -88,7 +88,7 @@ def _parse_title_search_rows(page: str, symbol: str) -> list[dict[str, object]]:
     rows: list[dict[str, object]] = []
     for row in re.findall(r"<tr\b[^>]*>.*?</tr>", page or "", flags=re.IGNORECASE | re.DOTALL):
         code_match = re.search(
-            r"stock-short-code[^>]*>.*?(?:Stock Code:\s*</span>)?\s*(\d{1,5})",
+            r"stock-short-code[^>]*>.*?Stock Code:\s*</span>\s*(\d{1,5})",
             row,
             flags=re.IGNORECASE | re.DOTALL,
         )
@@ -119,10 +119,7 @@ def _parse_title_search_rows(page: str, symbol: str) -> list[dict[str, object]]:
         title = _clean_html(link_match.group(2))
         if not _is_results_announcement(category, title):
             continue
-        if href.startswith("http"):
-            document_url = href
-        else:
-            document_url = f"https://www1.hkexnews.hk/{href.lstrip('/')}"
+        document_url = href if href.startswith("http") else f"https://www.hkexnews.hk/{href.lstrip('/')}"
         rows.append({
             "symbol": symbol,
             "market": "HK",
@@ -200,18 +197,24 @@ class HkexOfficialEventFetcher:
         return None
 
     def _fetch_title_page(self, stock_id: str, now: datetime) -> str:
+        # HKEX title search is a JSF-style form. POST the stock filter; a plain
+        # GET may render the page while ignoring the submitted stock criteria.
         end = now.date()
         start = end - timedelta(days=self._lookback_days)
-        response = self._client.get(
+        response = self._client.post(
             HKEX_TITLE_SEARCH_URL,
-            params={
-                "lang": "EN",
-                "market": "SEHK",
-                "category": "0",
+            data={
                 "stockId": stock_id,
+                "sortDir": "desc",
+                "sortByOptions": "DateTime",
+                "market": "SEHK",
+                "language": "EN",
+                "category": "0",
                 "from": start.strftime("%Y%m%d"),
                 "to": end.strftime("%Y%m%d"),
+                "page": "1",
             },
+            headers={"Referer": HKEX_TITLE_SEARCH_URL},
             timeout=self._timeout_seconds,
         )
         response.raise_for_status()
