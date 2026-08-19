@@ -46,9 +46,9 @@ MARKET_IDENTITY_POLICY_VERSION = "market-identity-v2-instrument-authority"
 # Market-regime evidence may only apply to the same explicit market. Missing HK/
 # US providers degrade to unknown instead of inheriting A-share benchmarks.
 MARKET_REGIME_POLICY_VERSION = "market-regime-v2-market-scoped"
-# Scheduled earnings are deterministic neutral-material facts. The policy only
-# blocks new risk immediately before disclosure; it never infers event direction.
-CORPORATE_EVENT_POLICY_VERSION = "corporate-event-v1-pre-earnings-gate"
+# v2 keeps known earnings obligations durable across the scheduled date and
+# records source rank/conflicts without granting events directional authority.
+CORPORATE_EVENT_POLICY_VERSION = "corporate-event-v2-persistent-lifecycle"
 PRE_EVENT_BLOCK_SESSIONS = 1
 # v7 makes execution consume only an explicit order quantity. A numeric zero can
 # never fall back to the resulting/target position quantity.
