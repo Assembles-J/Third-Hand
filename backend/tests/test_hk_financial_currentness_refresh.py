@@ -44,8 +44,8 @@ def _financial_fact(*, period_end="2026-06-30", report_type="interim", fact_id="
         fact_id=fact_id,
         symbol="01810",
         market="HK",
-        domain="fundamentals",
-        dimension="fundamental_growth",
+        domain="fundamental",
+        dimension="fundamental_company",
         metric="revenue_yoy_percent",
         value=15.2,
         unit="percent",
@@ -68,7 +68,7 @@ def _event_fact():
         symbol="01810",
         market="HK",
         domain="event",
-        dimension="event",
+        dimension="corporate_event",
         metric="event.upcoming.earnings_report.xiaomi-2026-interim",
         value="2026-08-18",
         observed_at=NOW,
@@ -163,10 +163,11 @@ def test_official_release_enriches_matching_interim_fact_and_currentness_becomes
 
     facts, currentness = FinancialCurrentnessPolicy().evaluate((enriched, _event_fact()))
     enriched_after_policy = next(item for item in facts if item.fact_id == "financial")
-    assert currentness.expected_latest_period == "2026-08-18"
+    assert currentness.expected_report_at == "2026-08-18"
     assert currentness.latest_observed_period == "2026-06-30"
     assert currentness.latest_period_status == "CURRENT"
-    assert enriched_after_policy.observation_currentness == "current"
+    assert currentness.current_confirmation == "CONFIRMED"
+    assert enriched_after_policy.observation_currentness == "CURRENT"
 
 
 def test_official_interim_release_does_not_stamp_unrelated_old_annual_fact():
