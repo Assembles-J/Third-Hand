@@ -213,9 +213,11 @@ def test_release_runtime_marks_fresh_financial_requirements_for_bounded_refresh_
             return {"symbol": symbol}
 
     service = Service()
-    module = SimpleNamespace(store=Store(), company_intelligence_service=service)
+    # Match production bootstrap: v2 service is the authoritative registered name.
+    module = SimpleNamespace(store=Store(), company_intelligence_service_v2=service)
     install_release_refresh(module)
 
+    assert module._financial_release_refresh_runtime_installed is True
     requirements = service.requirements("01810", research_priority="L3")
     by_key = {item["dataset_key"]: item for item in requirements["required_datasets"]}
     assert by_key["financial_summary"]["local_status"] == "LOCAL_STALE_HIT"
@@ -227,3 +229,9 @@ def test_release_runtime_marks_fresh_financial_requirements_for_bounded_refresh_
     call = service.build_calls[-1]
     assert call["forced"] == FINANCIAL_DATA_TYPES
     assert call["reason"] == REFRESH_REASON
+
+
+def test_release_runtime_does_not_mark_installed_before_v2_service_exists():
+    module = SimpleNamespace(store=object())
+    install_release_refresh(module)
+    assert not hasattr(module, "_financial_release_refresh_runtime_installed")
