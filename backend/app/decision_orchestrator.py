@@ -47,13 +47,37 @@ class DecisionOrchestrator:
             candidates,
             research_assessment=research_assessment,
         )
+
+        # Multi-timeframe policy is one deterministic refinement inside the
+        # existing authority chain. It can only downgrade new risk (BUY->WAIT,
+        # ADD->HOLD); it cannot manufacture BUY/ADD or lower-timeframe exits.
+        timeframe_material_state: dict[str, object] = {}
+        apply_timeframes = getattr(self.timeframe_policy, "apply", None)
+        if callable(apply_timeframes):
+            semantic_decision, timeframe_authority, timeframe_material_state = apply_timeframes(
+                context,
+                atomic_evidence_shadow,
+                semantic_decision,
+            )
+        else:
+            # Compatibility for injected legacy/test policies that expose only
+            # the descriptive `assess(context)` contract.
+            timeframe_authority = self.timeframe_policy.assess(context)
+
+        # Continuity sees only the approved discrete timeframe policy state,
+        # never raw bars/timestamps. A confirmation-state transition may unlock
+        # a new recommendation; ordinary intraday refreshes may not.
         prior_report = self.prior_report_loader(context.symbol) if self.prior_report_loader else None
         formal_action, decision_memory = self.continuity_policy.assess(
-            context, semantic_decision.action, prior_report, research_assessment,
+            context,
+            semantic_decision.action,
+            prior_report,
+            research_assessment,
+            timeframe_state=timeframe_material_state,
         )
         if formal_action != semantic_decision.action:
             semantic_decision = self._with_continuity_action(semantic_decision, formal_action)
-        timeframe_authority = self.timeframe_policy.assess(context)
+
         logger.info(
             "Atomic evidence snapshot context_id=%s symbol=%s snapshot_hash=%s fact_count=%s availability_count=%s conflict_count=%s",
             context.context_id,

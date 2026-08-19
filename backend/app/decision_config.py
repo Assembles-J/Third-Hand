@@ -21,10 +21,13 @@ SEMANTIC_INVARIANT_VALIDATOR_VERSION = "research-semantic-invariants-v2-financia
 DECISION_ARBITER_POLICY_VERSION = "decision-arbiter-v4-adverse-research-new-risk-veto"
 RESEARCH_DECISION_POLICY_VERSION = "research-decision-v1-adverse-new-risk-veto"
 RESEARCH_ADVERSE_MIN_EVIDENCE_CONFIDENCE = 0.60
-TIMEFRAME_AUTHORITY_POLICY_VERSION = "timeframe-authority-v2-weekly-context"
+TIMEFRAME_AUTHORITY_POLICY_VERSION = "multi-timeframe-action-v1-asymmetric-new-risk"
 INTRADAY_TIMEFRAME_POLICY_VERSION = "intraday-timeframe-evidence-v1-completed-bars"
 INTRADAY_RESEARCH_AUTHORITY_VERSION = "intraday-research-authority-v1-no-formal-effect"
-DECISION_CONTINUITY_POLICY_VERSION = "decision-continuity-v3-material-fingerprint"
+# v4 adds only approved timeframe states to the material fingerprint. Raw
+# intraday bar timestamps remain excluded, so ordinary refreshes do not unlock
+# recommendation flips.
+DECISION_CONTINUITY_POLICY_VERSION = "decision-continuity-v4-timeframe-material-state"
 MODEL_POLICY_VERSION = "model-policy-v3-compound-structured-recovery"
 FEEDBACK_POLICY_VERSION = "feedback-v1-audit-only-no-auto-tune"
 # Formal Decision correctness must not depend on a scheduler having warmed the

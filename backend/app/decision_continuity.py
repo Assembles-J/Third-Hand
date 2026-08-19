@@ -46,9 +46,14 @@ class DecisionContinuityPolicy:
         proposed_action: FormalDecisionAction,
         prior_report: Mapping[str, object] | None,
         research_assessment=None,
+        timeframe_state: Mapping[str, object] | None = None,
     ) -> tuple[FormalDecisionAction, DecisionMemory]:
         state = "HOLDING" if context.position is not None else "FLAT"
-        fingerprint = self._material_fingerprint(context, research_assessment)
+        fingerprint = self._material_fingerprint(
+            context,
+            research_assessment,
+            timeframe_state=timeframe_state,
+        )
         if not prior_report:
             return proposed_action, self._memory(
                 context, state=state, action=proposed_action, prior=None,
@@ -136,12 +141,19 @@ class DecisionContinuityPolicy:
             return None
 
     @staticmethod
-    def _material_fingerprint(context: DecisionContext, research_assessment=None) -> dict[str, object]:
-        """Return only strategy-relevant state; never include quote timestamps.
+    def _material_fingerprint(
+        context: DecisionContext,
+        research_assessment=None,
+        *,
+        timeframe_state: Mapping[str, object] | None = None,
+    ) -> dict[str, object]:
+        """Return only strategy-relevant state; never include quote/bar timestamps.
 
         ``input_hash`` remains the complete audit hash. This compact projection
         answers the different question of whether a new conclusion is allowed
-        to replace the prior episode's formal action.
+        to replace the prior episode's formal action. Multi-timeframe policy may
+        contribute only its discrete approved states, never raw bar timestamps,
+        prices, source hashes or retrieval times.
         """
         position = getattr(context, "position", None)
         plan = getattr(context, "trade_plan", None)
@@ -181,6 +193,7 @@ class DecisionContinuityPolicy:
             "enabled": getattr(plan, "enabled", None), "invalidation_price": invalidation,
             "conditions": structured_conditions,
         }
+        approved_timeframe_state = dict(timeframe_state or {})
         return {
             "position_state": "HOLDING" if position is not None else "FLAT",
             "position_quantity": float(getattr(position, "quantity", 0.0)) if position is not None else 0.0,
@@ -195,6 +208,7 @@ class DecisionContinuityPolicy:
             "market_regime": (getattr(regime, "status", None), getattr(regime, "regime", None)),
             "event_state": event_state,
             "research_veto_state": research_veto_state,
+            "timeframe_policy_state": approved_timeframe_state,
         }
 
     @staticmethod
