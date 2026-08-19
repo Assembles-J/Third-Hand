@@ -29,16 +29,19 @@ fun StrategyProfileCard(
         modifier = modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 10.dp),
         verticalArrangement = Arrangement.spacedBy(6.dp),
     ) {
-        Text("策略与周期权限", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
-
         if (report == null) {
+            Text("正式决策与策略", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
             Text(
-                "等待已保存的决策报告；生成后才能确认这次判断属于哪套策略。",
+                "等待已保存的决策报告；生成后才能查看 What Changed、执行风险与策略周期权限。",
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
             return@Column
         }
+
+        DecisionWorkspaceSummaryPanel(symbol = report.symbol)
+        HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
+        Text("策略与周期权限", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
 
         val strategy = report.strategy
         if (strategy == null || strategy.strategy_id.isBlank()) {
