@@ -425,6 +425,7 @@ data class DecisionReportDto(
     val market_price: Double? = null, val market_change_percent: Double? = null, val market_as_of: String? = null,
     val sizing: PositionSizingResultDto? = null, val policy_version: String, val prompt_version: String? = null,
     val audit_versions: Map<String, String> = emptyMap(), val execution_price_mode: String? = null, val execution_eligible_after: String? = null,
+    val strategy: StrategyProfileDto? = null, val timeframe_authority: TimeframeAuthorityDto? = null,
     val input_hash: String, val automatic_execution: Boolean = false,
 )
 data class PortfolioAnalysisItemDto(val symbol: String, val name: String, val action: String, val reason: String, val evidence: List<String>, val confidence_percent: Int, val rule_snapshot: Map<String, Any>? = null, val technical_snapshot: TechnicalSnapshotDto? = null, val decision_snapshot: DecisionSnapshotDto? = null, val analysis_trace: List<AnalysisTraceStepDto> = emptyList(), val disclaimer: String)
