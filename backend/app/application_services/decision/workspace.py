@@ -1,8 +1,9 @@
 """Decision Workspace read model over already-authoritative decision state.
 
 This service is intentionally read-only. It composes persisted formal decision,
-DecisionMemory and paper-ledger projections for product visibility; it does not
-re-run policy, mutate continuity, calculate sellability, or execute trades.
+DecisionMemory, frozen financial currentness and current persisted CorporateEvent
+lifecycle facts for product visibility; it does not re-run policy, mutate
+continuity, calculate sellability, perform remote acquisition, or execute trades.
 """
 from __future__ import annotations
 
@@ -67,6 +68,8 @@ class DecisionWorkspaceService:
                 "invalidation_conditions": list(memory_map.get("invalidation_conditions") or []),
                 "continuity_policy_version": memory_map.get("continuity_policy_version"),
             },
+            "financial_currentness": self._financial_currentness(current),
+            "corporate_events": self._corporate_events(normalized, current),
             "paper_risk": {
                 "position_present": position is not None,
                 "quantity": position.get("quantity") if position else None,
@@ -93,6 +96,98 @@ class DecisionWorkspaceService:
                 "warnings": list(quality_map.get("warnings") or []),
             },
         }
+
+    @staticmethod
+    def _financial_currentness(report: Mapping[str, object]) -> dict[str, object] | None:
+        atomic = report.get("atomic_evidence_shadow")
+        atomic_map = dict(atomic) if isinstance(atomic, Mapping) else {}
+        currentness = atomic_map.get("financial_currentness")
+        if not isinstance(currentness, Mapping):
+            return None
+        return {
+            "scope": "FROZEN_DECISION",
+            "policy_version": currentness.get("policy_version"),
+            "latest_observed_period": currentness.get("latest_observed_period"),
+            "expected_report_at": currentness.get("expected_report_at"),
+            "latest_period_status": currentness.get("latest_period_status"),
+            "current_confirmation": currentness.get("current_confirmation"),
+            "reason_codes": list(currentness.get("reason_codes") or []),
+        }
+
+    def _corporate_events(self, symbol: str, report: Mapping[str, object]) -> dict[str, object]:
+        loader = getattr(self.store, "cached_market_intelligence", None)
+        raw_bundle = loader(f"corporate_events:{symbol}") if callable(loader) else None
+        bundle = dict(raw_bundle) if isinstance(raw_bundle, Mapping) else {}
+        active = [
+            self._event_projection(item)
+            for item in bundle.get("events", []) or []
+            if isinstance(item, Mapping) and str(item.get("event_type") or "") == "earnings_report"
+        ]
+        history = [
+            self._event_projection(item)
+            for item in reversed(list(bundle.get("event_history", []) or []))
+            if isinstance(item, Mapping) and str(item.get("event_type") or "") == "earnings_report"
+        ][:3]
+        return {
+            # This bundle is the newest local persisted lifecycle. It may be newer
+            # than the frozen decision report, so the scope is explicit.
+            "scope": "CURRENT_PERSISTED",
+            "status": str(bundle.get("status") or "unavailable"),
+            "retrieved_at": bundle.get("retrieved_at"),
+            "official_source_status": bundle.get("official_source_status"),
+            "active_events": active,
+            "recent_history": history,
+            # These facts are frozen inside the current DecisionReport and explain
+            # which earnings event evidence the formal decision actually saw.
+            "decision_evidence": self._frozen_event_evidence(report),
+        }
+
+    @staticmethod
+    def _event_projection(item: Mapping[str, object]) -> dict[str, object]:
+        return {
+            "event_id": item.get("event_id"),
+            "title": item.get("title"),
+            "event_type": item.get("event_type"),
+            "scheduled_at": item.get("scheduled_at"),
+            "period": item.get("period"),
+            "lifecycle_status": item.get("lifecycle_status"),
+            "verification_level": item.get("verification_level"),
+            "source": item.get("source"),
+            "source_rank": item.get("source_rank"),
+            "source_reference": item.get("source_reference"),
+            "conflict_status": item.get("conflict_status"),
+            "conflict_dates": list(item.get("conflict_dates") or []),
+            "policy_eligible": bool(item.get("policy_eligible", False)),
+            "announced_at": item.get("announced_at"),
+            "verified_at": item.get("verified_at"),
+        }
+
+    @staticmethod
+    def _frozen_event_evidence(report: Mapping[str, object]) -> list[dict[str, object]]:
+        atomic = report.get("atomic_evidence_shadow")
+        atomic_map = dict(atomic) if isinstance(atomic, Mapping) else {}
+        result = []
+        for item in atomic_map.get("facts", []) or []:
+            if not isinstance(item, Mapping):
+                continue
+            metric = str(item.get("metric") or "")
+            if (
+                str(item.get("domain") or "") != "event"
+                or str(item.get("dimension") or "") != "corporate_event"
+                or not metric.startswith("event.upcoming.earnings_report.")
+            ):
+                continue
+            result.append({
+                "evidence_id": item.get("source_evidence_id") or metric,
+                "metric": metric,
+                "scheduled_at": item.get("value") or item.get("period_end"),
+                "source_name": item.get("source_name"),
+                "source_reference": item.get("source_reference"),
+                "freshness_status": item.get("freshness_status"),
+                "polarity": item.get("polarity"),
+                "confidence": item.get("confidence"),
+            })
+        return result
 
     @staticmethod
     def _formal_action(report: Mapping[str, object] | None) -> str | None:
