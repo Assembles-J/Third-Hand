@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import importlib.util
 import sys
+import time
 from pathlib import Path
 
 from app import decision_config as config
@@ -25,18 +26,70 @@ _spec.loader.exec_module(_suite)
 setup_function = _suite.setup_function
 
 _REPLACED = {
-    "test_decision_shadow_endpoint_persists_policy_candidates_without_legacy_recommendations",
+    "test_decision_shadow_endpoint_persists_policy_candidates_without_replacing_recommendations",
     "test_derived_refresh_uses_sufficient_local_history_without_remote_fetch",
     "test_paper_run_persists_run_stages_and_symbol_terminal_state",
     "test_paper_run_records_skipped_data_unavailable_when_history_missing",
-    "test_recommendation_evaluation_uses_only_future_bars_and_marks_legacy_or_untriggered_records",
+    "test_symbol_lookup_returns_candidates",
+    "test_symbol_lookup_post_resolves_names_without_query_params",
 }
 for _name, _value in vars(_suite).items():
     if _name.startswith("test_") and callable(_value) and _name not in _REPLACED:
         globals()[_name] = _value
 
 
-def test_decision_shadow_endpoint_persists_policy_candidates_without_legacy_recommendations():
+def _poll_symbol_lookup(request_call, expected_symbol: str):
+    deadline = time.monotonic() + 2
+    latest = request_call()
+    assert latest.status_code == 200
+    while time.monotonic() < deadline:
+        payload = latest.json()[0]
+        if payload["matches"]:
+            return latest
+        assert payload["lookup_status"] in {"pending", "refreshing"}
+        time.sleep(0.02)
+        latest = request_call()
+        assert latest.status_code == 200
+    payload = latest.json()[0]
+    assert payload["matches"], f"symbol {expected_symbol} was not cached before polling deadline: {payload}"
+    return latest
+
+
+def test_symbol_lookup_returns_candidates(monkeypatch):
+    monkeypatch.setattr(_suite.market_data, "lookup_symbols", lambda names: [{
+        "query": names[0],
+        "matches": [{"symbol": "01810", "name": "小米集团-W", "market": "HK", "currency": "HKD", "match_type": "exact"}],
+        "lookup_status": "matched",
+        "lookup_message": "找到 1 个候选代码。",
+    }])
+
+    response = _poll_symbol_lookup(
+        lambda: _suite.client.get("/v1/market/symbols", params=[("names", "小米集团-W")]),
+        "01810",
+    )
+
+    assert response.json()[0]["matches"][0]["symbol"] == "01810"
+    assert response.json()[0]["lookup_status"] == "matched"
+
+
+def test_symbol_lookup_post_resolves_names_without_query_params(monkeypatch):
+    monkeypatch.setattr(_suite.market_data, "lookup_symbols", lambda names: [{
+        "query": names[0],
+        "matches": [{"symbol": "600519", "name": "贵州茅台", "market": "CN", "currency": "CNY", "match_type": "exact"}],
+        "lookup_status": "matched",
+        "lookup_message": "找到 1 个候选代码。",
+    }])
+
+    response = _poll_symbol_lookup(
+        lambda: _suite.client.post("/v1/market/symbols/resolve", json={"names": ["贵州茅台"]}),
+        "600519",
+    )
+
+    assert response.json()[0]["matches"][0]["symbol"] == "600519"
+    assert response.json()[0]["lookup_status"] == "matched"
+
+
+def test_decision_shadow_endpoint_persists_policy_candidates_without_replacing_recommendations():
     _suite.client.post("/v1/holdings", json={"symbol": "600519", "name": "test", "quantity": 100, "average_cost": 10})
     _suite.store.save_quotes([{
         "symbol": "600519", "price": 12, "currency": "CNY", "source": "test",
@@ -61,6 +114,7 @@ def test_decision_shadow_endpoint_persists_policy_candidates_without_legacy_reco
     assert response.json()["sizing"] is None
     assert response.json()["policy_version"] == config.ACTION_POLICY_VERSION
     assert _suite.store.shadow_reports("600519")[0]["shadow_id"] == response.json()["shadow_id"]
+    assert _suite.client.get("/v1/research-recommendations").json() == []
 
 
 def test_derived_refresh_uses_sufficient_local_history_without_remote_fetch(monkeypatch):
