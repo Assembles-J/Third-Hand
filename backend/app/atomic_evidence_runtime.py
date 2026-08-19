@@ -23,8 +23,14 @@ def install(m) -> None:
             base_builder=current,
         )
 
-    current_aggregator = m.decision_orchestrator.research_aggregator
-    if not isinstance(current_aggregator, IntradayAuthoritySafeResearchAggregator):
+    # Compatibility/unit-test assemblies may expose only the Atomic Evidence
+    # builder. Do not manufacture a second aggregator in that case; wrap the
+    # real deterministic aggregator only when the orchestrator actually owns it.
+    current_aggregator = getattr(m.decision_orchestrator, "research_aggregator", None)
+    if current_aggregator is not None and not isinstance(
+        current_aggregator,
+        IntradayAuthoritySafeResearchAggregator,
+    ):
         m.decision_orchestrator.research_aggregator = IntradayAuthoritySafeResearchAggregator(
             current_aggregator,
         )
