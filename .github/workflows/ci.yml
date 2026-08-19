@@ -83,7 +83,10 @@ jobs:
       - uses: gradle/actions/setup-gradle@v4
       - run: printf 'sdk.dir=%s\n' "$ANDROID_HOME" > local.properties
       - run: chmod +x gradlew
-      - run: ./gradlew --no-daemon :app:assembleDebug :app:assembleRelease
+      # Keep debug and release Kotlin compilation in separate JVM lifetimes so
+      # the hosted runner does not OOM when both Compose variants overlap.
+      - run: ./gradlew --no-daemon :app:assembleDebug
+      - run: ./gradlew --no-daemon :app:assembleRelease
       - name: Verify optimized release APK
         shell: bash
         run: |
