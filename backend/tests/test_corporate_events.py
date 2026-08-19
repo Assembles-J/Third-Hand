@@ -19,6 +19,14 @@ class FakeCalendar:
         return ["2026-08-17", "2026-08-18", "2026-08-19"]
 
 
+class RollingCalendar:
+    def session_dates(self, market, start, _end):
+        assert market == "HK"
+        if start <= "2026-08-17":
+            return ["2026-08-17", "2026-08-18", "2026-08-19"]
+        return ["2026-08-19", "2026-08-20", "2026-08-21"]
+
+
 class EventStore:
     def __init__(self):
         self.values = {}
@@ -74,8 +82,108 @@ def test_corporate_event_service_normalizes_hk_earnings_and_reuses_daily_cache()
     assert event["impact"] == "neutral"
     assert event["evidence_polarity"] == "NEUTRAL_MATERIAL"
     assert event["verification_level"] == "secondary_calendar"
+    assert event["source_rank"] == 30
+    assert event["lifecycle_status"] == "SCHEDULED"
     assert event["policy_eligible"] is True
     assert store.values["corporate_events:01810"]["events"][0]["event_id"] == event["event_id"]
+
+
+def test_post_event_refresh_preserves_unresolved_earnings_obligation():
+    calls = []
+
+    def fetcher(date_text):
+        calls.append(date_text)
+        if date_text == "20260818":
+            return [{
+                "股票代码": "1810",
+                "交易所": "HK",
+                "股票简称": "小米集团-W",
+                "财报期": "2026年中报",
+            }]
+        return []
+
+    store = EventStore()
+    service = CorporateEventService(fetcher=fetcher, calendar=RollingCalendar())
+    before = service.refresh(
+        store,
+        ["01810"],
+        now=datetime(2026, 8, 17, 16, 0, tzinfo=HK_TZ),
+    )["01810"]
+    event_id = before["events"][0]["event_id"]
+
+    after = service.refresh(
+        store,
+        ["01810"],
+        now=datetime(2026, 8, 19, 10, 0, tzinfo=HK_TZ),
+    )["01810"]
+
+    assert after["window_dates"] == ["2026-08-19", "2026-08-20", "2026-08-21"]
+    assert len(after["events"]) == 1
+    event = after["events"][0]
+    assert event["event_id"] == event_id
+    assert event["scheduled_at"] == "2026-08-18"
+    assert event["lifecycle_status"] == "RELEASE_EXPECTED"
+
+    # Compatibility projection keeps an unresolved expected report visible to
+    # frozen Evidence/currentness even though its date is now in the past.
+    context_event = DecisionContextBuilder(store)._events("01810", "HK")[0]
+    evidence = EvidenceEngine._events(SimpleNamespace(events=(context_event,)))
+    assert context_event.lifecycle == "upcoming"
+    assert evidence[0].evidence_id == f"event.upcoming.earnings_report.{event_id}"
+    assert evidence[0].value == "2026-08-18"
+
+
+def test_official_event_source_outranks_secondary_and_keeps_conflict_auditable():
+    def secondary_fetcher(date_text):
+        if date_text == "20260819":
+            return [{
+                "股票代码": "1810",
+                "交易所": "HK",
+                "股票简称": "小米集团-W",
+                "财报期": "2026年中报",
+            }]
+        return []
+
+    official_calls = []
+
+    def official_fetcher(*, symbol, market, now):
+        official_calls.append((symbol, market, now.date().isoformat()))
+        return [{
+            "symbol": "01810",
+            "market": "HK",
+            "name": "小米集团-W",
+            "period": "2026年中报",
+            "scheduled_date": "2026-08-18",
+            "source": "HKEX",
+            "source_reference": "https://www1.hkexnews.hk/fixture",
+            "verification_level": "official",
+            "parser_version": "hkex-fixture-v1",
+        }]
+
+    store = EventStore()
+    service = CorporateEventService(
+        fetcher=secondary_fetcher,
+        official_fetcher=official_fetcher,
+        calendar=FakeCalendar(),
+    )
+    now = datetime(2026, 8, 17, 16, 0, tzinfo=HK_TZ)
+
+    first = service.refresh(store, ["01810"], now=now)["01810"]
+    second = service.refresh(store, ["01810"], now=now)["01810"]
+
+    assert official_calls == [("01810", "HK", "2026-08-17")]
+    assert second == first
+    assert len(first["events"]) == 1
+    event = first["events"][0]
+    assert event["source"] == "HKEX"
+    assert event["verification_level"] == "official"
+    assert event["source_rank"] == 10
+    assert event["scheduled_at"] == "2026-08-18"
+    assert event["conflict_status"] == "CONFLICTED"
+    assert event["conflict_dates"] == ["2026-08-18", "2026-08-19"]
+    assert set(event["conflict_sources"]) == {"HKEX", "Baidu 股市通财报日历 via AKShare"}
+    assert first["official_source_status"] == "ready"
+    assert any(item["lifecycle_status"] == "SUPERSEDED" for item in first["event_history"])
 
 
 def test_next_session_earnings_blocks_new_risk_but_later_event_does_not():
@@ -99,7 +207,7 @@ def test_next_session_earnings_blocks_new_risk_but_later_event_does_not():
     )
     assert pre_event_policy_blockers((far,), market="HK", analysis_at=analysis_at, calendar=FakeCalendar()) == ()
     assert config.PRE_EVENT_BLOCK_SESSIONS == 1
-    assert config.audit_version_snapshot()["corporate_event_policy_version"] == "corporate-event-v1-pre-earnings-gate"
+    assert config.audit_version_snapshot()["corporate_event_policy_version"] == "corporate-event-v2-persistent-lifecycle"
 
 
 def test_event_policy_blocker_changes_open_add_gates_not_data_quality_or_defensive_gates():
