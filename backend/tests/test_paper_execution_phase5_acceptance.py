@@ -1,7 +1,7 @@
 """Phase 5 paper-execution acceptance matrix.
 
 These tests exercise the persisted ledger/precheck contracts that the deployed
-paper runtime composes.  They intentionally use isolated SQLite state and never
+paper runtime composes. They intentionally use isolated SQLite state and never
 call remote providers or production accounts.
 """
 from __future__ import annotations
@@ -94,7 +94,11 @@ def test_same_day_buy_exit_creates_one_durable_t1_deferral_without_sell_fill(tmp
         next_eligible_at=position["next_eligible_sell_at"],
     )
 
-    assert first["deferral_id"] == second["deferral_id"]
+    # The public return contract is decision-centric rather than exposing an
+    # implementation-specific deferral primary key. Repeating the same decision
+    # must converge to one active persisted obligation.
+    assert first["decision_id"] == "exit-decision"
+    assert second["decision_id"] == "exit-decision"
     active = store.paper_execution_deferrals(symbol="600000", state="active")
     assert len(active) == 1
     assert active[0]["decision_id"] == "exit-decision"
@@ -147,10 +151,13 @@ def test_mixed_settled_and_same_day_inventory_exposes_partial_sellability_and_fi
     assert after["quantity"] == 100
     assert after["sellable_quantity"] == 0
     assert after["locked_quantity"] == 100
+    # Closed lots remain in the audit ledger. The first settled FIFO lot is
+    # closed; today's lot remains the only live, T+1-locked inventory.
     remaining_lots = store.paper_position_lots("600000")
-    assert len(remaining_lots) == 1
-    assert remaining_lots[0]["quantity"] == 100
-    assert remaining_lots[0]["settlement_state"] == "PENDING_T1"
+    assert len(remaining_lots) == 2
+    assert remaining_lots[0]["settlement_state"] == "CLOSED"
+    assert remaining_lots[1]["quantity"] == 100
+    assert remaining_lots[1]["settlement_state"] == "PENDING_T1"
 
 
 def test_next_session_requires_fresh_later_quote_instead_of_blindly_executing_old_deferral(tmp_path: Path, monkeypatch) -> None:
