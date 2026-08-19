@@ -27,6 +27,26 @@ jobs:
             android:
               - 'android/**'
 
+  documentation-governance:
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Save PR body
+        shell: bash
+        env:
+          PR_BODY: ${{ github.event.pull_request.body }}
+        run: printf '%s\n' "$PR_BODY" > "$RUNNER_TEMP/pr-body.md"
+      - name: Verify documentation synchronization
+        shell: bash
+        env:
+          GOV_BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          GOV_HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+          GOV_PR_BODY_FILE: ${{ runner.temp }}/pr-body.md
+        run: python .github/scripts/check_documentation_sync.py
+
   backend:
     needs: changes
     if: needs.changes.outputs.backend == 'true'
@@ -75,7 +95,7 @@ jobs:
           test -z "$foreign_abis" || { echo "Unexpected release ABIs: $foreign_abis"; exit 1; }
 
   ci-gate:
-    needs: [changes, backend, android]
+    needs: [changes, documentation-governance, backend, android]
     if: always()
     runs-on: ubuntu-latest
     steps:
@@ -83,7 +103,10 @@ jobs:
         shell: bash
         run: |
           set -eu
-          for result in '${{ needs.backend.result }}' '${{ needs.android.result }}'; do
+          for result in \
+            '${{ needs.documentation-governance.result }}' \
+            '${{ needs.backend.result }}' \
+            '${{ needs.android.result }}'; do
             case "$result" in
               success|skipped) ;;
               *) exit 1 ;;
