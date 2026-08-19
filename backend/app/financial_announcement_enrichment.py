@@ -7,12 +7,11 @@ changes a financial value, polarity, or trading authority.
 """
 from __future__ import annotations
 
-from datetime import date
-
 from app.domain.research.data_gateway import canonical_hash
 
 
-FINANCIAL_DOMAINS = frozenset({"fundamentals"})
+FINANCIAL_DOMAINS = frozenset({"fundamental"})
+FINANCIAL_DIMENSIONS = frozenset({"fundamental_company"})
 
 
 def _report_type_from_event_period(value: object) -> str | None:
@@ -51,6 +50,7 @@ class FinancialAnnouncementEnricher:
         for fact in facts:
             if (
                 fact.domain not in FINANCIAL_DOMAINS
+                or fact.dimension not in FINANCIAL_DIMENSIONS
                 or fact.announced_at
                 or not fact.period_end
             ):
@@ -88,10 +88,7 @@ class FinancialAnnouncementEnricher:
             and str(item.get("verification_level") or "") == "official"
             and item.get("announced_at")
         ]
-        candidates.sort(
-            key=lambda item: (str(item.get("announced_at") or ""), int(item.get("source_rank") or 999)),
-            reverse=True,
-        )
+        candidates.sort(key=lambda item: str(item.get("announced_at") or ""), reverse=True)
         return candidates
 
     @staticmethod
@@ -105,12 +102,10 @@ class FinancialAnnouncementEnricher:
                 continue
             if fact_type and event_type and fact_type != event_type:
                 continue
-            # Require at least report-type or year agreement. A generic event
-            # with no period semantics must not stamp unrelated historical rows.
-            if fact_type and event_type:
+            # Require an explicit report-type match. A merely matching calendar
+            # year must not stamp an unrelated annual/interim observation.
+            if fact_type and event_type and fact_type == event_type:
                 return event
-            if fact_year is not None and event_year == fact_year and event_type is None:
-                continue
         return None
 
 
