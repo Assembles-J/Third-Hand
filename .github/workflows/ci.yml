@@ -101,6 +101,12 @@ jobs:
       # Keep debug and release Kotlin compilation in separate JVM lifetimes so
       # the hosted runner does not OOM when both Compose variants overlap.
       - run: ./gradlew --no-daemon :app:assembleDebug
+      - name: Upload device-acceptance debug APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: third-hand-device-acceptance-apk
+          path: android/app/build/outputs/apk/debug/app-debug.apk
+          if-no-files-found: error
       - run: ./gradlew --no-daemon :app:assembleRelease
       - name: Verify optimized release APK
         shell: bash
