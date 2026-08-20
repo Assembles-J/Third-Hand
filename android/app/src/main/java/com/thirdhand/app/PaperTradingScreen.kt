@@ -19,8 +19,6 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.KeyboardArrowRight
 import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material.icons.filled.Refresh
-import androidx.compose.material.icons.filled.TrendingDown
-import androidx.compose.material.icons.filled.TrendingUp
 import androidx.compose.material3.Button
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Card
@@ -48,7 +46,6 @@ import androidx.compose.ui.unit.dp
 import com.thirdhand.app.ui.components.TradingPageHeader
 import com.thirdhand.app.ui.components.TradingRowDivider
 import com.thirdhand.app.ui.components.TradingSection
-import com.thirdhand.app.ui.theme.marketColors
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import java.time.OffsetDateTime
@@ -62,6 +59,8 @@ fun PaperTradingScreen(onOpenDetail: (ResearchTargetDto) -> Unit) {
     val api = remember(context) { ApiClient.service(context) }
     val scope = rememberCoroutineScope()
     var dashboard by remember { mutableStateOf<PaperTradingDashboardDto?>(null) }
+    var positionPresentation by remember { mutableStateOf(PaperPositionPresentation()) }
+    var openedPositionTarget by remember { mutableStateOf<ResearchTargetDto?>(null) }
     var refreshing by remember { mutableStateOf(false) }
     var runningNow by remember { mutableStateOf(false) }
     var message by remember { mutableStateOf<String?>(null) }
@@ -79,12 +78,26 @@ fun PaperTradingScreen(onOpenDetail: (ResearchTargetDto) -> Unit) {
     var decisionLineage by remember { mutableStateOf<DecisionLineageDto?>(null) }
     var decisionLoading by remember { mutableStateOf(false) }
     var decisionError by remember { mutableStateOf<String?>(null) }
+
+    val positionTarget = openedPositionTarget
+    if (positionTarget != null) {
+        PositionDetailRoute(
+            target = positionTarget,
+            onBack = { openedPositionTarget = null },
+        )
+        return
+    }
+
     fun refresh() {
         if (refreshing) return
         scope.launch {
             refreshing = true
             runCatching { api.paperTradingDashboard() }
-                .onSuccess { dashboard = it; error = null }
+                .onSuccess { loaded ->
+                    dashboard = loaded
+                    positionPresentation = loadPaperPositionPresentation(api, loaded.account.positions)
+                    error = null
+                }
                 .onFailure { error = "暂时无法读取交易账套：${it.message ?: "请检查服务连接"}" }
             runs = runCatching { api.paperTradingRuns(limit = 20) }.getOrDefault(emptyList())
             refreshing = false
@@ -121,7 +134,7 @@ fun PaperTradingScreen(onOpenDetail: (ResearchTargetDto) -> Unit) {
         contentPadding = PaddingValues(bottom = 28.dp),
     ) {
         item {
-            TradingPageHeader("交易", "交易账套 · 不连接券商 · 所有成交均可追溯") {
+            TradingPageHeader("交易", "模拟账套 · 持仓优先 · 不连接券商") {
                 IconButton(onClick = ::refresh, enabled = !refreshing) {
                     if (refreshing) CircularProgressIndicator(Modifier.size(20.dp), strokeWidth = 2.dp)
                     else Icon(Icons.Filled.Refresh, "刷新交易账套")
@@ -129,7 +142,51 @@ fun PaperTradingScreen(onOpenDetail: (ResearchTargetDto) -> Unit) {
             }
         }
         item {
-            Column(Modifier.padding(horizontal = 20.dp, vertical = 12.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+            Card(
+                modifier = Modifier.padding(horizontal = 16.dp).fillMaxWidth(),
+                colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.primaryContainer),
+            ) {
+                Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Column(Modifier.weight(1f)) {
+                            Text("账套总权益", style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onPrimaryContainer)
+                            Text("¥${account?.total_equity?.money() ?: "--"}", style = MaterialTheme.typography.headlineMedium, fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.onPrimaryContainer)
+                        }
+                        Column(horizontalAlignment = Alignment.End) {
+                            Text("累计收益", style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onPrimaryContainer)
+                            Text(account?.total_return_percent?.let { "${it.signed()}%" } ?: "--", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.onPrimaryContainer)
+                        }
+                    }
+                    TradingRowDivider()
+                    Row {
+                        PaperMetric("可用现金", "¥${account?.available_cash?.money() ?: "--"}", Modifier.weight(1f))
+                        PaperMetric("持仓市值", "¥${account?.market_value?.money() ?: "--"}", Modifier.weight(1f))
+                        PaperMetric("累计盈亏", "¥${account?.total_pnl?.money() ?: "--"}", Modifier.weight(1f))
+                    }
+                    Text("累计净入金 ¥${account?.net_contributions?.money() ?: "--"} · 收益已剔除后续入金与出金", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onPrimaryContainer)
+                }
+            }
+        }
+        item { TradingSection("持仓", "名称与持仓市值固定在左侧，右侧指标可横向滑动") }
+        if (account?.positions.isNullOrEmpty()) item {
+            Text("当前没有持仓。可运行一轮模拟决策，或开启自动执行后等待满足条件的纸面成交。", Modifier.padding(horizontal = 16.dp, vertical = 14.dp), style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+        } else item {
+            PaperPositionsTable(
+                positions = account!!.positions,
+                presentation = positionPresentation,
+                onOpenDetail = { position, name ->
+                    openedPositionTarget = ResearchTargetDto(
+                        symbol = position.symbol,
+                        name = name,
+                        status = "paper_position",
+                        added_at = position.updated_at,
+                    )
+                },
+            )
+        }
+        error?.let { item { Text(it, Modifier.padding(horizontal = 16.dp, vertical = 8.dp), color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.bodySmall) } }
+        item {
+            Column(Modifier.padding(horizontal = 16.dp, vertical = 12.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
                 Button(
                     modifier = Modifier.fillMaxWidth(),
                     enabled = !runningNow,
@@ -155,34 +212,8 @@ fun PaperTradingScreen(onOpenDetail: (ResearchTargetDto) -> Unit) {
             }
         }
         item {
-            Card(
-                modifier = Modifier.padding(horizontal = 20.dp).fillMaxWidth(),
-                colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.primaryContainer),
-            ) {
-                Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                    Row(verticalAlignment = Alignment.CenterVertically) {
-                        Column(Modifier.weight(1f)) {
-                            Text("账套总权益", style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onPrimaryContainer)
-                            Text("¥${account?.total_equity?.money() ?: "--"}", style = MaterialTheme.typography.headlineMedium, fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.onPrimaryContainer)
-                        }
-                        Column(horizontalAlignment = Alignment.End) {
-                            Text("累计收益", style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onPrimaryContainer)
-                            Text(account?.total_return_percent?.let { "${it.signed()}%" } ?: "--", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.onPrimaryContainer)
-                        }
-                    }
-                    TradingRowDivider()
-                    Row {
-                        PaperMetric("可用现金", "¥${account?.available_cash?.money() ?: "--"}", Modifier.weight(1f))
-                        PaperMetric("持仓市值", "¥${account?.market_value?.money() ?: "--"}", Modifier.weight(1f))
-                        PaperMetric("累计盈亏", "¥${account?.total_pnl?.money() ?: "--"}", Modifier.weight(1f))
-                    }
-                    Text("累计净入金 ¥${account?.net_contributions?.money() ?: "--"} · 收益已剔除后续入金与出金", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onPrimaryContainer)
-                }
-            }
-        }
-        item {
             val enabled = status?.enabled == true
-            Column(Modifier.padding(horizontal = 20.dp, vertical = 14.dp), verticalArrangement = Arrangement.spacedBy(5.dp)) {
+            Column(Modifier.padding(horizontal = 16.dp, vertical = 12.dp), verticalArrangement = Arrangement.spacedBy(5.dp)) {
                 Text(if (status?.running == true) "自动执行中" else if (enabled) "自动执行已开启" else "自动执行已关闭", fontWeight = FontWeight.Bold)
                 if (status?.running == true) LinearProgressIndicator(Modifier.fillMaxWidth())
                 Text(
@@ -207,7 +238,7 @@ fun PaperTradingScreen(onOpenDetail: (ResearchTargetDto) -> Unit) {
         }
         item {
             Column(
-                Modifier.fillMaxWidth().clickable { showRunChain = true }.padding(horizontal = 20.dp, vertical = 12.dp),
+                Modifier.fillMaxWidth().clickable { showRunChain = true }.padding(horizontal = 16.dp, vertical = 12.dp),
                 verticalArrangement = Arrangement.spacedBy(4.dp),
             ) {
                 Row(verticalAlignment = Alignment.CenterVertically) {
@@ -228,49 +259,9 @@ fun PaperTradingScreen(onOpenDetail: (ResearchTargetDto) -> Unit) {
             }
             TradingRowDivider()
         }
-        error?.let { item { Text(it, Modifier.padding(horizontal = 20.dp, vertical = 8.dp), color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.bodySmall) } }
-        item { TradingSection("持仓", "成本、现价、可卖/T+1 与盈亏都来自这套独立账本") }
-        item { PaperExecutionSafetyPanel(account?.positions.orEmpty()) }
-        if (account?.positions.isNullOrEmpty()) item {
-            Text("当前没有持仓。可点击“立即运行一轮”，或开启自动执行后等待下一轮决策。", Modifier.padding(horizontal = 20.dp, vertical = 14.dp), style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
-        }
-        items(account?.positions.orEmpty(), key = { it.symbol }) { position ->
-            val isUp = position.unrealized_return_percent >= 0
-            val directionColor = if (isUp) MaterialTheme.marketColors.rise else MaterialTheme.marketColors.fall
-            Column(Modifier.fillMaxWidth().clickable { onOpenDetail(ResearchTargetDto(position.symbol, position.name, "paper_position", position.updated_at)) }.padding(horizontal = 20.dp, vertical = 12.dp)) {
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                    Column(Modifier.weight(1f)) {
-                        Text(position.name.ifBlank { position.symbol }, fontWeight = FontWeight.SemiBold, style = MaterialTheme.typography.titleSmall)
-                        Text(position.symbol, style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                    }
-                    Column(horizontalAlignment = Alignment.End) {
-                        Text("现价 ¥${position.last_price.money()}", fontWeight = FontWeight.SemiBold, style = MaterialTheme.typography.titleMedium)
-                        Row(verticalAlignment = Alignment.CenterVertically) {
-                            Icon(
-                                imageVector = if (isUp) Icons.Filled.TrendingUp else Icons.Filled.TrendingDown,
-                                contentDescription = if (isUp) "上涨" else "下跌",
-                                tint = directionColor,
-                                modifier = Modifier.size(16.dp),
-                            )
-                            Spacer(Modifier.width(3.dp))
-                            Text("${position.unrealized_return_percent.signed()}%", color = directionColor, style = MaterialTheme.typography.labelMedium, fontWeight = FontWeight.SemiBold)
-                        }
-                    }
-                }
-                Row(Modifier.padding(top = 10.dp).fillMaxWidth()) {
-                    PaperPositionMetric("成本", "¥${position.average_cost.money()}", Modifier.weight(1f))
-                    PaperPositionMetric("现价", "¥${position.last_price.money()}", Modifier.weight(1f))
-                    PaperPositionMetric("市值", "¥${position.market_value.money()}", Modifier.weight(1f))
-                    PaperPositionMetric("浮盈", "¥${position.unrealized_pnl.money()}", Modifier.weight(1f), valueColor = directionColor)
-                }
-                Text("持仓 ${position.quantity.clean()} 股 · 可卖 ${position.sellable_quantity?.clean() ?: "未提供"} · T+1锁定 ${position.locked_quantity?.clean() ?: "未提供"}", Modifier.padding(top = 6.dp), style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                position.next_eligible_sell_at?.let { next -> Text("下次可卖/复核 ${paperBeijingTimestamp(next)}", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant) }
-                Spacer(Modifier.height(8.dp)); TradingRowDivider()
-            }
-        }
         item { TradingSection("最近成交", "仅展示最近 6 笔成交；B / S 不会与实际操作混淆") }
         val executedLogs = dashboard?.logs.orEmpty().filter { it.status == "executed" }
-        if (executedLogs.isEmpty()) item { Text("暂时没有成交。被拦截或不满足条件的决策会保存在完整记录中。", Modifier.padding(horizontal = 20.dp, vertical = 14.dp), style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant) }
+        if (executedLogs.isEmpty()) item { Text("暂时没有成交。被拦截或不满足条件的决策会保存在完整记录中。", Modifier.padding(horizontal = 16.dp, vertical = 14.dp), style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant) }
         items(executedLogs.take(6), key = { it.id }) { log -> PaperLogRow(log, onOpenDecision = { selectedDecisionId = log.decision_id }) }
         if (dashboard?.logs.orEmpty().size > 6) item { TextButton(modifier = Modifier.padding(horizontal = 12.dp), onClick = { showAllLogs = true }) { Text("查看全部操作与拦截记录") } }
     }

@@ -636,3 +636,14 @@ Also preserve:
   background provider enrichment with visible progress/retry. This is an
   `OBSERVABLE` reliability fix with no Formal Decision, strategy, risk, sizing,
   or execution authority change; repository CI is the acceptance gate for #75.
+- **#73 device position UX acceptance slice:** Android Trading now places paper
+  holdings directly below account equity, keeps security name/current market
+  value/code fixed in the left column, and makes the remaining position metrics
+  horizontally scrollable. The primary holding-detail surface is data-first
+  (price, value, P/L, quantity, cost, holding days, sellability/T+1, K-line and
+  executed paper fills); Formal Decision/What Changed/review timing and real AI
+  Research live behind the top-right secondary entry. Symbol-as-name fallback is
+  rejected, and display refresh performs a bounded post-refresh cache reread.
+  This slice is `ANDROID_VISIBLE / OBSERVABLE`; device acceptance under #62/#73
+  remains open, and no Formal Decision, Strategy, Risk, sizing, T+1 or Paper
+  Broker authority changes are introduced.
