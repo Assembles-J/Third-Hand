@@ -687,7 +687,14 @@ Also preserve:
   position and Discovery changes cannot retroactively alter Evaluation samples.
   No Formal Action, quote freshness, Watchlist storage, Risk, sizing,
   ExecutionPrecheck or Paper Broker authority changes are introduced.
-- N3 as a product is **not complete**. Outcome contracts/resolution, aggregate
+- **N3.2 Outcome contracts:** `BACKEND_READY` for immutable DecisionOutcome,
+  ExecutionOutcome and TradeEpisodeOutcome plus versioned OutcomePolicy /
+  ActionOutcomePolicy. `PENDING / RESOLVED / INSUFFICIENT_DATA / INVALID` are
+  explicit, and BUY/WAIT/HOLD/ADD/REDUCE/EXIT/BLOCKED are evaluated by
+  action-specific semantics rather than BUY-only rules. The initial SWING_V1
+  observation windows remain 3/5/10/20 trading sessions; no target/stop
+  thresholds are invented.
+- N3 as a product is **not complete**. Outcome resolution, aggregate
   StrategyEvaluation, benchmark, Lab API, Android Lab and end-to-end acceptance
   remain subsequent stacked slices.
 
