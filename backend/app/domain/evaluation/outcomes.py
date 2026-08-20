@@ -41,7 +41,7 @@ class DecisionOutcome(EvaluationContract):
     market: str
     action: FormalDecisionAction
     decision_time: datetime
-    reference_price: Decimal = Field(gt=0)
+    reference_price: Decimal | None = Field(default=None, gt=0)
 
     horizon_sessions: int = Field(ge=1)
     observation_end: datetime
@@ -131,6 +131,8 @@ class DecisionOutcome(EvaluationContract):
         }
 
         if self.outcome_status == OutcomeStatus.PENDING:
+            if self.reference_price is None:
+                raise ValueError("PENDING decision outcomes require reference_price")
             if any(value is not None for value in score_fields):
                 raise ValueError("PENDING decision outcomes must not carry resolved metrics")
             if self.resolved_at is not None or self.source_lineage_hash is not None:
@@ -141,6 +143,8 @@ class DecisionOutcome(EvaluationContract):
             raise ValueError("terminal decision outcomes require resolved_at and source_lineage_hash")
 
         if self.outcome_status == OutcomeStatus.RESOLVED:
+            if self.reference_price is None:
+                raise ValueError("RESOLVED decision outcomes require reference_price")
             required = {
                 "forward_return": self.forward_return,
                 "mfe": self.mfe,

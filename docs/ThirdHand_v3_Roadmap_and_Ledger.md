@@ -694,7 +694,12 @@ Also preserve:
   action-specific semantics rather than BUY-only rules. The initial SWING_V1
   observation windows remain 3/5/10/20 trading sessions; no target/stop
   thresholds are invented.
-- N3 as a product is **not complete**. Outcome resolution, aggregate
-  StrategyEvaluation, benchmark, Lab API, Android Lab and end-to-end acceptance
-  remain subsequent stacked slices.
+- **N3.3 OutcomeResolver:** `BACKEND_READY` for deterministic local-only
+  resolution of 3/5/10/20-session DecisionOutcome metrics, execution attribution
+  and closed TradeEpisode economics. Resolution now first validates the source
+  `(market, symbol)` against the immutable ExperimentUniverseSnapshot and binds
+  its hash into outcome lineage; a later PUX Watchlist/position/Discovery change
+  cannot expand an existing experiment. The resolver performs no provider refresh.
+- N3 as a product is **not complete**. Aggregate StrategyEvaluation, benchmark,
+  Lab API, Android Lab and end-to-end acceptance remain subsequent stacked slices.
 
