@@ -12,12 +12,13 @@ acceptance tests. If a README, code comment, UI label, or deployment variable
 conflicts with these two documents, these two documents win and the conflicting
 text must be corrected in the same change.
 
-`ThirdHand_v3_Strategy_AI_Lab_Design.md` and
-`ThirdHand_v3_Fullstack_Technical_Roadmap.md` are approved subordinate design
-specifications for the next v3 delivery stages. They may add implementation
-clarity, but they may not override the authority, safety or status contracts in
-this document and the paired ledger. Stable decisions from those documents are
-promoted here before runtime authority changes are accepted.
+`ThirdHand_v3_Strategy_AI_Lab_Design.md`,
+`ThirdHand_v3_Fullstack_Technical_Roadmap.md`, and
+`ThirdHand_v3_Personal_Universe_Review_Watchlist_UX_Design.md` are approved
+subordinate design specifications for the next v3 delivery stages. They may add
+implementation clarity, but they may not override the authority, safety or
+status contracts in this document and the paired ledger. Stable decisions from
+those documents are promoted here before runtime authority changes are accepted.
 
 The current repository already has strong production invariants around DataHub quality, provider lineage, DecisionPackage hashing, AI isolation, and unified freeze. v3 extends those mechanisms; it does not replace them with a parallel stack.
 
@@ -32,6 +33,7 @@ The current repository already has strong production invariants around DataHub q
 | Decision continuity | Complete | Prior decision, entry-bound position episode, full-input audit change, versioned material fingerprint, cooldown/review fields and position age are persisted. Only a strategic fingerprint transition or a hard gate/position-state transition may replace the prior formal action. Approved timeframe states participate in the material fingerprint while raw timestamp/hash noise does not. ExecutionPrecheck rejects fills before `cooldown_until`; the deterministic runtime promotes `review_after` into a separately audited decision-refresh obligation. |
 | Model policy and audit | Complete for configured-provider bounded recovery; live provider acceptance remains open | Atomic prompt projection, Flash/Pro routing, schema/semantic checks, hashes, usage and retry traces are persisted. The finite recovery graph is Flash -> Pro thinking -> Pro non-thinking structured. A generic multi-provider capability registry and a provider-specific maximum-reasoning capability tier are deliberately not implemented. |
 | Feedback | Complete as an audit dataset | Frozen decision/execution lineage, actual-vs-hypothetical outcomes and read-only policy-version export exist; there is no automatic tuning. Strategy Evaluation and AI calibration are the next explicit consumers of this audit foundation. |
+| Personal universe / review cadence | Designed; implementation pending | Positions and existing Watchlist data become the primary daily-use universe; Discovery is optional and bounded. Universe membership, review permission, analysis depth and trading authority are separate policy owners. |
 
 The current formal action path is:
 
@@ -53,6 +55,15 @@ direct sizing or execution authority. `ResearchAssessment` has one explicit,
 bounded authority: sufficiently evidenced ADVERSE research can veto a new
 BUY/ADD risk. It cannot upgrade an action, create REDUCE/EXIT, or bypass a hard
 gate; AI has no formal action path.
+
+The daily product scope is governed separately from this formal action chain:
+
+```text
+PersonalUniversePolicy -> ReviewPolicy -> AnalysisDepthPolicy -> Formal Decision
+```
+
+The first three layers decide who deserves attention, whether a review is due,
+and how much research may run. They do not grant BUY/ADD/REDUCE/EXIT authority.
 
 ## 0.2 Production verification record and current execution gap
 
@@ -86,6 +97,9 @@ Keep and build on:
 - one analysis authority time (`analysis_started_at`).
 - versioned multi-timeframe authority that is asymmetric toward new risk.
 - DecisionContinuity that excludes raw refresh noise from material-change permission.
+- all open positions remain in the personal risk-monitoring universe regardless of watchlist/discovery limits.
+- Personal Watchlist membership is user-owned attention metadata, not trading authority.
+- Experiment/Evaluation universe membership remains frozen and independent from mutable Personal Watchlist state.
 
 ## 2. Target architecture
 
@@ -168,6 +182,26 @@ Raw Providers
 The next v3 extension adds `StrategyProfile` above policy composition and adds a
 parallel AI Strategy Lab that consumes frozen Evidence but cannot mutate the
 Formal Decision System. Section 12 defines that boundary.
+
+The personal-workflow orchestration that decides whether the formal chain should
+run is deliberately outside formal action authority:
+
+```text
+Portfolio + Watchlist + optional Discovery
+                  |
+                  v
+        PersonalUniversePolicy
+                  |
+                  v
+             ReviewPolicy
+                  |
+                  v
+        AnalysisDepthPolicy
+                  |
+          only when authorized
+                  v
+        Formal Decision System
+```
 
 ## 3. Authority boundaries
 
@@ -513,7 +547,7 @@ paper_execution_deferrals(
   max_executable_quantity REAL NOT NULL,
   reason_code TEXT NOT NULL,
   next_eligible_at TEXT NOT NULL,
-  state TEXT NOT NULL,              -- active | released | superseded | cancelled
+  state TEXT NOT NULL,
   created_at TEXT NOT NULL,
   resolved_at TEXT NULL,
   detail TEXT NOT NULL
@@ -653,6 +687,10 @@ write path back into ActionPolicy.
 15. Letting an AI Strategy Lab agent write the paper ledger directly or bypass RiskPolicy/ExecutionPrecheck/Paper Broker.
 16. Automatically promoting LAB performance into Formal ActionPolicy authority.
 17. Marking a user-facing capability `PRODUCT_DONE` when only backend/domain code exists and the required API/Android observability surface is absent.
+18. Treating mutable Personal Watchlist membership as an Experiment/Evaluation universe.
+19. Treating scheduler wake-up as permission to rerun full research.
+20. Dropping an open position from monitoring because a watchlist/discovery limit was reached.
+21. Treating Discovery membership as BUY permission or automatically promoting Discovery into Watchlist.
 
 ## 12. StrategyProfile architecture
 
@@ -749,9 +787,12 @@ Every AI probability must bind to a testable `ForecastContract`, for example a
 not an evaluation contract.
 
 Each experiment has an isolated ledger and immutable identity including model,
-prompt, Evidence schema, StrategyProfile, UniversePolicy, RiskPolicy,
-SizingPolicy and execution-policy versions. A material version change starts a
-new experiment result set rather than silently pooling history.
+prompt, Evidence schema, StrategyProfile, ExperimentUniversePolicy, RiskPolicy,
+SizingPolicy and execution-policy versions. Personal Watchlist membership is not
+an experiment input unless an experiment definition explicitly freezes a
+versioned copy as its declared sample universe; no silent linkage is allowed.
+A material version change starts a new experiment result set rather than
+silently pooling history.
 
 Historical replay must be point-in-time correct. Live forward paper trading is
 the preferred reliability evidence because the agent cannot observe future data.
@@ -838,9 +879,77 @@ The next-stage full-stack sequence is governed by
 `ThirdHand_v3_Fullstack_Technical_Roadmap.md`. The core visible surfaces are:
 
 - Decision Workspace: Formal Decision, SWING_V1, timeframe authority, company/event state, risk/T+1, AI research, later AI Lab opinion, What Changed;
+- Watchlist: positions + user-selected symbols as the primary personal research universe, with review state and optional Discovery;
 - Lab: experiment state, PnL, benchmark, drawdown, sample quality and calibration;
 - Review: good/bad entries/exits, missed opportunities, over/under-confidence, regime/data/execution failures;
 - Home: only the day's material changes, review obligations, risk changes, events and Formal-vs-AI disagreements.
 
 The Android and backend codebases should be modularized incrementally around
 these vertical slices rather than through a big-bang rewrite.
+
+## 16. Personal Universe and Review authority
+
+The daily-use research scope is explicitly different from the Evaluation
+experiment universe.
+
+### PersonalUniversePolicy
+
+The personal universe is composed from:
+
+```text
+Portfolio + Watchlist + optional Discovery
+```
+
+Rules:
+
+1. Every open position is always included for risk monitoring.
+2. Watchlist is durable user-owned attention state and may carry priority/note
+   metadata. It never grants BUY/ADD permission.
+3. Discovery is optional, bounded and disabled by default. A zero-slot setting is
+   valid. Discovery remains research-only until explicit user promotion.
+4. Personal Watchlist membership must not silently mutate an ExperimentUniverse.
+5. Existing deterministic candidate rotation may remain for experiments and may
+   be reused as a Discovery mechanism, but it is not the user's primary daily
+   research universe.
+
+### ReviewPolicy
+
+Scheduler cadence and analysis permission are different concepts. The governed
+review modes are:
+
+```text
+NO_REVIEW
+GUARD_ONLY
+POSITION_REVIEW
+FULL_RESEARCH
+```
+
+`GUARD_ONLY` is deterministic, cheap monitoring for hard invalidation,
+CorporateEvent change, safety-relevant data-quality change, risk transition and
+execution/T+1 obligations. It does not imply a full AI/company-research call.
+
+For `SWING_V1`, a position at target/capped exposure with no strategic
+MaterialChange remains `GUARD_ONLY` during the session. Routine full research is
+budgeted to at most once per symbol per trading day; material events or explicit
+user requests may override the routine budget only with an audited reason.
+
+The authority split is canonical:
+
+```text
+UniversePolicy      -> who deserves attention
+ReviewPolicy        -> whether a review is due
+AnalysisDepthPolicy -> how deep research may run
+ActionPolicy        -> whether a trading action is permitted
+```
+
+### Android/product requirement
+
+Watchlist is a first-class user-facing surface, not an admin-only or buried
+backend feature. The first implementation slice must expose add/edit/delete,
+priority and current review status from Android and must include loading, empty,
+stale/degraded and error states. Discovery on/off, slot count and cadence must
+also be user-configurable when the Discovery slice ships.
+
+The detailed API, Android information architecture and dense trading-utility UI
+contract are defined in
+`ThirdHand_v3_Personal_Universe_Review_Watchlist_UX_Design.md`.
