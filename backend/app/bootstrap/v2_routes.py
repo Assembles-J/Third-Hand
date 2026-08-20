@@ -18,10 +18,12 @@ from app.application_services.company.akshare_provider import CompanyAkshareProv
 from app.application_services.company.provider_registry import CompanyDataProviderRegistry
 from app.application_services.company.service import CompanyIntelligenceService
 from app.application_services.decision.workspace import DecisionWorkspaceService
+from app.application_services.market.symbol_search_service import SymbolSearchService
 from app.application_services.research.data_gateway import ResearchDataGateway
 from app.infrastructure.database.candidate_repository import CandidateRepository
 from app.infrastructure.database.company_intelligence_repository import CompanyIntelligenceRepository
 from app.infrastructure.database.research_data_repository import ResearchDataRepository
+from app.infrastructure.database.symbol_search_repository import SymbolSearchRepository
 
 
 def register_v2_routes(application) -> None:
@@ -34,6 +36,28 @@ def register_v2_routes(application) -> None:
         repository = CandidateRepository(application.store)
         application.candidate_repository_v2 = repository
         application.candidate_service_v2 = CandidateService(repository)
+
+    if not hasattr(application, "symbol_search_service_v2"):
+        symbol_repository = SymbolSearchRepository(application.store)
+        symbol_service = SymbolSearchService(
+            repository=symbol_repository,
+            market_data=application.market_data,
+            logger=application.logger,
+        )
+        application.symbol_search_repository_v2 = symbol_repository
+        application.symbol_search_service_v2 = symbol_service
+
+        # Keep the existing GET/POST symbol lookup routes and DTOs stable while
+        # replacing their blocking module-global implementation. The legacy
+        # route resolves this function at request time, so no duplicate route is
+        # needed and Android/OCR callers remain backward compatible.
+        def resolve_market_symbols_cached(names):
+            return [
+                application.SymbolLookupResult.model_validate(item)
+                for item in symbol_service.search_many(names)
+            ]
+
+        application.resolve_market_symbols = resolve_market_symbols_cached
 
     if not hasattr(application, "company_intelligence_service_v2"):
         company_repository = CompanyIntelligenceRepository(application.store)

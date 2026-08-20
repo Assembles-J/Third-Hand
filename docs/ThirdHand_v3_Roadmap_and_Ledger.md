@@ -630,3 +630,9 @@ Also preserve:
   ad-hoc mutable route-state gap; N2 remains **not `PRODUCT_DONE`** until focused
   screenshot/preview state coverage and device/emulator visual acceptance are
   completed under #62.
+- **#75 cache-first symbol search timeout remediation:** existing local security
+  identities now resolve through a v2 cache-first search service; Android stops
+  remote completion when local matches exist, and true cache misses use bounded
+  background provider enrichment with visible progress/retry. This is an
+  `OBSERVABLE` reliability fix with no Formal Decision, strategy, risk, sizing,
+  or execution authority change; repository CI is the acceptance gate for #75.
