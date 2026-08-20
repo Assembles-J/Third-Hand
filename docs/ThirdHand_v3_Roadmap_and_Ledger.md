@@ -1,10 +1,12 @@
 # ThirdHand v3 Redesign Ledger and Roadmap
 
-> **Canonical status (2026-08-19):** This is the active implementation ledger.
+> **Canonical status (2026-08-20):** This is the active implementation ledger.
 > `ThirdHand_Architecture_v3_consolidated.md` is the paired authority contract.
-> `ThirdHand_v3_Strategy_AI_Lab_Design.md` and
-> `ThirdHand_v3_Fullstack_Technical_Roadmap.md` are approved subordinate design
-> specifications; they do not override this ledger or the paired architecture.
+> `ThirdHand_v3_Strategy_AI_Lab_Design.md`,
+> `ThirdHand_v3_Fullstack_Technical_Roadmap.md`, and
+> `ThirdHand_v3_Personal_Universe_Review_Watchlist_UX_Design.md` are approved
+> subordinate design specifications; they do not override this ledger or the
+> paired architecture.
 >
 > **Completed:** Phases 1-4 core repository implementation, DecisionContinuity,
 > most Phase 5 ledger enforcement, and the governed weekly/daily/60m/15m/5m
@@ -13,14 +15,15 @@
 > **Active correctness/runtime acceptance:**
 > - Phase 5 paper-execution deployed acceptance (#46);
 > - financial currentness / event-driven financial refresh deployed Xiaomi/HK
->   acceptance (#39, including the current bootstrap wiring follow-up);
+>   acceptance (#39);
 > - Tier-1 CorporateEvent lifecycle deployed acceptance (#49);
 > - configured-provider Decision AI live recovery acceptance (#40).
 >
-> **Next product/architecture track:** make Strategy first-class (`SWING_V1`),
-> expose the Formal Decision System as an Android Decision Workspace, build the
-> Evaluation foundation, then add an isolated AI Strategy Lab. Backend-only
-> user-facing work is `BACKEND_READY`, not `PRODUCT_DONE`.
+> **Active product-design track:** Personal Universe + Review Cadence + first-
+> class Watchlist. Daily use is centered on positions and explicit Watchlist;
+> Discovery is optional, low-frequency and user-configurable. Scheduler wake-up
+> no longer implies full research permission. This track is `DESIGNED`, not
+> implemented.
 >
 > The paper account is intentionally CNY-only: HK/US remain research/audit
 > markets, not a deferred multi-currency execution project. No correctness gap
@@ -50,8 +53,17 @@ new risk but cannot manufacture BUY/ADD or create REDUCE/EXIT by itself. AI
 never receives authority over price/time, quality, market rules, sellable
 quantity, hard gates, sizing or formal action.
 
-The next explicit abstraction is `StrategyProfile`; it composes existing policy
-without creating a second action engine.
+Daily-use orchestration is now designed as a separate concern:
+
+```text
+PersonalUniversePolicy
+  -> ReviewPolicy
+  -> AnalysisDepthPolicy
+  -> Formal Decision when review is authorized
+```
+
+This separates who deserves attention, when review is due, how deep research may
+run and whether trading is permitted.
 
 ## A. Consolidated ledger disposition
 
@@ -134,10 +146,14 @@ Legend:
 | A/HK/US MarketAdapter | KEEP | platform boundary |
 | legacy DecisionSnapshot/calibration/impact graph | CLOSE | removed as alternate authority; new AI calibration belongs only to isolated Evaluation over frozen experiments |
 | separate EvidenceAvailabilitySnapshot service | MERGE | keep inside EvidenceSnapshot/quality snapshot |
-| StrategyProfile | KEEP NEXT | first-class strategy composition; first production profile `SWING_V1` |
+| StrategyProfile | KEEP / IMPLEMENTED | `SWING_V1` identity/version shipped end-to-end |
 | AI Strategy Lab | KEEP NEXT | isolated paper-intent experiment plane; never a production arbiter |
 | ExperimentDefinition / StrategyEvaluation | KEEP NEXT | immutable versioned experiments, benchmarks, calibration and uncertainty |
-| full-stack product observability | KEEP NEXT | Backend -> API -> Android -> observable reasons/errors required before `PRODUCT_DONE` |
+| full-stack product observability | KEEP | Backend -> API -> Android -> observable reasons/errors required before `PRODUCT_DONE` |
+| PersonalUniversePolicy | KEEP / DESIGNED | Portfolio + Watchlist are primary daily universe; optional Discovery is bounded and manually promoted |
+| ReviewPolicy / AnalysisBudget | KEEP / DESIGNED | scheduler wake-up is not analysis permission; NO_REVIEW/GUARD_ONLY/POSITION_REVIEW/FULL_RESEARCH |
+| Personal vs Experiment universe separation | KEEP / DESIGNED | mutable user Watchlist must never silently contaminate frozen Evaluation universe |
+| first-class Android Watchlist | KEEP / DESIGNED | user must manage Watchlist and see review state without admin/log access |
 
 ## B. Current-code conformance findings
 
@@ -149,8 +165,10 @@ Legend:
 6. Repository quality, time and freeze invariants remain the migration anchors.
 7. Production verification on 2026-08-18 confirmed that the deployed ledger correctly blocks same-day CN sells, but Phase 5 is not closed until the #46 deployed acceptance matrix confirms no impossible order leaks through decision/sizing/scheduler/session/UI behavior.
 8. `DECISION_SHADOW_MODE` controls research/decision shadow output; it is not a switch for the simulated ledger. Automatic paper fills are governed by the persisted paper-trading setting and every execution entry point must honor the paper-execution safety contract.
-9. Report-period currentness and official CorporateEvent lifecycle reconciliation are implemented in repository code, but deployed Xiaomi/HK acceptance remains active. The newest runtime follow-up is wiring event-driven financial refresh to the authoritative v2 Company Intelligence bootstrap.
-10. The Android app contains substantial existing screens, but user-visible delivery is not yet organized around a single Decision Workspace / Lab / Review product model. The next phase treats visibility as a first-class acceptance dimension rather than a post-backend polish step.
+9. Report-period currentness and official CorporateEvent lifecycle reconciliation are implemented in repository code, but deployed Xiaomi/HK acceptance remains active.
+10. Android already has Watchlist API consumption and a buried self-selected list/add flow, but the bottom navigation remains News/Market/Trading/Admin. The new design promotes Watchlist to a first-class product entry rather than creating duplicate storage.
+11. Existing Candidate lifecycle/cooldown remains useful as Discovery research infrastructure; it must no longer be presented as an AI stock-picking authority.
+12. Existing adaptive DISCOVERY/HOLDING_FOCUS/FULL_FOCUS scheduling already suppresses new discovery near full allocation, but it still conflates capital occupancy with research cadence. The new design separates universe membership, review permission and analysis depth.
 
 Therefore v3 remains an evolution of the present architecture, not a rewrite.
 
@@ -321,39 +339,88 @@ acceptance. Close or explicitly re-scope these first:
    financial snapshot closes RELEASED_UNVERIFIED -> VERIFIED without regression.
 4. **#40 Decision AI runtime** — live provider acceptance confirms bounded
    recovery/audit while formal action remains deterministic and fail-closed.
-5. **Canonical documentation sync** — code, Architecture and this ledger agree on
-   the already merged Multi-Timeframe ActionPolicy.
 
 These are correctness/reliability gates, not reasons to freeze unrelated UI
-read-model work. User-visible work may proceed when it does not weaken or hide
-these gates.
+read-model work. User-visible Personal Universe/Watchlist work may proceed when
+it does not weaken or hide these gates.
 
 ## E. Next-stage product and technical roadmap
 
 The detailed dependency/endpoint/Android mapping lives in
-`ThirdHand_v3_Fullstack_Technical_Roadmap.md`. This section is the canonical
-status sequence.
+`ThirdHand_v3_Fullstack_Technical_Roadmap.md`. Personal Universe / Review Cadence
+is additionally governed by
+`ThirdHand_v3_Personal_Universe_Review_Watchlist_UX_Design.md`.
+
+### PUX1 — Personal Universe + first-class Watchlist — DESIGNED
+
+Backend/domain:
+- additive `PersonalUniversePolicy`;
+- reuse existing Watchlist storage and extend metadata with priority/note/enabled;
+- always include all open positions;
+- compose a read-only Personal Universe from Portfolio + Watchlist + optional Discovery.
+
+API:
+- preserve existing GET/POST/DELETE `/v1/watchlist`;
+- add Watchlist update metadata endpoint;
+- add Personal Universe read/settings DTOs.
+
+Android:
+- promote Watchlist to a first-class bottom-navigation destination;
+- implement Watchlist/Positions sibling tabs;
+- manage add/edit/delete/priority/note from the normal user surface;
+- use dense scan-first list layout aligned with the project red-first market tokens.
+
+Acceptance:
+- no admin/log screen is required to manage Watchlist;
+- positions cannot be dropped by a list limit;
+- loading/empty/stale/error states are explicit;
+- screenshot/preview states are locked;
+- this slice cannot be called PRODUCT_DONE before the real Android path exists.
+
+### PUX2 — ReviewPolicy + AnalysisBudget — DESIGNED
+
+Backend/domain:
+- modes: `NO_REVIEW`, `GUARD_ONLY`, `POSITION_REVIEW`, `FULL_RESEARCH`;
+- persist per-symbol review reason, last/next review and routine analysis budget;
+- scheduler wake-up does not imply full-analysis permission;
+- a full/capped `SWING_V1` position without MaterialChange remains GUARD_ONLY
+  during the session;
+- routine full research is at most once per symbol/trading day unless a material
+  trigger or explicit user request supplies an audited override reason.
+
+API/Android:
+- expose ReviewPlan and whether full AI/company research actually ran;
+- show skipped-analysis reasons so quiet behavior cannot be mistaken for failure.
+
+Acceptance:
+- full position + no material change causes zero routine intraday full-research calls;
+- hard invalidation/event/risk/T+1 guards still run;
+- material triggers deterministically upgrade the review mode;
+- Android shows the reason and next review time.
+
+### PUX3 — Discovery demotion and controls — DESIGNED
+
+Backend/domain:
+- reuse Candidate lifecycle as a research-only Discovery substrate;
+- default `discovery_enabled=false`, `discovery_slots=2`, cadence every 3 trading sessions;
+- allow zero slots as explicit pause;
+- default Basic Screen performs no full DeepSeek Company Research;
+- explicit user promotion is required before durable Watchlist membership.
+
+API/Android:
+- Discovery list + settings + manual run;
+- user controls enable/disable, slots and cadence;
+- each item supports Add to Watchlist / Ignore and explains only why it may merit research.
+
+Acceptance:
+- Discovery cannot silently become Formal BUY scope;
+- Discovery can be fully disabled;
+- default Discovery produces no full-model research call;
+- promotion is explicit and auditable.
 
 ### N1 — StrategyProfile + SWING_V1
 
-Backend/domain:
-- add `domain/strategy` and immutable `StrategyProfile` contract;
-- define `SWING_V1` by composing current weekly/daily/60m/15m/5m authority;
-- add `strategy_id` / `strategy_version` to frozen Decision lineage;
-- preserve existing thresholds and current multi-timeframe semantics in the first migration.
-
-API:
-- expose Strategy identity/version and timeframe authority in decision detail;
-- expose structured reason codes, not only prose.
-
-Android:
-- stock detail visibly shows `SWING_V1` and weekly/daily/60m/15m/5m roles;
-- missing/stale/conflicted state must be visible, not collapsed into neutral.
-
-Acceptance:
-- same current frozen inputs produce the same formal action before/after wrapping them in `SWING_V1`;
-- strategy version is persisted and visible end-to-end;
-- Android can answer "which strategy produced this decision?".
+Status: `PRODUCT_DONE` via #63.
 
 ### N2 — Decision Workspace vertical slice
 
@@ -378,7 +445,8 @@ Acceptance:
 Backend/domain:
 - add `ExperimentDefinition`, `OutcomePolicy`, `StrategyEvaluation`, benchmark
   definitions and point-in-time lineage;
-- compute performance with fees/slippage and separate economic vs forecast outcomes.
+- compute performance with fees/slippage and separate economic vs forecast outcomes;
+- use a frozen ExperimentUniversePolicy; do not read mutable Personal Watchlist membership.
 
 API:
 - experiment list/detail;
@@ -391,7 +459,8 @@ Android:
 
 Acceptance:
 - evaluation can score Formal SWING_V1 against a benchmark without any AI agent;
-- every metric resolves to an immutable experiment/policy version.
+- every metric resolves to an immutable experiment/policy version;
+- Personal Watchlist mutations do not alter an existing experiment sample.
 
 ### N4 — AI Strategy Lab Shadow
 
@@ -483,6 +552,7 @@ Backend:
 
 Android:
 - extract feature ViewModels/repositories/API services from `MainActivity.kt` and monolithic `ApiClient.kt` as each visible milestone lands;
+- Personal Universe/Watchlist must use its own feature boundary rather than growing MainActivity further;
 - do not perform a big-bang rewrite.
 
 Acceptance:
@@ -518,6 +588,9 @@ is disconnected from real authoritative data is not `PRODUCT_DONE` either.
 | Milestone | Backend truth | API surface | Android surface | User-visible proof |
 | --- | --- | --- | --- | --- |
 | P0 execution safety | PositionLot / ExecutionConstraint / deferral | paper account, lots, deferrals, status | Portfolio / Paper detail | sellable, locked, next eligible time, blocked/deferred reason |
+| PUX1 Personal Universe | PersonalUniversePolicy + Watchlist | personal-universe/settings + watchlist CRUD | first-class Watchlist | user sees/manages positions + chosen symbols |
+| PUX2 Review cadence | ReviewPlan / AnalysisBudget | review mode/reasons/last-next review | Watchlist + Position detail | why analysis ran or was deliberately skipped |
+| PUX3 Discovery | bounded Discovery/Candidate substrate | discovery/settings/promotion | Watchlist Discovery tab | discovery off/slots/cadence, promote/ignore |
 | N1 SWING_V1 | StrategyProfile + version | decision strategy/timeframe fields | Stock detail | strategy name/version and timeframe authority |
 | N2 Decision Workspace | decision read model | workspace/detail endpoint or composed stable DTO | Stock detail | action, why, what changed, risk/invalidation |
 | N3 Evaluation | experiment/evaluation models | Lab summary/detail | Lab | benchmark, drawdown, expectancy, sample quality |
@@ -530,7 +603,7 @@ is disconnected from real authoritative data is not `PRODUCT_DONE` either.
 ## H. Required PR governance
 
 Any PR that changes `Authority`, `Strategy`, `Evidence`, `Decision`, `Risk`,
-`Execution` or `Evaluation` must state:
+`Execution`, `Evaluation`, Personal Universe, or Review cadence must state:
 
 - Authority Impact
 - Strategy Impact
@@ -540,8 +613,11 @@ Any PR that changes `Authority`, `Strategy`, `Evidence`, `Decision`, `Risk`,
 - Acceptance Tests
 - Delivery State (`BACKEND_READY`, `API_VISIBLE`, etc.)
 
-A Strategy/Decision/Execution PR that changes the canonical contract must update
-code, tests, Architecture and this Roadmap in the same accepted change.
+Every Personal Universe/Review implementation commit that advances delivery must
+update this Ledger in the same commit. If it changes current authority or safety
+conformance, it must also update the canonical Architecture and the subordinate
+Personal Universe design. No backend-only implementation may claim
+`PRODUCT_DONE`.
 
 ## I. Required regression invariants
 
@@ -563,8 +639,12 @@ Also preserve:
 - provider lineage
 - no automatic production tuning from Feedback or AI experiment performance
 - no AI direct write to authoritative paper execution state
+- every open position remains in Personal Universe risk monitoring
+- mutable Personal Watchlist cannot alter a frozen ExperimentUniverse
+- Watchlist/Discovery membership alone cannot grant trading authority
+- scheduler wake-up alone cannot authorize a full research rerun
 
-## J. Delivery update — 2026-08-19
+## J. Delivery update — 2026-08-20
 
 - **N1 StrategyProfile / SWING_V1:** `PRODUCT_DONE` via #63. The immutable
   `SWING_V1` identity and policy-version lineage are serialized in DecisionReport
@@ -572,86 +652,25 @@ Also preserve:
   authority. Formal action semantics were unchanged and full backend + Android
   CI passed before merge.
 - **P0 #46 paper-execution visibility:** backend/API sellability and deferral
-  facts were already authoritative. Android Trading now consumes
+  facts were already authoritative. Android Trading consumes
   `sellable_quantity`, `locked_quantity`, `next_eligible_sell_at`, runtime
   `state_source`, and active execution deferrals and renders explicit T+1/
   next-review reasons. This slice is `ANDROID_VISIBLE / OBSERVABLE`; **Phase 5
-  remains open** until the deployed-container acceptance matrix in #46 passes.
-  The UI does not change Paper Broker, ExecutionPrecheck, sizing, session,
-  freshness or T+1 authority.
-- **N2 Decision Workspace first slice:** a v2-native read-only workspace facade
-  composes persisted Formal Decision, DecisionMemory, Strategy/Timeframe metadata
-  and paper-ledger sellability/active-deferral facts without re-running policy.
-  Android renders the formal action, material-change/no-material-change reason,
-  review/cooldown timing and T+1 execution risk beside the Strategy section.
-  This advances N2 to `API_VISIBLE / ANDROID_VISIBLE / OBSERVABLE` for the
-  continuity-and-execution-risk slice. N2 is **not `PRODUCT_DONE` yet**: the
-  action-first stock-detail reorder plus integrated financial/event and AI
-  Research sections remain follow-up work under #62.
-- **N2 action-first stock-detail slice:** Android stock detail now orders the
-  user flow as risk/freshness/invalidation -> Formal Decision + What Changed +
-  Strategy/Timeframe -> Company Intelligence -> K-line timing -> AI Research ->
-  execution history. K-line/market detail no longer hides the formal decision
-  below the fold, and the AI surface is explicitly labeled as an explanation
-  layer that cannot create executable action. This advances N2 Android product
-  hierarchy while preserving all existing backend authority. N2 remains **not
-  `PRODUCT_DONE`** until financial/currentness + CorporateEvent state is joined
-  into the workspace surface and the remaining partial/stale/blocked states are
-  accepted end-to-end under #62.
-- **N2 financial-currentness / CorporateEvent visibility slice:** the existing
-  Decision Workspace read model now projects the frozen DecisionReport's
-  `FinancialCurrentnessSnapshot` separately from the newest locally persisted
-  CorporateEvent lifecycle. The API marks those scopes explicitly as
-  `FROZEN_DECISION` and `CURRENT_PERSISTED`, exposes active/recent event source,
-  lifecycle and conflict facts, and performs no remote acquisition or policy
-  re-evaluation. Android renders current-confirmation status, latest observed
-  period, expected report date, event lifecycle/source/conflict state and the
-  event evidence frozen into the Formal Decision. Missing lifecycle data is
-  shown as unavailable rather than “no event”. This advances N2 financial/event
-  visibility to `API_VISIBLE / ANDROID_VISIBLE / OBSERVABLE`; N2 remains **not
-  `PRODUCT_DONE`** until the remaining partial/stale/blocked section states and
-  end-to-end acceptance under #62 are closed.
-- **N2 CorporateEvent completeness slice:** the Workspace now also carries
-  persisted `unavailable_dates` alongside the CorporateEvent bundle status.
-  Android treats `partial` as an explicit incomplete-coverage state, lists known
-  unavailable dates, surfaces `stale_fallback`, and never turns an empty event
-  list under partial coverage into “no event”. This closes the known
-  partial/stale CorporateEvent presentation gap without changing event or
-  trading authority. N2 remains **not `PRODUCT_DONE`** until the remaining
-  recoverable section-state architecture and device-level UI acceptance under
-  #62 are completed.
-- **N2 Android state-architecture slice:** Decision Workspace networking is now
-  isolated behind `DecisionWorkspaceRepository`, route transitions are owned by
-  an immutable `DecisionWorkspaceUiState` controller, and the Compose content is
-  a stateless renderer that can be exercised without network I/O. Initial load,
-  empty/not-found, recoverable endpoint failure, refresh-in-progress and
-  refresh-failure-with-last-good-data are explicit states. Android CI now runs
-  focused JVM controller tests before Debug/Release builds. This closes the
-  ad-hoc mutable route-state gap; N2 remains **not `PRODUCT_DONE`** until focused
-  screenshot/preview state coverage and device/emulator visual acceptance are
-  completed under #62.
-- **#75 cache-first symbol search timeout remediation:** existing local security
-  identities now resolve through a v2 cache-first search service; Android stops
-  remote completion when local matches exist, and true cache misses use bounded
-  background provider enrichment with visible progress/retry. This is an
-  `OBSERVABLE` reliability fix with no Formal Decision, strategy, risk, sizing,
-  or execution authority change; repository CI is the acceptance gate for #75.
-- **#73 device position UX acceptance slice:** Android Trading now places paper
-  holdings directly below account equity, keeps security name/current market
-  value/code fixed in the left column, and makes the remaining position metrics
-  horizontally scrollable. The primary holding-detail surface is data-first
-  (price, value, P/L, quantity, cost, holding days, sellability/T+1, K-line and
-  executed paper fills); Formal Decision/What Changed/review timing and real AI
-  Research live behind the top-right secondary entry. Symbol-as-name fallback is
-  rejected, and display refresh performs a bounded post-refresh cache reread.
-  This slice is `ANDROID_VISIBLE / OBSERVABLE`; device acceptance under #62/#73
-  remains open, and no Formal Decision, Strategy, Risk, sizing, T+1 or Paper
-  Broker authority changes are introduced.
-- **#74 quote freshness correctness:** timezone-aware quote timestamps now obey
-  the same strict age-based execution freshness path instead of falling through
-  to a false stale result. A separate read-only display classifier distinguishes
-  `live`, `refreshing`, current completed-session `session_close`, `stale` and
-  `unavailable` using the trading calendar. A same-day close may therefore stay
-  displayable after market close without becoming an executable quote. This is
-  `BACKEND_READY / OBSERVABLE_CORE`; deployed Android/device acceptance under
-  #74/#62 remains open and Paper Broker/session/freshness authority is unchanged.
+  remains open** until deployed acceptance passes.
+- **N2 Decision Workspace:** multiple backend/API/Android slices are merged,
+  including continuity, strategy/timeframe, financial/event completeness,
+  action-first detail hierarchy, typed route state and screenshot regressions.
+  Device-level acceptance remains tracked separately; these slices do not alter
+  Formal Decision authority.
+- **#75 cache-first symbol search:** local identities resolve without blocking on
+  provider I/O and true misses use bounded background enrichment. This is useful
+  infrastructure for the Watchlist Add flow and introduces no trading authority.
+- **Personal Universe / Review Cadence / Watchlist UX:** `DESIGNED`. The approved
+  target makes Portfolio + explicit Watchlist the primary personal research
+  universe, demotes Candidate Pool product semantics to optional Discovery,
+  separates Personal and Experiment universes, and introduces
+  `NO_REVIEW/GUARD_ONLY/POSITION_REVIEW/FULL_RESEARCH` plus an observable
+  AnalysisBudget. Android must promote Watchlist to a first-class entry and use
+  a dense trading-utility list language with existing ThirdHand market tokens.
+  Implementation proceeds as PUX1 -> PUX2 -> PUX3, and each code slice must
+  synchronize delivery state in this Ledger.
