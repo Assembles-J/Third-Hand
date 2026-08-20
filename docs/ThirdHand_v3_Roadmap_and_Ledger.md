@@ -647,3 +647,15 @@ Also preserve:
   This slice is `ANDROID_VISIBLE / OBSERVABLE`; device acceptance under #62/#73
   remains open, and no Formal Decision, Strategy, Risk, sizing, T+1 or Paper
   Broker authority changes are introduced.
+- **N3.1 ExperimentDefinition:** `BACKEND_READY` for the immutable experiment
+  identity/policy-lineage slice. `domain/experiment` now defines versioned Formal
+  and future AI experiment identities, deterministic canonical serialization and
+  a definition hash; the SQLite repository persists `(experiment_id,
+  experiment_version)` append-only and rejects conflicting rewrites. Formal
+  observation/replay definitions require ActionPolicy and TimeframeAuthority
+  lineage and reject accidental AI model lineage. Focused tests cover stable
+  hashing, immutability, timezone validation and repository round-trip/conflict
+  behavior. **N3 as a product remains not complete:** N3.2 Outcome contracts,
+  N3.3 resolver, evaluation metrics, benchmark, API, Android Lab and full
+  acceptance are still pending. No Formal Action, Strategy, Risk, sizing,
+  ExecutionPrecheck or Paper Broker authority changes in this slice.
