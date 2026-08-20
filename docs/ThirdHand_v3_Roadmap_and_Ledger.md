@@ -148,7 +148,7 @@ Legend:
 | separate EvidenceAvailabilitySnapshot service | MERGE | keep inside EvidenceSnapshot/quality snapshot |
 | StrategyProfile | KEEP / IMPLEMENTED | `SWING_V1` identity/version shipped end-to-end |
 | AI Strategy Lab | KEEP NEXT | isolated paper-intent experiment plane; never a production arbiter |
-| ExperimentDefinition / StrategyEvaluation | KEEP NEXT | immutable versioned experiments, benchmarks, calibration and uncertainty |
+| ExperimentDefinition / StrategyEvaluation | KEEP / N3.1 BACKEND_READY | N3.1 immutable experiment identity + frozen universe membership exists in the stacked implementation; outcomes/evaluation/benchmark/API/Android remain later N3 slices |
 | full-stack product observability | KEEP | Backend -> API -> Android -> observable reasons/errors required before `PRODUCT_DONE` |
 | PersonalUniversePolicy | KEEP / DESIGNED | Portfolio + Watchlist are primary daily universe; optional Discovery is bounded and manually promoted |
 | ReviewPolicy / AnalysisBudget | KEEP / DESIGNED | scheduler wake-up is not analysis permission; NO_REVIEW/GUARD_ONLY/POSITION_REVIEW/FULL_RESEARCH |
@@ -674,3 +674,20 @@ Also preserve:
   a dense trading-utility list language with existing ThirdHand market tokens.
   Implementation proceeds as PUX1 -> PUX2 -> PUX3, and each code slice must
   synchronize delivery state in this Ledger.
+
+## Delivery update — 2026-08-20 — N3 universe reconciliation
+
+- **N3.1 ExperimentDefinition:** `BACKEND_READY` for immutable experiment identity,
+  policy lineage and exact frozen experiment membership. Each experiment version
+  binds `universe_policy_version` plus `universe_snapshot_id/hash`;
+  `ExperimentUniverseSnapshot` stores sorted unique `(market, symbol)` members
+  append-only, and the definition repository rejects missing, mismatched or
+  rewritten universe snapshots. This implements the Personal-vs-Experiment
+  universe separation already required by the PUX design: mutable Watchlist,
+  position and Discovery changes cannot retroactively alter Evaluation samples.
+  No Formal Action, quote freshness, Watchlist storage, Risk, sizing,
+  ExecutionPrecheck or Paper Broker authority changes are introduced.
+- N3 as a product is **not complete**. Outcome contracts/resolution, aggregate
+  StrategyEvaluation, benchmark, Lab API, Android Lab and end-to-end acceptance
+  remain subsequent stacked slices.
+

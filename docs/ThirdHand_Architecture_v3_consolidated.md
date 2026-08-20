@@ -28,11 +28,12 @@ The current repository already has strong production invariants around DataHub q
 |---|---|---|
 | Data, identity, events and canonical price/time | Complete, with live acceptance still active for the newest financial/event wiring | Instrument metadata, market-scoped regime, canonical snapshot and event gates are formal inputs. Report-period currentness and persistent event lifecycle are implemented, while the latest deployed Xiaomi/HK acceptance remains tracked separately. |
 | Atomic evidence and deterministic aggregation | Complete | Fact/availability/conflict provenance, point-in-time Company Intelligence, versioned aggregation and semantic validation are persisted. |
-| Decision semantics | Complete for the current versioned multi-timeframe authority; StrategyProfile remains the next explicit abstraction | Entry/Position actions and formal action authority exist. High-confidence deterministic adverse research may veto new BUY/ADD risk only; it never upgrades an action or creates REDUCE/EXIT. Weekly/daily plus governed 60m/15m/5m Evidence feed a versioned asymmetric Multi-Timeframe ActionPolicy. Lower timeframes may preserve, delay or downgrade new risk but may not manufacture BUY/ADD or create REDUCE/EXIT by themselves. |
+| Decision semantics | Complete for the current versioned multi-timeframe authority; StrategyProfile / `SWING_V1` is implemented and product-visible | Entry/Position actions and formal action authority exist. High-confidence deterministic adverse research may veto new BUY/ADD risk only; it never upgrades an action or creates REDUCE/EXIT. Weekly/daily plus governed 60m/15m/5m Evidence feed a versioned asymmetric Multi-Timeframe ActionPolicy. Lower timeframes may preserve, delay or downgrade new risk but may not manufacture BUY/ADD or create REDUCE/EXIT by themselves. |
 | Market/execution adapters | Partial at the CNY-only scope | CN lot/T+1/fee and PositionLot FIFO are enforced at the ledger boundary. Sellable/locked quantity and read-only lot evidence feed the formal Context and execution precheck. HK Stock Connect retains HKD trading-price metadata and actual RMB broker-settlement receipts as audit facts. HK/US have no paper-execution path. Deployed Phase 5 acceptance remains open. |
 | Decision continuity | Complete | Prior decision, entry-bound position episode, full-input audit change, versioned material fingerprint, cooldown/review fields and position age are persisted. Only a strategic fingerprint transition or a hard gate/position-state transition may replace the prior formal action. Approved timeframe states participate in the material fingerprint while raw timestamp/hash noise does not. ExecutionPrecheck rejects fills before `cooldown_until`; the deterministic runtime promotes `review_after` into a separately audited decision-refresh obligation. |
 | Model policy and audit | Complete for configured-provider bounded recovery; live provider acceptance remains open | Atomic prompt projection, Flash/Pro routing, schema/semantic checks, hashes, usage and retry traces are persisted. The finite recovery graph is Flash -> Pro thinking -> Pro non-thinking structured. A generic multi-provider capability registry and a provider-specific maximum-reasoning capability tier are deliberately not implemented. |
-| Feedback | Complete as an audit dataset | Frozen decision/execution lineage, actual-vs-hypothetical outcomes and read-only policy-version export exist; there is no automatic tuning. Strategy Evaluation and AI calibration are the next explicit consumers of this audit foundation. |
+| Feedback | Complete as an audit dataset | Frozen decision/execution lineage, actual-vs-hypothetical outcomes and read-only policy-version export exist; there is no automatic tuning. N3 Evaluation consumes this foundation through a read/measurement plane; AI calibration remains N6. |
+| Evaluation | N3.1 `BACKEND_READY` in the stacked implementation; later N3 slices pending | `ExperimentDefinition` now binds strategy/policy lineage to an immutable `ExperimentUniverseSnapshot` with exact `(market, symbol)` membership and deterministic hash. Mutable Personal Watchlist/positions/Discovery cannot silently alter experiment samples. No provider refresh or production trading write path is introduced. |
 | Personal universe / review cadence | Designed; implementation pending | Positions and existing Watchlist data become the primary daily-use universe; Discovery is optional and bounded. Universe membership, review permission, analysis depth and trading authority are separate policy owners. |
 
 The current formal action path is:
@@ -179,9 +180,11 @@ Raw Providers
                  Decision Memory / Feedback
 ```
 
-The next v3 extension adds `StrategyProfile` above policy composition and adds a
-parallel AI Strategy Lab that consumes frozen Evidence but cannot mutate the
-Formal Decision System. Section 12 defines that boundary.
+`StrategyProfile` / `SWING_V1` is already first-class. The next v3 extension is the
+read-only Evaluation plane, beginning with immutable experiment identity and a
+frozen ExperimentUniverseSnapshot; the later AI Strategy Lab consumes frozen
+Evidence but cannot mutate the Formal Decision System. Section 12 defines that
+boundary.
 
 The personal-workflow orchestration that decides whether the formal chain should
 run is deliberately outside formal action authority:
