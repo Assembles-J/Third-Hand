@@ -647,3 +647,11 @@ Also preserve:
   This slice is `ANDROID_VISIBLE / OBSERVABLE`; device acceptance under #62/#73
   remains open, and no Formal Decision, Strategy, Risk, sizing, T+1 or Paper
   Broker authority changes are introduced.
+- **#74 quote freshness correctness:** timezone-aware quote timestamps now obey
+  the same strict age-based execution freshness path instead of falling through
+  to a false stale result. A separate read-only display classifier distinguishes
+  `live`, `refreshing`, current completed-session `session_close`, `stale` and
+  `unavailable` using the trading calendar. A same-day close may therefore stay
+  displayable after market close without becoming an executable quote. This is
+  `BACKEND_READY / OBSERVABLE_CORE`; deployed Android/device acceptance under
+  #74/#62 remains open and Paper Broker/session/freshness authority is unchanged.

@@ -26,6 +26,7 @@ _spec.loader.exec_module(_suite)
 setup_function = _suite.setup_function
 
 _REPLACED = {
+    "test_decision_generation_is_async_idempotent_and_persists_a_report",
     "test_decision_shadow_endpoint_persists_policy_candidates_without_legacy_recommendations",
     "test_derived_refresh_uses_sufficient_local_history_without_remote_fetch",
     "test_paper_run_persists_run_stages_and_symbol_terminal_state",
@@ -88,6 +89,65 @@ def test_symbol_lookup_post_resolves_names_without_query_params(monkeypatch):
 
     assert response.json()[0]["matches"][0]["symbol"] == "600519"
     assert response.json()[0]["lookup_status"] == "matched"
+
+
+def test_decision_generation_is_async_idempotent_and_persists_a_report(monkeypatch):
+    """Decision async/idempotency regression must never depend on live providers."""
+    symbol = "600519"
+    _suite.store.add("holding-1", symbol, "test", 100, 10)
+    _suite.store.save_quotes([{
+        "symbol": symbol, "price": 12, "currency": "CNY", "source": "test",
+        "as_of": "2026-07-31", "retrieved_at": "2026-07-31T10:00:00+08:00",
+    }])
+    _suite.store.save_daily_prices(symbol, [{
+        "trading_date": f"2026-07-{index + 1:02d}", "open": 10, "close": 12,
+        "high": 13, "low": 9, "source": "test",
+    } for index in range(60)])
+    _suite.store.save_trade_plan({
+        "id": "plan-1", "symbol": symbol, "horizon": "swing", "thesis": "test",
+        "market_expectation": "test", "catalysts": [], "entry_condition": "entry",
+        "add_condition": "add", "reduce_condition": "reduce", "exit_condition": "exit",
+        "max_position_percent": 15, "risk_budget_percent": 3, "enabled": True, "version": 1,
+    })
+
+    acquisition_calls = []
+
+    def local_acquire_many(symbols, **kwargs):
+        normalized = tuple(str(item).strip().upper() for item in symbols)
+        acquisition_calls.append((normalized, kwargs.get("trigger")))
+        return {
+            item: {
+                "manifest_id": f"test-manifest-{item}",
+                "manifest_hash": f"test-hash-{item}",
+                "status": "ready",
+                "items": [],
+            }
+            for item in normalized
+        }
+
+    monkeypatch.setattr(
+        _suite.main.mandatory_acquisition_service_v3,
+        "acquire_many",
+        local_acquire_many,
+    )
+
+    first_response = _suite.client.post("/v1/decisions/generate", json={"symbols": [symbol]})
+    second_response = _suite.client.post("/v1/decisions/generate", json={"symbols": [symbol]})
+    assert first_response.status_code == 200
+    assert second_response.status_code == 200
+    first = first_response.json()["jobs"][0]
+    second = second_response.json()["jobs"][0]
+
+    deadline = time.monotonic() + 2
+    job = _suite.client.get(f"/v1/decisions/jobs/{first['job_id']}").json()
+    while time.monotonic() < deadline and job["status"] not in {"succeeded", "failed"}:
+        time.sleep(0.02)
+        job = _suite.client.get(f"/v1/decisions/jobs/{first['job_id']}").json()
+
+    assert first["job_id"] == second["job_id"]
+    assert job["status"] == "succeeded"
+    assert acquisition_calls == [((symbol,), "api-formal-decision"), ((symbol,), "api-formal-decision")]
+    assert _suite.client.get("/v1/decisions/latest", params={"symbol": symbol}).json()["automatic_execution"] is False
 
 
 def test_decision_shadow_endpoint_persists_policy_candidates_without_legacy_recommendations():
