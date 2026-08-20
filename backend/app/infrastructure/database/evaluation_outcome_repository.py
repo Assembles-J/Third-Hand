@@ -95,16 +95,66 @@ class EvaluationOutcomeRepository:
         )
 
     def get_decision(self, outcome_id: str) -> DecisionOutcome | None:
-        return self._get("evaluation_decision_outcomes", "outcome_id", outcome_id, DecisionOutcome)
+        return self._get(
+            "evaluation_decision_outcomes",
+            "outcome_id",
+            outcome_id,
+            DecisionOutcome,
+        )
 
     def get_execution(self, outcome_id: str) -> ExecutionOutcome | None:
         return self._get(
-            "evaluation_execution_outcomes", "execution_outcome_id", outcome_id, ExecutionOutcome
+            "evaluation_execution_outcomes",
+            "execution_outcome_id",
+            outcome_id,
+            ExecutionOutcome,
         )
 
     def get_episode(self, outcome_id: str) -> TradeEpisodeOutcome | None:
         return self._get(
-            "evaluation_trade_episode_outcomes", "episode_outcome_id", outcome_id, TradeEpisodeOutcome
+            "evaluation_trade_episode_outcomes",
+            "episode_outcome_id",
+            outcome_id,
+            TradeEpisodeOutcome,
+        )
+
+    def list_decisions(
+        self,
+        experiment_id: str,
+        experiment_version: str,
+    ) -> tuple[DecisionOutcome, ...]:
+        return self._list_for_experiment(
+            table="evaluation_decision_outcomes",
+            experiment_id=experiment_id,
+            experiment_version=experiment_version,
+            model_type=DecisionOutcome,
+            order_by="decision_id,horizon_sessions,outcome_id",
+        )
+
+    def list_executions(
+        self,
+        experiment_id: str,
+        experiment_version: str,
+    ) -> tuple[ExecutionOutcome, ...]:
+        return self._list_for_experiment(
+            table="evaluation_execution_outcomes",
+            experiment_id=experiment_id,
+            experiment_version=experiment_version,
+            model_type=ExecutionOutcome,
+            order_by="decision_id,execution_outcome_id",
+        )
+
+    def list_episodes(
+        self,
+        experiment_id: str,
+        experiment_version: str,
+    ) -> tuple[TradeEpisodeOutcome, ...]:
+        return self._list_for_experiment(
+            table="evaluation_trade_episode_outcomes",
+            experiment_id=experiment_id,
+            experiment_version=experiment_version,
+            model_type=TradeEpisodeOutcome,
+            order_by="position_episode_id,episode_outcome_id",
         )
 
     def _save(
@@ -171,6 +221,29 @@ class EvaluationOutcomeRepository:
         if row is None:
             return None
         return model_type.model_validate(json.loads(str(row["payload_json"])))
+
+    def _list_for_experiment(
+        self,
+        *,
+        table: str,
+        experiment_id: str,
+        experiment_version: str,
+        model_type,
+        order_by: str,
+    ) -> tuple:
+        with self.store._connect() as connection:
+            rows = connection.execute(
+                f"""
+                SELECT payload_json FROM {table}
+                WHERE experiment_id=? AND experiment_version=?
+                ORDER BY {order_by}
+                """,
+                (str(experiment_id), str(experiment_version)),
+            ).fetchall()
+        return tuple(
+            model_type.model_validate(json.loads(str(row["payload_json"])))
+            for row in rows
+        )
 
 
 __all__ = ["EvaluationOutcomeRepository"]

@@ -700,6 +700,15 @@ Also preserve:
   `(market, symbol)` against the immutable ExperimentUniverseSnapshot and binds
   its hash into outcome lineage; a later PUX Watchlist/position/Discovery change
   cannot expand an existing experiment. The resolver performs no provider refresh.
-- N3 as a product is **not complete**. Aggregate StrategyEvaluation, benchmark,
-  Lab API, Android Lab and end-to-end acceptance remain subsequent stacked slices.
+- **N3.4 StrategyEvaluation:** `BACKEND_READY` for versioned aggregation over
+  terminal outcomes. It computes sample sufficiency, episode win/loss economics,
+  expectancy, Profit Factor, holding/fee/slippage/MFE/MAE metrics and action /
+  horizon / regime / execution breakdowns. The aggregate snapshot now carries
+  `universe_snapshot_id/hash`, revalidates every decision/episode against the
+  frozen experiment membership and includes that hash in its source lineage.
+  `total_return`, `max_drawdown` and `turnover` remain explicitly unavailable
+  until an experiment-level equity curve exists; overlapping episodes are never
+  compounded as a fake account return.
+- N3 as a product is **not complete**. Benchmark, Lab API, Android Lab and
+  end-to-end acceptance remain subsequent stacked slices.
 
