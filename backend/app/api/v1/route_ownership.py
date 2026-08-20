@@ -16,6 +16,7 @@ _PREFIX_OWNERS: tuple[tuple[str, str], ...] = (
     ("/v1/data-quality/", "data_quality"),
 
     ("/v1/decisions", "decision"),
+    ("/v1/lab", "lab"),
 
     ("/v1/system/ai-capabilities", "ai"),
     ("/v1/ai-jobs", "ai"),

@@ -204,6 +204,67 @@ class ExperimentDefinitionRepository:
             return None
         return ExperimentDefinition.model_validate(json.loads(str(row["payload_json"])))
 
+    def latest(self, experiment_id: str) -> ExperimentDefinition | None:
+        """Return the latest immutable version by creation time, never by semantic version guessing."""
+        with self.store._connect() as connection:
+            row = connection.execute(
+                """
+                SELECT payload_json FROM experiment_definitions
+                WHERE experiment_id=?
+                ORDER BY created_at DESC, experiment_version DESC
+                LIMIT 1
+                """,
+                (str(experiment_id).strip(),),
+            ).fetchone()
+        if row is None:
+            return None
+        return ExperimentDefinition.model_validate(json.loads(str(row["payload_json"])))
+
+    def list(
+        self,
+        *,
+        strategy_id: str | None = None,
+        experiment_type: str | None = None,
+        status: str | None = None,
+        limit: int = 200,
+    ) -> tuple[ExperimentDefinition, ...]:
+        clauses: list[str] = []
+        parameters: list[object] = []
+        if strategy_id is not None:
+            normalized = str(strategy_id).strip()
+            if not normalized:
+                raise ValueError("strategy_id filter must not be blank")
+            clauses.append("strategy_id=?")
+            parameters.append(normalized)
+        if experiment_type is not None:
+            normalized = str(experiment_type).strip().upper()
+            if not normalized:
+                raise ValueError("experiment_type filter must not be blank")
+            clauses.append("experiment_type=?")
+            parameters.append(normalized)
+        if status is not None:
+            normalized = str(status).strip().upper()
+            if not normalized:
+                raise ValueError("status filter must not be blank")
+            clauses.append("status=?")
+            parameters.append(normalized)
+        bounded_limit = max(1, min(int(limit), 1000))
+        where = f"WHERE {' AND '.join(clauses)}" if clauses else ""
+        with self.store._connect() as connection:
+            rows = connection.execute(
+                f"""
+                SELECT payload_json FROM experiment_definitions
+                {where}
+                ORDER BY created_at DESC, experiment_id, experiment_version
+                LIMIT ?
+                """,
+                (*parameters, bounded_limit),
+            ).fetchall()
+        return tuple(
+            ExperimentDefinition.model_validate(json.loads(str(row["payload_json"])))
+            for row in rows
+        )
+
     def list_for_strategy(
         self,
         strategy_id: str,

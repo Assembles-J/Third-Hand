@@ -687,7 +687,67 @@ Also preserve:
   position and Discovery changes cannot retroactively alter Evaluation samples.
   No Formal Action, quote freshness, Watchlist storage, Risk, sizing,
   ExecutionPrecheck or Paper Broker authority changes are introduced.
-- N3 as a product is **not complete**. Outcome contracts/resolution, aggregate
-  StrategyEvaluation, benchmark, Lab API, Android Lab and end-to-end acceptance
-  remain subsequent stacked slices.
+- **N3.2 Outcome contracts:** `BACKEND_READY` for immutable DecisionOutcome,
+  ExecutionOutcome and TradeEpisodeOutcome plus versioned OutcomePolicy /
+  ActionOutcomePolicy. `PENDING / RESOLVED / INSUFFICIENT_DATA / INVALID` are
+  explicit, and BUY/WAIT/HOLD/ADD/REDUCE/EXIT/BLOCKED are evaluated by
+  action-specific semantics rather than BUY-only rules. The initial SWING_V1
+  observation windows remain 3/5/10/20 trading sessions; no target/stop
+  thresholds are invented.
+- **N3.3 OutcomeResolver:** `BACKEND_READY` for deterministic local-only
+  resolution of 3/5/10/20-session DecisionOutcome metrics, execution attribution
+  and closed TradeEpisode economics. Resolution now first validates the source
+  `(market, symbol)` against the immutable ExperimentUniverseSnapshot and binds
+  its hash into outcome lineage; a later PUX Watchlist/position/Discovery change
+  cannot expand an existing experiment. The resolver performs no provider refresh.
+- **N3.4 StrategyEvaluation:** `BACKEND_READY` for versioned aggregation over
+  terminal outcomes. It computes sample sufficiency, episode win/loss economics,
+  expectancy, Profit Factor, holding/fee/slippage/MFE/MAE metrics and action /
+  horizon / regime / execution breakdowns. The aggregate snapshot now carries
+  `universe_snapshot_id/hash`, revalidates every decision/episode against the
+  frozen experiment membership and includes that hash in its source lineage.
+  `total_return`, `max_drawdown` and `turnover` remain explicitly unavailable
+  until an experiment-level equity curve exists; overlapping episodes are never
+  compounded as a fake account return.
+- **N3.5 BenchmarkPolicy:** `BACKEND_READY` for immutable, market-aware
+  decision-window benchmark comparison. Explicit MARKET_INDEX /
+  BUY_AND_HOLD_SYMBOL policies require an explicit market and symbol; the system
+  does not guess a CN/HK/US index. EQUAL_WEIGHT_ELIGIBLE_UNIVERSE uses only
+  same-market members from the frozen ExperimentUniverseSnapshot and fails closed
+  when any required constituent start/end qfq bar is unavailable, rather than
+  silently shrinking the benchmark. Benchmark observations align from the last
+  officially completed session known at decision time to the Outcome's official
+  observation-end session, use local persisted daily history only, and bind both
+  policy and universe hashes into append-only lineage. Decision-window strategy,
+  benchmark and excess returns are available; account-level benchmark/excess
+  return remains explicitly unavailable until aligned experiment and benchmark
+  equity curves exist. FORMAL_SWING_V1 reference-experiment comparison remains a
+  declared policy type but is intentionally deferred to evaluation-to-evaluation
+  compare rather than being misrepresented as a price benchmark.
+- N3 as a product is **not complete**. Lab API, Android Lab and end-to-end
+  acceptance remain subsequent stacked slices.
+
+## Delivery update — 2026-08-20 — N3.6 Lab API
+
+- **N3.6 Lab API:** `BACKEND_READY` for stable read-only HTTP DTOs over the
+  immutable N3 experiment/evaluation store. `GET /v1/lab/experiments`, detail,
+  summary, outcomes, performance, breakdown and compare are registered through
+  the v2 bootstrap boundary rather than the legacy API monolith.
+- Lab GETs never call OutcomeResolver, provider refresh, Formal Decision, Risk,
+  sizing, ExecutionPrecheck or Paper Broker. They project already-persisted
+  ExperimentDefinition/Universe, terminal outcomes, StrategyEvaluation and
+  BenchmarkEvaluation snapshots only.
+- Experiment responses always expose the resolved experiment/version and frozen
+  universe hash. Omitting `version` resolves the latest immutable version by
+  `created_at`; callers may pin `?version=` explicitly. Compare accepts explicit
+  `experiment_id@version` selectors and does not pool incompatible versions.
+- PENDING DecisionOutcomes are still derived rather than persisted, so N3.6 does
+  not invent a pending count. The API returns `pending_decision_count = null` with
+  reason `pending_outcomes_are_derived_not_materialized_n3_6`. Likewise N3.4/5
+  unavailable account-level return/drawdown/benchmark-excess metrics remain null
+  with their existing reason codes rather than being presented as zero.
+- `/calibration` is intentionally absent; probability calibration remains N6.
+- N3 as a product is **not complete**. Android Lab (N3.7) and end-to-end Formal
+  SWING_V1 acceptance (N3.8) remain pending, and full repository CI remains an
+  acceptance gate when the stacked PR chain is landed/retargeted to `main`.
 

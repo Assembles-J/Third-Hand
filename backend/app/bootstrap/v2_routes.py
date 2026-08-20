@@ -10,6 +10,7 @@ from __future__ import annotations
 from app.api.v1.admin.router import create_admin_diagnostics_router
 from app.api.v1.candidate.router import create_candidate_router
 from app.api.v1.decision.workspace_router import create_decision_workspace_router
+from app.api.v1.lab.router import create_lab_router
 from app.api.v1.paper.router import create_paper_schedule_router
 from app.api.v1.research.company_router import create_company_intelligence_router
 from app.application_services.admin.day0_diagnostics import Day0DiagnosticsService
@@ -18,11 +19,16 @@ from app.application_services.company.akshare_provider import CompanyAkshareProv
 from app.application_services.company.provider_registry import CompanyDataProviderRegistry
 from app.application_services.company.service import CompanyIntelligenceService
 from app.application_services.decision.workspace import DecisionWorkspaceService
+from app.application_services.evaluation.lab_query_service import LabQueryService
 from app.application_services.market.symbol_search_service import SymbolSearchService
 from app.application_services.research.data_gateway import ResearchDataGateway
+from app.infrastructure.database.benchmark_evaluation_repository import BenchmarkEvaluationRepository
 from app.infrastructure.database.candidate_repository import CandidateRepository
 from app.infrastructure.database.company_intelligence_repository import CompanyIntelligenceRepository
+from app.infrastructure.database.evaluation_outcome_repository import EvaluationOutcomeRepository
+from app.infrastructure.database.experiment_repository import ExperimentDefinitionRepository
 from app.infrastructure.database.research_data_repository import ResearchDataRepository
+from app.infrastructure.database.strategy_evaluation_repository import StrategyEvaluationRepository
 from app.infrastructure.database.symbol_search_repository import SymbolSearchRepository
 
 
@@ -125,6 +131,22 @@ def register_v2_routes(application) -> None:
     if not hasattr(application, "decision_workspace_service_v2"):
         application.decision_workspace_service_v2 = DecisionWorkspaceService(application.store)
 
+    if not hasattr(application, "lab_query_service_v2"):
+        experiment_repository = ExperimentDefinitionRepository(application.store)
+        outcome_repository = EvaluationOutcomeRepository(application.store)
+        strategy_evaluation_repository = StrategyEvaluationRepository(application.store)
+        benchmark_evaluation_repository = BenchmarkEvaluationRepository(application.store)
+        application.experiment_definition_repository_v3 = experiment_repository
+        application.evaluation_outcome_repository_v3 = outcome_repository
+        application.strategy_evaluation_repository_v3 = strategy_evaluation_repository
+        application.benchmark_evaluation_repository_v3 = benchmark_evaluation_repository
+        application.lab_query_service_v2 = LabQueryService(
+            experiment_repository,
+            outcome_repository,
+            strategy_evaluation_repository,
+            benchmark_evaluation_repository,
+        )
+
     existing_paths = {getattr(route, "path", None) for route in application.app.routes}
     if "/v1/candidates" not in existing_paths:
         application.app.include_router(create_candidate_router(application.candidate_service_v2))
@@ -136,3 +158,5 @@ def register_v2_routes(application) -> None:
         application.app.include_router(create_company_intelligence_router(application.company_intelligence_service_v2))
     if "/v1/decisions/{symbol}/workspace" not in existing_paths:
         application.app.include_router(create_decision_workspace_router(application.decision_workspace_service_v2))
+    if "/v1/lab/experiments" not in existing_paths:
+        application.app.include_router(create_lab_router(application.lab_query_service_v2))

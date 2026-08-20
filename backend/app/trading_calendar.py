@@ -147,10 +147,28 @@ class TradingCalendarService:
         except ValueError:
             return None
 
+    def session_close(self, market: str, session_date: str) -> datetime | None:
+        """Return one exchange session's official close in Beijing time.
+
+        Evaluation uses the official close as the maturity boundary for a daily
+        observation. The exchange calendar remains the authority for holidays
+        and early closes; callers never invent a fixed wall-clock close.
+        """
+        calendar = self._calendars.get(market)
+        if calendar is None:
+            return None
+        session = pd.Timestamp(str(session_date))
+        try:
+            if not calendar.is_session(session):
+                return None
+            return calendar.session_close(session).to_pydatetime().astimezone(BEIJING_TIMEZONE)
+        except ValueError:
+            return None
+
     def next_session_open(self, market: str, moment: datetime) -> datetime | None:
         """Return the next exchange-session open strictly after ``moment``.
 
-        This is used to materialize a CN lot's T+1 eligibility.  The exchange
+        This is used to materialize a CN lot's T+1 eligibility. The exchange
         calendar owns weekends, holidays and early sessions rather than a
         calendar-date shortcut.
         """
@@ -218,8 +236,12 @@ class TradingCalendarService:
         if calendar is None:
             return []
         try:
-            return [session.date().isoformat() for session in calendar.sessions_in_range(
-                pd.Timestamp(start), pd.Timestamp(end),
-            )]
+            return [
+                session.date().isoformat()
+                for session in calendar.sessions_in_range(
+                    pd.Timestamp(start),
+                    pd.Timestamp(end),
+                )
+            ]
         except ValueError:
             return []
