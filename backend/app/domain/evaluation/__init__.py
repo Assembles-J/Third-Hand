@@ -4,6 +4,14 @@ Evaluation is a read/measurement plane. Importing these models grants no Formal
 Decision, risk, sizing, execution, or paper-ledger authority.
 """
 
+from app.domain.evaluation.benchmarks import (
+    BenchmarkConstituentSource,
+    BenchmarkEvaluation,
+    BenchmarkHorizonSummary,
+    BenchmarkObservation,
+    BenchmarkPolicy,
+    BenchmarkType,
+)
 from app.domain.evaluation.common import (
     ActionOutcomeClass,
     ActionOutcomeDimension,
@@ -36,6 +44,12 @@ __all__ = [
     "ActionOutcomeDimension",
     "ActionOutcomePolicy",
     "ActionOutcomeRule",
+    "BenchmarkConstituentSource",
+    "BenchmarkEvaluation",
+    "BenchmarkHorizonSummary",
+    "BenchmarkObservation",
+    "BenchmarkPolicy",
+    "BenchmarkType",
     "DecisionMetricBreakdown",
     "DecisionOutcome",
     "EvaluationContract",

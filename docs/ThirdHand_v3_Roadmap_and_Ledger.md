@@ -709,6 +709,21 @@ Also preserve:
   `total_return`, `max_drawdown` and `turnover` remain explicitly unavailable
   until an experiment-level equity curve exists; overlapping episodes are never
   compounded as a fake account return.
-- N3 as a product is **not complete**. Benchmark, Lab API, Android Lab and
-  end-to-end acceptance remain subsequent stacked slices.
+- **N3.5 BenchmarkPolicy:** `BACKEND_READY` for immutable, market-aware
+  decision-window benchmark comparison. Explicit MARKET_INDEX /
+  BUY_AND_HOLD_SYMBOL policies require an explicit market and symbol; the system
+  does not guess a CN/HK/US index. EQUAL_WEIGHT_ELIGIBLE_UNIVERSE uses only
+  same-market members from the frozen ExperimentUniverseSnapshot and fails closed
+  when any required constituent start/end qfq bar is unavailable, rather than
+  silently shrinking the benchmark. Benchmark observations align from the last
+  officially completed session known at decision time to the Outcome's official
+  observation-end session, use local persisted daily history only, and bind both
+  policy and universe hashes into append-only lineage. Decision-window strategy,
+  benchmark and excess returns are available; account-level benchmark/excess
+  return remains explicitly unavailable until aligned experiment and benchmark
+  equity curves exist. FORMAL_SWING_V1 reference-experiment comparison remains a
+  declared policy type but is intentionally deferred to evaluation-to-evaluation
+  compare rather than being misrepresented as a price benchmark.
+- N3 as a product is **not complete**. Lab API, Android Lab and end-to-end
+  acceptance remain subsequent stacked slices.
 
