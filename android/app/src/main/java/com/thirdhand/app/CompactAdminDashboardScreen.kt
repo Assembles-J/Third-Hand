@@ -38,6 +38,7 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
+import com.thirdhand.app.lab.LabScreen
 import com.thirdhand.app.ui.components.TradingPageHeader
 import com.thirdhand.app.ui.components.TradingRowDivider
 import com.thirdhand.app.ui.components.TradingSection
@@ -46,6 +47,12 @@ import kotlinx.coroutines.launch
 
 @Composable
 fun CompactAdminDashboardScreen() {
+    var showLab by remember { mutableStateOf(false) }
+    if (showLab) {
+        LabScreen(onBack = { showLab = false })
+        return
+    }
+
     val context = androidx.compose.ui.platform.LocalContext.current
     val api = remember(context) { ApiClient.service(context) }
     val scope = rememberCoroutineScope()
@@ -118,6 +125,19 @@ fun CompactAdminDashboardScreen() {
     }
     LazyColumn(Modifier.fillMaxSize(), contentPadding = PaddingValues(bottom = 28.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
         item { TradingPageHeader("管理", "服务连接、数据状态与交易设置") { IconButton(onClick = { refreshKey++ }, enabled = !loading) { if (loading) CircularProgressIndicator(Modifier.size(20.dp), strokeWidth = 2.dp) else Icon(Icons.Filled.Refresh, "刷新管理状态") } } }
+        item { TradingSection("策略实验室", "只读查看 SWING_V1 的 Evaluation / Benchmark；不会改变正式策略") }
+        item {
+            Card(
+                Modifier.padding(horizontal = 20.dp).fillMaxWidth(),
+                colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.primaryContainer),
+            ) {
+                Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Text("N3 策略评估", fontWeight = FontWeight.Bold, style = MaterialTheme.typography.titleMedium)
+                    Text("查看样本质量、胜率/Expectancy、冻结基准、动作/周期/Regime 与执行归因。账户级收益尚不可用时会明确标注，不会用 0 代替。", style = MaterialTheme.typography.bodySmall)
+                    Button(onClick = { showLab = true }, modifier = Modifier.fillMaxWidth()) { Text("打开策略实验室") }
+                }
+            }
+        }
         error?.let { item { Text(it, Modifier.padding(horizontal = 20.dp, vertical = 8.dp), color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.bodySmall) } }
         notice?.let { item { Text(it, Modifier.padding(horizontal = 20.dp, vertical = 8.dp), color = MaterialTheme.colorScheme.tertiary, style = MaterialTheme.typography.bodySmall) } }
         if (saving) item { LinearProgressIndicator(Modifier.fillMaxWidth().padding(horizontal = 20.dp)) }
