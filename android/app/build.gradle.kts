@@ -33,10 +33,6 @@ android { namespace = "com.thirdhand.app"; compileSdk = 35
     }
     buildTypes {
         getByName("debug") {
-            // Keep the development app independently installable alongside the
-            // production app. Debug APKs use the default debug signing key,
-            // whereas release APKs use the release key, so sharing an ID makes
-            // Android treat them as conflicting packages.
             applicationIdSuffix = ".debug"
             versionNameSuffix = "-debug"
         }
@@ -50,8 +46,6 @@ android { namespace = "com.thirdhand.app"; compileSdk = 35
                 getDefaultProguardFile("proguard-android-optimize.txt"),
                 "proguard-rules.pro",
             )
-            // The bundled Chinese OCR model carries native libraries for every ABI.
-            // Production phones are 64-bit ARM, so do not ship unused x86/32-bit copies.
             ndk {
                 abiFilters += setOf("arm64-v8a")
             }
@@ -63,6 +57,14 @@ android { namespace = "com.thirdhand.app"; compileSdk = 35
         targetCompatibility = JavaVersion.VERSION_17
     }
     kotlinOptions { jvmTarget = "17" }
+}
+
+configurations.all {
+    resolutionStrategy {
+        force("org.jetbrains.kotlin:kotlin-stdlib:2.0.21")
+        force("org.jetbrains.kotlin:kotlin-stdlib-jdk7:2.0.21")
+        force("org.jetbrains.kotlin:kotlin-stdlib-jdk8:2.0.21")
+    }
 }
 
 dependencies {
