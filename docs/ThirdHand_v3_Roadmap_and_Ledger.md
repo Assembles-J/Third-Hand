@@ -1,6 +1,6 @@
 # ThirdHand v3 Redesign Ledger and Roadmap
 
-> **Canonical status (2026-08-20):** This is the active implementation ledger.
+> **Canonical status (2026-08-24):** This is the active implementation ledger.
 > `ThirdHand_Architecture_v3_consolidated.md` is the paired authority contract.
 > `ThirdHand_v3_Strategy_AI_Lab_Design.md`,
 > `ThirdHand_v3_Fullstack_Technical_Roadmap.md`, and
@@ -148,7 +148,7 @@ Legend:
 | separate EvidenceAvailabilitySnapshot service | MERGE | keep inside EvidenceSnapshot/quality snapshot |
 | StrategyProfile | KEEP / IMPLEMENTED | `SWING_V1` identity/version shipped end-to-end |
 | AI Strategy Lab | KEEP NEXT | isolated paper-intent experiment plane; never a production arbiter |
-| ExperimentDefinition / StrategyEvaluation | KEEP / N3.1-N3.7 IMPLEMENTED SLICES | N3.1-N3.6 backend/API evaluation path is on `main`; N3.7 adds the read-only Android Lab surface. N3 remains not `PRODUCT_DONE` until N3.8 end-to-end acceptance. |
+| ExperimentDefinition / StrategyEvaluation | KEEP / N3 PRODUCT_DONE | N3.1-N3.8 are accepted end to end for Formal `SWING_V1`: immutable experiment/universe lineage -> point-in-time outcomes -> strategy/benchmark evaluation -> GET-only Lab API -> Android Lab. Evaluation remains read-only and cannot rewrite Formal Action or production policy. |
 | full-stack product observability | KEEP | Backend -> API -> Android -> observable reasons/errors required before `PRODUCT_DONE` |
 | PersonalUniversePolicy | KEEP / DESIGNED | Portfolio + Watchlist are primary daily universe; optional Discovery is bounded and manually promoted |
 | ReviewPolicy / AnalysisBudget | KEEP / DESIGNED | scheduler wake-up is not analysis permission; NO_REVIEW/GUARD_ONLY/POSITION_REVIEW/FULL_RESEARCH |
@@ -724,8 +724,8 @@ Also preserve:
   equity curves exist. FORMAL_SWING_V1 reference-experiment comparison remains a
   declared policy type but is intentionally deferred to evaluation-to-evaluation
   compare rather than being misrepresented as a price benchmark.
-- N3 as a product is **not complete**. Lab API, Android Lab and end-to-end
-  acceptance remain subsequent stacked slices.
+- These backend slices are integrated into the accepted N3 chain; final end-to-end
+  acceptance evidence is recorded in the N3.8 delivery update below.
 
 ## Delivery update — 2026-08-20 — N3.6 Lab API
 
@@ -747,9 +747,8 @@ Also preserve:
   unavailable account-level return/drawdown/benchmark-excess metrics remain null
   with their existing reason codes rather than being presented as zero.
 - `/calibration` is intentionally absent; probability calibration remains N6.
-- N3 as a product is **not complete**. Android Lab (N3.7) and end-to-end Formal
-  SWING_V1 acceptance (N3.8) remain pending, and full repository CI remains an
-  acceptance gate when the stacked PR chain is landed/retargeted to `main`.
+- N3.6 is now part of the accepted N3 product chain. The final N3.8 section below
+  records the main-base end-to-end acceptance evidence.
 
 ## Delivery update — 2026-08-20 — N3.7 Android Lab
 
@@ -777,6 +776,47 @@ Also preserve:
   Gradle baseline build is unavailable in the current execution container because
   Gradle/Android SDK are absent; the official Android PR CI is therefore the
   compile/unit/build acceptance gate.
-- N3 is **not `PRODUCT_DONE`**. N3.8 Formal SWING_V1 end-to-end acceptance remains
-  pending after Android CI/device-level product verification.
+- N3.7 Android acceptance is complete via #89: unit tests, Compose screenshot
+  render/hash verification, Debug/Release builds, optimized Release verification,
+  documentation-governance and repository `ci-gate` passed. N3.8 below closes
+  the remaining Formal SWING_V1 end-to-end acceptance matrix.
+
+## Delivery update — 2026-08-24 — N3.8 Formal SWING_V1 acceptance
+
+- **N3 Evaluation:** `PRODUCT_DONE` for Formal `SWING_V1`. The automated N3.8
+  acceptance fixture executes the real persisted chain from immutable
+  `ExperimentDefinition` + `ExperimentUniverseSnapshot` through OutcomeResolver,
+  terminal outcome persistence, StrategyEvaluation, BenchmarkEvaluation and the
+  GET-only `/v1/lab` read model consumed by Android.
+- **Immutable/versioned lineage:** experiment/version and universe snapshot id/hash
+  remain fixed. A membership rewrite is rejected; a later/current attention symbol
+  outside the frozen universe cannot enter an existing equal-weight benchmark.
+- **Point-in-time integrity:** a deliberately impossible decision-session full-day
+  candle is excluded from forward metrics, and benchmark alignment starts from the
+  latest officially completed session already observable at decision time. No
+  provider refresh or future-session data is used by the acceptance path.
+- **Outcome integrity:** PENDING remains derived and is not persisted or counted as
+  resolved; missing reference price remains visible as terminal
+  `INSUFFICIENT_DATA`. Execution disposition comes from persisted fills, while a
+  closed episode keeps realized PnL, fees and slippage as separate facts.
+- **Metric integrity:** action/regime/horizon/execution breakdowns are reproducible;
+  sample quality is explicit; benchmark identity and frozen constituent lineage are
+  visible. Account-level total return/max drawdown/turnover and portfolio benchmark
+  excess remain unavailable with reason codes until real aligned equity curves
+  exist; N3.8 does not fabricate them. `/v1/lab/calibration` remains absent for N6.
+- **Android evidence:** merged #89 already accepted Loading/Empty/Ready/Error,
+  insufficient/unavailable presentation, screenshot hashes, unit tests and
+  Debug/Release APK builds. Android formats immutable DTOs and does not recompute
+  Evaluation or mutate Personal Universe/trading state.
+- **Main-base acceptance:** N3.8 passed `python -m compileall app`, full backend
+  pytest (**412 passed, 7 warnings**), Docker build, documentation-governance and
+  repository `ci-gate`. The warnings are existing Starlette/FastAPI/exchange-calendar
+  deprecations, not N3 failures.
+- **Authority impact:** none. N3 remains a read/measurement plane and has no write
+  path to Formal Action, StrategyProfile, RiskPolicy, SizingPolicy,
+  ExecutionPrecheck, Paper Broker or Personal Watchlist/positions. Evaluation
+  results cannot auto-promote or rewrite production policy.
+- **Next dependency:** N4 AI Strategy Lab Shadow may now build on this referee. N4
+  remains paper-intent/forecast only with no fill authority; N5 isolated AI paper
+  execution and N6 probability calibration remain later phases.
 

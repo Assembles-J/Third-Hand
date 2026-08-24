@@ -33,7 +33,7 @@ The current repository already has strong production invariants around DataHub q
 | Decision continuity | Complete | Prior decision, entry-bound position episode, full-input audit change, versioned material fingerprint, cooldown/review fields and position age are persisted. Only a strategic fingerprint transition or a hard gate/position-state transition may replace the prior formal action. Approved timeframe states participate in the material fingerprint while raw timestamp/hash noise does not. ExecutionPrecheck rejects fills before `cooldown_until`; the deterministic runtime promotes `review_after` into a separately audited decision-refresh obligation. |
 | Model policy and audit | Complete for configured-provider bounded recovery; live provider acceptance remains open | Atomic prompt projection, Flash/Pro routing, schema/semantic checks, hashes, usage and retry traces are persisted. The finite recovery graph is Flash -> Pro thinking -> Pro non-thinking structured. A generic multi-provider capability registry and a provider-specific maximum-reasoning capability tier are deliberately not implemented. |
 | Feedback | Complete as an audit dataset | Frozen decision/execution lineage, actual-vs-hypothetical outcomes and read-only policy-version export exist; there is no automatic tuning. N3 Evaluation consumes this foundation through a read/measurement plane; AI calibration remains N6. |
-| Evaluation | N3.1-N3.6 are `BACKEND_READY`; N3.7 is `ANDROID_READY`; end-to-end acceptance pending | Immutable experiment identity remains bound to an exact `ExperimentUniverseSnapshot`; OutcomeResolver, StrategyEvaluation and BenchmarkPolicy enforce frozen membership and point-in-time market history. N3.6 exposes the GET-only `/v1/lab` API, and N3.7 adds an Android Strategy Lab that reads those immutable DTOs through a dedicated repository/state/screen boundary. The first visible entry is intentionally incremental under Management rather than a numeric-tab navigation rewrite. Android renders loading/empty/error/insufficient/unavailable states and reason codes without recomputing Evaluation metrics, refreshing providers, mutating Personal Universe membership or changing trading authority. |
+| Evaluation | N3 `PRODUCT_DONE` for Formal `SWING_V1` | N3.1-N3.8 are accepted end to end: immutable experiment/version and frozen `ExperimentUniverseSnapshot` lineage -> point-in-time OutcomeResolver -> append-only terminal outcomes -> StrategyEvaluation -> market-aware BenchmarkEvaluation -> GET-only `/v1/lab` -> Android Strategy Lab. N3.8 proves pending/nonresolved visibility, frozen-universe independence from mutable Personal Universe, fee/slippage separation, benchmark identity and reproducible action/regime/execution breakdowns. Android #89 acceptance covers loading/empty/error/insufficient/unavailable states. Account-level equity-curve metrics remain explicitly unavailable until real aligned curves exist. Evaluation remains read-only and cannot mutate Formal Action, production policy, Risk/Sizing/Execution or Paper Broker state. |
 | Personal universe / review cadence | Designed; implementation pending | Positions and existing Watchlist data become the primary daily-use universe; Discovery is optional and bounded. Universe membership, review permission, analysis depth and trading authority are separate policy owners. |
 
 The current formal action path is:
@@ -180,11 +180,10 @@ Raw Providers
                  Decision Memory / Feedback
 ```
 
-`StrategyProfile` / `SWING_V1` is already first-class. The next v3 extension is the
-read-only Evaluation plane, beginning with immutable experiment identity and a
-frozen ExperimentUniverseSnapshot; the later AI Strategy Lab consumes frozen
-Evidence but cannot mutate the Formal Decision System. Section 12 defines that
-boundary.
+`StrategyProfile` / `SWING_V1` is first-class, and the read-only N3 Evaluation
+plane is now `PRODUCT_DONE` for Formal SWING_V1. The next v3 extension is the
+isolated AI Strategy Lab over frozen Evidence; it cannot mutate the Formal
+Decision System. Sections 12-13 define those boundaries.
 
 The personal-workflow orchestration that decides whether the formal chain should
 run is deliberately outside formal action authority:
