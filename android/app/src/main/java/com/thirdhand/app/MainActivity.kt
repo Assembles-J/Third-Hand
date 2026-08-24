@@ -131,6 +131,7 @@ import java.time.format.DateTimeFormatter
 import com.thirdhand.app.researchchat.ResearchChatScreen
 import com.thirdhand.app.researchchat.ResearchChatController
 import com.thirdhand.app.researchchat.ResearchChatLine
+import com.thirdhand.app.watchlist.WatchlistScreen
 import kotlinx.coroutines.delay
 
 class MainActivity : ComponentActivity() {
@@ -217,7 +218,7 @@ private fun ThirdHandApp(resumeSignal: Int) {
             delay(500)
         }
     }
-    val tabOrder = remember { listOf(0, 1, 3, 2) }
+    val tabOrder = remember { listOf(0, 1, 5, 3, 2) }
     BackHandler(enabled = detailHolding != null || detailStock != null || tab != 0) {
         when {
             detailHolding != null -> detailHolding = null
@@ -233,6 +234,7 @@ private fun ThirdHandApp(resumeSignal: Int) {
                         listOf(
                             Triple("新闻", Icons.AutoMirrored.Filled.Article, 0),
                             Triple("行情", Icons.Filled.AutoGraph, 1),
+                            Triple("自选", Icons.Filled.Bookmark, 5),
                             Triple("交易", Icons.Filled.AccountBalanceWallet, 3),
                             Triple("管理", Icons.Filled.AdminPanelSettings, 2),
                         ).forEach { (label, icon, targetTab) ->
@@ -289,7 +291,7 @@ private fun ThirdHandApp(resumeSignal: Int) {
                     AnimatedContent(
                         targetState = tab,
                         transitionSpec = {
-                            val movingForward = targetState > initialState
+                            val movingForward = tabOrder.indexOf(targetState) > tabOrder.indexOf(initialState)
                             (slideInHorizontally(animationSpec = tween(260)) { width -> if (movingForward) width else -width } + fadeIn(tween(180))) togetherWith
                                 (slideOutHorizontally(animationSpec = tween(220)) { width -> if (movingForward) -width / 3 else width / 3 } + fadeOut(tween(140)))
                         },
@@ -298,6 +300,7 @@ private fun ThirdHandApp(resumeSignal: Int) {
                         when (activeTab) {
                             0 -> NewsScreen()
                             1 -> MarketScreen(onOpenDetail = { detailStock = it })
+                            5 -> WatchlistScreen(onOpenDetail = { detailStock = it })
                             2 -> CompactAdminDashboardScreen()
                             3 -> PaperTradingScreen(onOpenDetail = { detailStock = it })
                             else -> NewsScreen()
