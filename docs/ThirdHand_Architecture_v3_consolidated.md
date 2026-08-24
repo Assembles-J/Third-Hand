@@ -247,6 +247,7 @@ One coherent analysis-time view:
 - account/position snapshot;
 - quality bindings;
 - conflicts/missing capabilities.
+
 ### AtomicFactRecord
 Fields:
 `fact_id`, `symbol`, `market`, `domain`, `dimension`, `metric`, `value`, `unit`,
@@ -746,6 +747,7 @@ trading-session episodes. Its starting authority contract is:
 Do not implement VALUE/POSITION/SWING/SHORT/INTRADAY simultaneously and do not
 collapse them into a universal weighted score. Additional strategies require
 separate StrategyProfile versions.
+
 ## 13. AI Strategy Lab authority
 
 The AI Strategy Lab is a parallel experiment system, not an alternate production
