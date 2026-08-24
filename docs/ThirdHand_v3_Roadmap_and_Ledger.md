@@ -148,7 +148,7 @@ Legend:
 | separate EvidenceAvailabilitySnapshot service | MERGE | keep inside EvidenceSnapshot/quality snapshot |
 | StrategyProfile | KEEP / IMPLEMENTED | `SWING_V1` identity/version shipped end-to-end |
 | AI Strategy Lab | KEEP NEXT | isolated paper-intent experiment plane; never a production arbiter |
-| ExperimentDefinition / StrategyEvaluation | KEEP / N3.1 BACKEND_READY | N3.1 immutable experiment identity + frozen universe membership exists in the stacked implementation; outcomes/evaluation/benchmark/API/Android remain later N3 slices |
+| ExperimentDefinition / StrategyEvaluation | KEEP / N3.1-N3.7 IMPLEMENTED SLICES | N3.1-N3.6 backend/API evaluation path is on `main`; N3.7 adds the read-only Android Lab surface. N3 remains not `PRODUCT_DONE` until N3.8 end-to-end acceptance. |
 | full-stack product observability | KEEP | Backend -> API -> Android -> observable reasons/errors required before `PRODUCT_DONE` |
 | PersonalUniversePolicy | KEEP / DESIGNED | Portfolio + Watchlist are primary daily universe; optional Discovery is bounded and manually promoted |
 | ReviewPolicy / AnalysisBudget | KEEP / DESIGNED | scheduler wake-up is not analysis permission; NO_REVIEW/GUARD_ONLY/POSITION_REVIEW/FULL_RESEARCH |
@@ -750,4 +750,33 @@ Also preserve:
 - N3 as a product is **not complete**. Android Lab (N3.7) and end-to-end Formal
   SWING_V1 acceptance (N3.8) remain pending, and full repository CI remains an
   acceptance gate when the stacked PR chain is landed/retargeted to `main`.
+
+## Delivery update — 2026-08-20 — N3.7 Android Lab
+
+- **N3.7 Android Lab:** `ANDROID_READY` for the first user-visible Strategy Lab
+  slice consuming the N3.6 read-only API. The Android feature has a dedicated
+  Retrofit repository, immutable `Loading / Empty / Ready / Error` StateFlow
+  controller and a pure content composable covered by unit/screenshot fixtures.
+- The first entry is intentionally **Management -> Strategy Lab**. Current bottom
+  navigation still uses the legacy numeric News/Market/Trading/Admin tabs and an
+  unrelated hidden Research `tab=4` route remains a separate navigation cleanup;
+  N3.7 does not combine Lab delivery with that wider navigation refactor.
+- The screen exposes the resolved SWING_V1 experiment/version and frozen universe
+  hash, sample sufficiency, win rate/payoff/expectancy/Profit Factor, benchmark
+  window/excess returns, horizon/action/regime breakdowns and execution
+  attribution. It does not request raw outcome detail for the MVP.
+- Android performs display formatting only. It does **not** recompute strategy or
+  benchmark metrics, infer missing account-level return/drawdown/turnover, or
+  coerce unavailable/null values to zero. Existing N3.4/N3.5 reason codes and the
+  N3.6 non-materialized PENDING semantics remain visible.
+- Lab reads frozen experiment/evaluation facts only. It does not refresh market
+  providers, mutate Watchlist/positions/Discovery, invoke Formal Decision/Risk/
+  sizing/ExecutionPrecheck, or write Paper Broker state.
+- Repository scan confirms the existing single `:app` Compose/Material3 +
+  Retrofit/Coroutines architecture and no Navigation Compose dependency. Local
+  Gradle baseline build is unavailable in the current execution container because
+  Gradle/Android SDK are absent; the official Android PR CI is therefore the
+  compile/unit/build acceptance gate.
+- N3 is **not `PRODUCT_DONE`**. N3.8 Formal SWING_V1 end-to-end acceptance remains
+  pending after Android CI/device-level product verification.
 
