@@ -324,6 +324,17 @@ def _create_paper_position_episodes(connection: sqlite3.Connection) -> None:
     )
 
 
+def _add_pux1_watchlist_metadata(connection: sqlite3.Connection) -> None:
+    """Add durable user-attention metadata to the existing Watchlist table."""
+    columns = {str(row[1]) for row in connection.execute("PRAGMA table_info(watchlist)")}
+    if "enabled" not in columns:
+        connection.execute("ALTER TABLE watchlist ADD COLUMN enabled INTEGER NOT NULL DEFAULT 1")
+    if "priority" not in columns:
+        connection.execute("ALTER TABLE watchlist ADD COLUMN priority TEXT NOT NULL DEFAULT 'NORMAL'")
+    if "note" not in columns:
+        connection.execute("ALTER TABLE watchlist ADD COLUMN note TEXT NOT NULL DEFAULT ''")
+
+
 MIGRATIONS = (
     Migration("0001_legacy_schema_baseline", _record_legacy_schema_baseline),
     Migration("0002_decision_contexts", _create_decision_contexts),
@@ -343,6 +354,7 @@ MIGRATIONS = (
     Migration("0016_broker_settlement_receipts", _create_broker_settlement_receipts),
     Migration("0017_paper_execution_safety_contract", _create_paper_execution_safety_contract),
     Migration("0018_paper_position_episodes", _create_paper_position_episodes),
+    Migration("0019_pux1_watchlist_metadata", _add_pux1_watchlist_metadata),
 )
 
 

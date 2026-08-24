@@ -38,6 +38,7 @@ _PREFIX_OWNERS: tuple[tuple[str, str], ...] = (
     ("/v1/market", "market"),
     ("/v1/instruments", "market"),
 
+    ("/v1/personal-universe", "personal_universe"),
     ("/v1/holdings", "portfolio"),
     ("/v1/holding-drafts", "portfolio"),
     ("/v1/sales", "portfolio"),
