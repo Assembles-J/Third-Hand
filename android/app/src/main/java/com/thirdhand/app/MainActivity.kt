@@ -105,7 +105,7 @@ private fun ThirdHandApp(resumeSignal: Int) {
     var themeMode by remember { mutableStateOf(ThemeStore.load(context)) }
     var tab by remember { mutableIntStateOf(1) } // Default to Market for better first impression
     var detailStock by remember { mutableStateOf<ResearchTargetDto?>(null) }
-    var holdingDetail by remember { mutableStateOf<HoldingDto?>(null) }
+    var holdingDetail by remember { mutableStateOf<ResearchTargetDto?>(null) }
     var researchTarget by remember { mutableStateOf<ResearchTargetDto?>(null) }
     var profileOpen by remember { mutableStateOf(false) }
 
@@ -165,12 +165,7 @@ private fun ThirdHandApp(resumeSignal: Int) {
                     )
                 } else if (holdingDetail != null) {
                     PositionDetailRoute(
-                        target = ResearchTargetDto(
-                            symbol = holdingDetail!!.symbol,
-                            name = holdingDetail!!.name,
-                            status = "active_holding",
-                            last_activity_at = holdingDetail!!.created_at,
-                        ),
+                        target = holdingDetail!!,
                         onBack = { holdingDetail = null },
                     )
                 } else if (detailStock != null) {
@@ -193,10 +188,14 @@ private fun ThirdHandApp(resumeSignal: Int) {
                         when (activeTab) {
                             0 -> NewsScreen()
                             1 -> MarketScreen(onOpenDetail = { detailStock = it })
-                            2 -> HoldingsScreen(onOpenDetail = { holdingDetail = it })
+                            2 -> HoldingsScreen(onOpenDetail = {
+                                holdingDetail = ResearchTargetDto(it.symbol, it.name, "active_holding", it.created_at)
+                            })
                             3 -> PaperTradingScreen(onOpenDetail = { detailStock = it })
                             4 -> WatchlistScreen(
-                                onOpenDetail = { detailStock = it },
+                                onOpenDetail = { target ->
+                                    if (opensHoldingDetail(target)) holdingDetail = target else detailStock = target
+                                },
                                 onOpenProfile = { profileOpen = true },
                             )
                             else -> MarketScreen(onOpenDetail = { detailStock = it })
@@ -207,6 +206,9 @@ private fun ThirdHandApp(resumeSignal: Int) {
         }
     }
 }
+
+internal fun opensHoldingDetail(target: ResearchTargetDto): Boolean =
+    target.status == "active_holding"
 
 @Composable
 private fun HoldingsScreen(onOpenDetail: (HoldingDto) -> Unit) {
