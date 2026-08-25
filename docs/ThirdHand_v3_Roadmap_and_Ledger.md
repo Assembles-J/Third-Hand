@@ -954,3 +954,20 @@ Paper Broker or Evaluation authority.
   `PRODUCT_DONE`.
 - **Authority impact:** none. Personal Universe affects attention/display only;
   it does not alter Formal Decision or execution authority.
+
+## Delivery update — 2026-08-25 — S0.3 Holding Detail separation
+
+- **Canonical fact route:** both Portfolio holdings and Watchlist rows carrying
+  `active_holding` now open `PositionDetailRoute`. Watchlist-only symbols retain
+  the non-position Stock Detail route.
+- **Screen responsibility:** Holding Detail remains limited to quote/position
+  facts, K-line and transaction history. Its explicit Decision icon opens the
+  secondary Decision Workspace, which in turn owns What Changed, research and
+  explanatory content.
+- **Regression protection:** route-selection JVM tests prevent a held symbol
+  from silently returning to the mixed decision-first surface.
+- **Delivery state:** `ANDROID_READY / ACCEPTANCE_PENDING`; repository CI and a
+  physical-device walkthrough from both Portfolio and Watchlist remain required
+  before `PRODUCT_DONE`.
+- **Authority impact:** none. This is navigation and information architecture;
+  Formal Decision and execution contracts are unchanged.
