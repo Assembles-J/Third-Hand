@@ -24,7 +24,7 @@ fun TradingPeriodKLinePanel(symbol: String, quote: MarketQuoteDto?) {
 
     var bars by remember(symbol) { mutableStateOf<List<DailyPriceDto>>(emptyList()) }
     var intradayBars by remember(symbol) { mutableStateOf<List<DailyPriceDto>>(emptyList()) }
-    var period by remember { mutableStateOf("日线") }
+    var period by remember(symbol) { mutableStateOf("日线") }
     var loading by remember(symbol) { mutableStateOf(true) }
     var error by remember(symbol) { mutableStateOf<String?>(null) }
     var paperLogs by remember(symbol) { mutableStateOf<List<PaperTradingLogDto>>(emptyList()) }
@@ -105,15 +105,12 @@ fun TradingPeriodKLinePanel(symbol: String, quote: MarketQuoteDto?) {
                 if (loading) {
                     CircularProgressIndicator(Modifier.size(24.dp))
                 } else if (error != null) {
-                    Text(error!!, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.error)
-                } else {
-                    val chartBars = when (period) {
-                        "分时" -> intradayBars
-                        "日线" -> bars
-                        "周线" -> aggregateBars(bars, "周线")
-                        "月线" -> aggregateBars(bars, "月线")
-                        else -> bars
+                    Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                        Text(error!!, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.error)
+                        TextButton(onClick = { loadData() }) { Text("重新加载") }
                     }
+                } else {
+                    val chartBars = chartBarsForPeriod(period, bars, intradayBars)
 
                     if (chartBars.isNotEmpty()) {
                         KLineChart(
@@ -130,7 +127,18 @@ fun TradingPeriodKLinePanel(symbol: String, quote: MarketQuoteDto?) {
     }
 }
 
-private fun aggregateBars(bars: List<DailyPriceDto>, period: String): List<DailyPriceDto> {
+internal fun chartBarsForPeriod(
+    period: String,
+    dailyBars: List<DailyPriceDto>,
+    intradayBars: List<DailyPriceDto>,
+): List<DailyPriceDto> = when (period) {
+    "分时" -> intradayBars
+    "周线" -> aggregateBars(dailyBars, "周线")
+    "月线" -> aggregateBars(dailyBars, "月线")
+    else -> dailyBars
+}
+
+internal fun aggregateBars(bars: List<DailyPriceDto>, period: String): List<DailyPriceDto> {
     if (period == "日线") return bars
 
     return bars.mapNotNull { bar ->
