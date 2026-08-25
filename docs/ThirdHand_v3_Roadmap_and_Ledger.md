@@ -920,3 +920,15 @@ Paper Broker or Evaluation authority.
   does not add or change execution authority.
 - **Acceptance outstanding:** repository CI, screenshot regression and a
   physical-device walkthrough. It is not `PRODUCT_DONE`.
+
+### S0.4 K-line progressive disclosure — IN_PROGRESS
+
+- **Android entry:** Portfolio -> Holding Detail -> K-line.
+- **Implemented slice:** the K-line panel is rendered directly inside the
+  detail surface rather than through nested cards. Daily history is requested
+  as the complete available series; weekly and monthly candles aggregate that
+  complete daily series without a trailing-window cutoff. Intraday data is
+  constrained to its latest trading date only.
+- **Acceptance outstanding:** screenshot regression, repository CI and a
+  physical-device check of monthly, weekly, daily and intraday periods. It is
+  not `PRODUCT_DONE`.
