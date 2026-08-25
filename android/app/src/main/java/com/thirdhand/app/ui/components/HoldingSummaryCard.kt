@@ -1,26 +1,34 @@
 package com.thirdhand.app.ui.components
 
 import android.content.res.Configuration
+import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
-import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.CameraAlt
+import androidx.compose.material.icons.filled.PieChart
+import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.tooling.preview.Preview
+import androidx.compose.ui.unit.dp
 import com.thirdhand.app.ThemeMode
 import com.thirdhand.app.ThirdHandTheme
 import com.thirdhand.app.ui.theme.AppSpacing
@@ -39,39 +47,118 @@ fun HoldingSummaryCard(
 ) {
     Card(
         modifier = modifier.fillMaxWidth(),
-        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceContainerLow),
+        colors = CardDefaults.cardColors(
+            containerColor = MaterialTheme.colorScheme.surface,
+        ),
+        shape = MaterialTheme.shapes.large,
+        elevation = CardDefaults.cardElevation(defaultElevation = 2.dp)
     ) {
         Column(
-            modifier = Modifier.padding(AppSpacing.large),
-            verticalArrangement = Arrangement.spacedBy(AppSpacing.medium),
+            modifier = Modifier.padding(AppSpacing.xxLarge),
+            verticalArrangement = Arrangement.spacedBy(AppSpacing.large),
         ) {
-            Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Icon(
+                        Icons.Default.PieChart,
+                        contentDescription = null,
+                        tint = MaterialTheme.colorScheme.primary,
+                        modifier = Modifier.size(20.dp)
+                    )
+                    Spacer(Modifier.width(AppSpacing.small))
+                    Text(
+                        text = "资产配置",
+                        style = MaterialTheme.typography.titleMedium,
+                        fontWeight = FontWeight.Bold,
+                    )
+                }
                 Text(
-                    text = "持仓概览",
-                    style = MaterialTheme.typography.titleSmall,
-                    fontWeight = FontWeight.Bold,
-                )
-                Text(
-                    text = "$holdingCount 只持仓${if (pendingCount > 0) " · $pendingCount 条待补全" else ""}",
+                    text = "$holdingCount 只证券${if (pendingCount > 0) " · $pendingCount 条待处理" else ""}",
                     style = MaterialTheme.typography.labelMedium,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
             }
-            Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(AppSpacing.medium)) {
-                Column(modifier = Modifier.weight(1f)) { Text("总市值", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant); Text(marketValue ?: "等待行情更新", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold) }
-                Column(modifier = Modifier.weight(1f)) { Text("浮动盈亏", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant); Text(totalPnl ?: "--", style = MaterialTheme.typography.titleMedium, color = if (totalPnl == null) MaterialTheme.colorScheme.onSurfaceVariant else if (totalPnlIsPositive) MaterialTheme.marketColors.rise else MaterialTheme.marketColors.fall, fontWeight = FontWeight.SemiBold) }
+
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .background(
+                        MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.3f),
+                        MaterialTheme.shapes.medium
+                    )
+                    .padding(AppSpacing.large),
+                horizontalArrangement = Arrangement.spacedBy(AppSpacing.medium)
+            ) {
+                SummaryItem(
+                    label = "总市值",
+                    value = marketValue ?: "---",
+                    modifier = Modifier.weight(1f)
+                )
+                SummaryItem(
+                    label = "浮动盈亏",
+                    value = totalPnl ?: "--",
+                    valueColor = if (totalPnl == null) {
+                        MaterialTheme.colorScheme.onSurfaceVariant
+                    } else if (totalPnlIsPositive) {
+                        MaterialTheme.marketColors.rise
+                    } else {
+                        MaterialTheme.marketColors.fall
+                    },
+                    modifier = Modifier.weight(1f)
+                )
             }
-            Row(horizontalArrangement = Arrangement.spacedBy(AppSpacing.small)) {
-                TextButton(onClick = onAdd) {
-                    Icon(Icons.Filled.Add, contentDescription = null)
-                    Spacer(Modifier.width(AppSpacing.xs)); Text("添加持仓")
+
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.spacedBy(AppSpacing.medium)
+            ) {
+                OutlinedButton(
+                    onClick = onAdd,
+                    modifier = Modifier.weight(1f),
+                    shape = MaterialTheme.shapes.medium
+                ) {
+                    Icon(Icons.Filled.Add, contentDescription = null, modifier = Modifier.size(18.dp))
+                    Spacer(Modifier.width(AppSpacing.xs))
+                    Text("手动记录")
                 }
-                TextButton(onClick = onImport) {
-                    Icon(Icons.Filled.CameraAlt, contentDescription = null)
-                    Spacer(Modifier.width(AppSpacing.xs)); Text("导入截图")
+                OutlinedButton(
+                    onClick = onImport,
+                    modifier = Modifier.weight(1f),
+                    shape = MaterialTheme.shapes.medium
+                ) {
+                    Icon(Icons.Filled.CameraAlt, contentDescription = null, modifier = Modifier.size(18.dp))
+                    Spacer(Modifier.width(AppSpacing.xs))
+                    Text("智能导入")
                 }
             }
         }
+    }
+}
+
+@Composable
+private fun SummaryItem(
+    label: String,
+    value: String,
+    modifier: Modifier = Modifier,
+    valueColor: androidx.compose.ui.graphics.Color = MaterialTheme.colorScheme.onSurface
+) {
+    Column(modifier = modifier) {
+        Text(
+            text = label,
+            style = MaterialTheme.typography.labelSmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+            fontWeight = FontWeight.Medium
+        )
+        Text(
+            text = value,
+            style = MaterialTheme.typography.titleLarge,
+            color = valueColor,
+            fontWeight = FontWeight.Bold
+        )
     }
 }
 

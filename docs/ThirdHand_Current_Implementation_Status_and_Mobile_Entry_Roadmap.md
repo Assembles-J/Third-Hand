@@ -198,8 +198,11 @@ Issue:
 
 Status:
 
-Backend complete.
-Android not complete.
+`ANDROID_VISIBLE / ACCEPTANCE_PENDING`
+
+Backend/API is complete. Android implementation now provides the first-class
+entry and local JVM/screenshot/Debug/Release validation. It is not
+`PRODUCT_DONE` until repository CI and physical-device acceptance pass.
 
 Goal:
 
@@ -220,6 +223,13 @@ Must support:
 - notes
 - enabled/disabled
 - review status
+
+Implemented Android surface:
+
+- authoritative Personal Universe read model (Watchlist and Positions tabs);
+- add, edit, remove, priority, note and enabled/paused state;
+- stock-detail routing while preserving holding facts;
+- loading, empty, partial, error and screenshot fixtures/baselines.
 
 Do not use admin/log pages.
 

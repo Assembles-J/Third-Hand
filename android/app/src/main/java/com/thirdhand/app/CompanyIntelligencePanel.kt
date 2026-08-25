@@ -1,33 +1,23 @@
 package com.thirdhand.app
 
 import android.content.Context
-import androidx.compose.foundation.layout.Arrangement
-import androidx.compose.foundation.layout.Column
-import androidx.compose.foundation.layout.Row
-import androidx.compose.foundation.layout.Spacer
-import androidx.compose.foundation.layout.fillMaxWidth
-import androidx.compose.foundation.layout.padding
-import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.background
+import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Refresh
-import androidx.compose.material3.Card
-import androidx.compose.material3.CardDefaults
-import androidx.compose.material3.CircularProgressIndicator
-import androidx.compose.material3.Icon
-import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.Text
-import androidx.compose.material3.TextButton
-import androidx.compose.runtime.Composable
-import androidx.compose.runtime.LaunchedEffect
-import androidx.compose.runtime.getValue
-import androidx.compose.runtime.mutableStateOf
-import androidx.compose.runtime.remember
-import androidx.compose.runtime.rememberCoroutineScope
-import androidx.compose.runtime.setValue
+import androidx.compose.material.icons.filled.Business
+import androidx.compose.material.icons.filled.QueryStats
+import androidx.compose.material3.*
+import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
+import com.thirdhand.app.ui.theme.AppSpacing
+import com.thirdhand.app.ui.theme.marketColors
 import kotlinx.coroutines.launch
 import okhttp3.OkHttpClient
 import retrofit2.HttpException
@@ -128,48 +118,70 @@ fun CompanyIntelligencePanel(
             }
         }
         result.onSuccess { company = it }
-            .onFailure { error = "公司深研暂不可用：${it.message ?: "请稍后刷新"}" }
+            .onFailure { error = "数据同步异常" }
         loading = false
     }
 
     LaunchedEffect(symbol, researchPriority) { load(forceBuild = false) }
 
     Card(
-        modifier = modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 8.dp),
-        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceContainerLow),
+        modifier = modifier.fillMaxWidth().padding(horizontal = AppSpacing.xxLarge, vertical = AppSpacing.medium),
+        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
+        shape = MaterialTheme.shapes.large,
+        elevation = CardDefaults.cardElevation(defaultElevation = 2.dp)
     ) {
-        Column(Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+        Column(Modifier.padding(AppSpacing.large), verticalArrangement = Arrangement.spacedBy(AppSpacing.medium)) {
+            Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.SpaceBetween) {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Icon(Icons.Default.Business, null, tint = MaterialTheme.colorScheme.primary, modifier = Modifier.size(20.dp))
+                    Spacer(Modifier.width(AppSpacing.small))
+                    Text("公司研报概览", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.ExtraBold)
+                }
+                IconButton(onClick = { scope.launch { load(forceBuild = true) } }, enabled = !loading) {
+                    if (loading) CircularProgressIndicator(Modifier.size(18.dp), strokeWidth = 2.dp)
+                    else Icon(Icons.Filled.Refresh, null, tint = MaterialTheme.colorScheme.primary)
+                }
+            }
+
             Row(verticalAlignment = Alignment.CenterVertically) {
-                Column(Modifier.weight(1f)) {
-                    Text("公司为什么赚钱", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
+                Surface(
+                    color = MaterialTheme.colorScheme.secondaryContainer.copy(alpha = 0.5f),
+                    shape = RoundedCornerShape(4.dp)
+                ) {
                     Text(
-                        "业务分部 · 收入/毛利 · 盈利与现金流驱动 · 行业位置",
+                        company?.research_priority ?: researchPriority,
+                        Modifier.padding(horizontal = 6.dp, vertical = 2.dp),
                         style = MaterialTheme.typography.labelSmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        fontWeight = FontWeight.Bold,
+                        color = MaterialTheme.colorScheme.onSecondaryContainer
                     )
                 }
-                TextButton(onClick = { scope.launch { load(forceBuild = true) } }, enabled = !loading) {
-                    if (loading) CircularProgressIndicator(Modifier.width(16.dp), strokeWidth = 2.dp)
-                    else Icon(Icons.Filled.Refresh, contentDescription = "刷新公司深研")
-                    Spacer(Modifier.width(4.dp))
-                    Text("深研")
-                }
+                Spacer(Modifier.width(AppSpacing.small))
+                Text(
+                    companyDepthLabel(company?.analysis_depth),
+                    style = MaterialTheme.typography.labelSmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
             }
-
-            Text(
-                "RESEARCH_ONLY · ${company?.research_priority ?: researchPriority} · ${companyDepthLabel(company?.analysis_depth)} · 不直接改变买卖规则",
-                style = MaterialTheme.typography.labelSmall,
-                color = MaterialTheme.colorScheme.primary,
-                fontWeight = FontWeight.SemiBold,
-            )
 
             when {
-                loading && company == null -> Text("正在读取本地公司研究；缺失部分才会按数据 TTL 补齐。", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                error != null && company == null -> Text(requireNotNull(error), style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.error)
+                loading && company == null -> {
+                    Column(Modifier.fillMaxWidth().padding(vertical = AppSpacing.large), horizontalAlignment = Alignment.CenterHorizontally) {
+                        CircularProgressIndicator(Modifier.size(24.dp))
+                        Spacer(Modifier.height(AppSpacing.small))
+                        Text("深度同步公司资料...", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    }
+                }
+                error != null && company == null -> {
+                    Surface(
+                        color = MaterialTheme.colorScheme.errorContainer.copy(alpha = 0.2f),
+                        shape = MaterialTheme.shapes.small,
+                        modifier = Modifier.fillMaxWidth()
+                    ) {
+                        Text(error!!, Modifier.padding(AppSpacing.medium), style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.error)
+                    }
+                }
                 company != null -> CompanyIntelligenceBody(requireNotNull(company))
-            }
-            error?.takeIf { company != null }?.let {
-                Text(it, style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.error)
             }
         }
     }
@@ -184,83 +196,54 @@ private fun CompanyIntelligenceBody(company: CompanyContextDto) {
     val drivers = datasets.mapValue("profit_cashflow_drivers")
     val competition = datasets.mapValue("industry_competition")
 
-    identity?.let { CompanyDatasetSection("商业模式", companyBusinessSummary(it)) }
+    identity?.let {
+        CompanyInfoSection("商业模式与核心优势", companyBusinessSummary(it))
+    }
 
     val segmentRows = segments.listOfMaps("segments")
     if (segmentRows.isNotEmpty()) {
-        Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
-            Text("业务分部与收入结构", style = MaterialTheme.typography.labelLarge, fontWeight = FontWeight.SemiBold)
-            segmentRows.take(5).forEach { row ->
-                val name = row.firstText("主营构成", "分类名称", "产品名称", "项目") ?: "业务分部"
-                val revenue = row.firstValue("主营收入", "营业收入", "收入")
+        Column(Modifier.padding(top = AppSpacing.small)) {
+            Text("主营构成", style = MaterialTheme.typography.labelMedium, fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.primary)
+            Spacer(Modifier.height(AppSpacing.small))
+            segmentRows.take(3).forEach { row ->
+                val name = row.firstText("主营构成", "分类名称", "产品名称") ?: "其他业务"
                 val ratio = row.firstValue("收入比例", "收入占比")
                 val margin = row.firstValue("毛利率")
-                Text(
-                    buildString {
-                        append("• ").append(name)
-                        ratio?.let { append(" · 收入占比 ").append(formatResearchValue(it, percentHint = true)) }
-                        revenue?.let { append(" · 收入 ").append(formatResearchValue(it)) }
-                        margin?.let { append(" · 毛利率 ").append(formatResearchValue(it, percentHint = true)) }
-                    },
-                    style = MaterialTheme.typography.bodySmall,
-                )
+
+                Row(Modifier.fillMaxWidth().padding(vertical = 2.dp), horizontalArrangement = Arrangement.SpaceBetween) {
+                    Text("• $name", style = MaterialTheme.typography.bodySmall, maxLines = 1, overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis, modifier = Modifier.weight(1f))
+                    Text(
+                        "${formatResearchValue(ratio, percentHint = true)} / 毛利 ${formatResearchValue(margin, percentHint = true)}",
+                        style = MaterialTheme.typography.labelSmall,
+                        fontWeight = FontWeight.Bold
+                    )
+                }
             }
         }
-    } else if (segments != null) {
-        CompanyDatasetSection("业务分部与收入结构", "已采集分部数据，但当前源没有可直接展示的分部行。")
     }
 
     margins?.let {
         val rows = it.listOfMaps("segment_margins").ifEmpty { it.listOfMaps("company_margin_history") }
         if (rows.isNotEmpty()) {
-            val latest = rows.first()
-            CompanyDatasetSection("毛利与盈利结构", researchRowSummary(latest, listOf("毛利率", "gross_margin_percent", "主营利润", "gross_profit", "净利率", "net_margin_percent")))
+            CompanyInfoSection("盈利结构", researchRowSummary(rows.first(), listOf("毛利率", "净利率", "主营利润")))
         }
     }
 
     drivers?.let {
         val rows = it.listOfMaps("annual_driver_history").ifEmpty { it.listOfMaps("indicator_history") }
         if (rows.isNotEmpty()) {
-            CompanyDatasetSection(
-                "盈利与现金流驱动",
-                researchRowSummary(
-                    rows.first(),
-                    listOf(
-                        "营业收入同比增长率", "净利润同比增长率", "经营现金流量净额", "净资产收益率",
-                        "revenue_yoy_percent", "holder_profit_yoy_percent", "operating_cashflow_to_sales_percent", "roe_percent", "roic_percent",
-                    ),
-                ),
-            )
+            CompanyInfoSection("增长驱动", researchRowSummary(rows.first(), listOf("收入同比", "归母利润同比", "ROE", "ROIC")))
         }
-    }
-
-    competition?.let {
-        val peers = it.listOfMaps("growth_peer_comparison").ifEmpty { it.listOfMaps("valuation_peer_comparison") }
-        if (peers.isNotEmpty()) CompanyDatasetSection("行业与同业", peers.take(3).joinToString("；") { row -> researchRowSummary(row, row.keys.take(4).map { key -> key.toString() }) })
-    }
-
-    if (company.missing_datasets.isNotEmpty()) {
-        Text(
-            "尚未覆盖：${company.missing_datasets.joinToString("、") { companyDatasetLabel(it) }}。缺什么就明确显示什么，不推测补值。",
-            style = MaterialTheme.typography.labelSmall,
-            color = MaterialTheme.colorScheme.onSurfaceVariant,
-        )
-    }
-    if (company.stale_datasets.isNotEmpty()) {
-        Text(
-            "待刷新：${company.stale_datasets.joinToString("、") { companyDatasetLabel(it) }}",
-            style = MaterialTheme.typography.labelSmall,
-            color = MaterialTheme.colorScheme.onSurfaceVariant,
-        )
     }
 }
 
 @Composable
-private fun CompanyDatasetSection(title: String, detail: String) {
-    if (detail.isBlank()) return
-    Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
-        Text(title, style = MaterialTheme.typography.labelLarge, fontWeight = FontWeight.SemiBold)
-        Text(detail, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+private fun CompanyInfoSection(title: String, content: String) {
+    if (content.isBlank()) return
+    Column(Modifier.padding(top = AppSpacing.small)) {
+        Text(title, style = MaterialTheme.typography.labelMedium, fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.primary)
+        Spacer(Modifier.height(2.dp))
+        Text(content, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurface)
     }
 }
 
@@ -283,36 +266,30 @@ private fun Map<String, Any?>.firstValue(vararg keys: String): Any? = keys.first
 private fun companyBusinessSummary(identity: Map<String, Any?>): String {
     val intro = identity.mapValue("business_introduction")
     val profile = identity.mapValue("profile") ?: identity.mapValue("company_profile")
-    val business = intro?.firstText("主营业务", "主营产品", "经营范围", "产品类型", "产品名称")
-        ?: profile?.firstText("主营业务", "业务", "公司简介", "主营范围")
-    return business ?: researchRowSummary(intro ?: profile.orEmpty(), (intro ?: profile.orEmpty()).keys.take(5).toList())
+    return intro?.firstText("主营业务", "经营范围") ?: profile?.firstText("主营业务", "业务") ?: "资料正在整理中"
 }
 
 private fun researchRowSummary(row: Map<String, Any?>, preferredKeys: List<String>): String {
     val preferred = preferredKeys.distinct().mapNotNull { key ->
         val value = row[key] ?: return@mapNotNull null
-        val text = formatResearchValue(value, percentHint = key.contains("率") || key.contains("percent", ignoreCase = true) || key.contains("ratio", ignoreCase = true))
-        if (text.isBlank()) null else "${companyFieldLabel(key)} $text"
+        val text = formatResearchValue(value, percentHint = key.contains("率") || key.contains("同比"))
+        if (text.isBlank()) null else "$key $text"
     }
-    if (preferred.isNotEmpty()) return preferred.take(6).joinToString(" · ")
-    return row.entries
-        .filter { (_, value) -> value != null && value.toString().isNotBlank() }
-        .take(5)
-        .joinToString(" · ") { (key, value) -> "${companyFieldLabel(key)} ${formatResearchValue(value)}" }
+    return if (preferred.isNotEmpty()) preferred.joinToString(" · ") else "数据同步中"
 }
 
 private fun formatResearchValue(value: Any?, percentHint: Boolean = false): String {
-    if (value == null) return ""
+    if (value == null) return "--"
     val number = (value as? Number)?.toDouble() ?: value.toString().replace(",", "").removeSuffix("%").toDoubleOrNull()
     if (number == null) return value.toString()
     if (percentHint) {
         val normalized = if (kotlin.math.abs(number) <= 1.0 && value.toString().contains(".")) number * 100 else number
-        return String.format(Locale.US, "%.2f%%", normalized)
+        return String.format(Locale.US, "%.1f%%", normalized)
     }
     val abs = kotlin.math.abs(number)
     return when {
-        abs >= 100_000_000 -> String.format(Locale.US, "%.2f亿", number / 100_000_000.0)
-        abs >= 10_000 -> String.format(Locale.US, "%.2f万", number / 10_000.0)
+        abs >= 100_000_000 -> String.format(Locale.US, "%.1f亿", number / 100_000_000.0)
+        abs >= 10_000 -> String.format(Locale.US, "%.1f万", number / 10_000.0)
         else -> String.format(Locale.US, "%.2f", number)
     }
 }
@@ -326,32 +303,7 @@ private fun companyPriorityRank(value: String): Int = when (value.uppercase()) {
 }
 
 private fun companyDepthLabel(value: String?): String = when (value) {
-    "deep_company" -> "深度公司研究"
-    "focused_company" -> "重点公司研究"
-    else -> "基础公司研究"
-}
-
-private fun companyDatasetLabel(value: String): String = when (value) {
-    "identity_business_model" -> "商业模式"
-    "products_segments" -> "业务分部/收入结构"
-    "financial_summary" -> "财务概要"
-    "margin_structure" -> "毛利结构"
-    "profit_cashflow_drivers" -> "盈利/现金流驱动"
-    "industry_competition" -> "行业竞争"
-    "management_capital_allocation" -> "管理层/资本配置"
-    "risks_catalysts" -> "风险/催化"
-    "valuation_framework" -> "估值框架"
-    else -> value
-}
-
-private fun companyFieldLabel(value: String): String = when (value) {
-    "revenue_yoy_percent" -> "收入同比"
-    "holder_profit_yoy_percent" -> "归母利润同比"
-    "operating_cashflow_to_sales_percent" -> "经营现金流/收入"
-    "roe_percent" -> "ROE"
-    "roic_percent" -> "ROIC"
-    "gross_margin_percent" -> "毛利率"
-    "net_margin_percent" -> "净利率"
-    "gross_profit" -> "毛利"
-    else -> value
+    "deep_company" -> "全量深度研报"
+    "focused_company" -> "重点核心分析"
+    else -> "基础资料同步"
 }

@@ -93,6 +93,7 @@ data class MarketQuoteDto(
     val delay_seconds: Int? = null,
     val license_scope: String = "unknown",
     val refresh_status: String = "fresh",
+    val display_freshness: String = "unavailable",
     val error_code: String? = null,
     val error_message: String? = null,
 )

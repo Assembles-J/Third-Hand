@@ -1,38 +1,34 @@
 package com.thirdhand.app
 
-import androidx.compose.foundation.layout.Arrangement
-import androidx.compose.foundation.layout.Column
-import androidx.compose.foundation.layout.Row
-import androidx.compose.foundation.layout.fillMaxWidth
-import androidx.compose.foundation.layout.padding
-import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.Text
-import androidx.compose.runtime.Composable
-import androidx.compose.runtime.LaunchedEffect
-import androidx.compose.runtime.getValue
-import androidx.compose.runtime.mutableStateOf
-import androidx.compose.runtime.remember
-import androidx.compose.runtime.setValue
+import androidx.compose.foundation.background
+import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.GppGood
+import androidx.compose.material.icons.filled.Lock
+import androidx.compose.material3.*
+import androidx.compose.runtime.*
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
+import com.thirdhand.app.ui.theme.AppSpacing
+import com.thirdhand.app.ui.theme.marketColors
 import java.time.OffsetDateTime
 import java.time.ZoneOffset
 import java.time.format.DateTimeFormatter
 import java.util.Locale
 
-/**
- * Read-only execution-safety projection.
- *
- * T+1 and deferral facts come from the backend ledger. The UI never calculates
- * sellability from local dates and never upgrades a blocked/deferred action.
- */
 @Composable
 fun PaperExecutionSafetyPanel(
     positions: List<PaperTradingPositionDto>,
     modifier: Modifier = Modifier,
 ) {
-    val context = androidx.compose.ui.platform.LocalContext.current
+    val context = LocalContext.current
     val api = remember(context) { ApiClient.service(context) }
     var deferrals by remember { mutableStateOf<List<PaperExecutionDeferralDto>>(emptyList()) }
     var loading by remember { mutableStateOf(true) }
@@ -42,92 +38,128 @@ fun PaperExecutionSafetyPanel(
         loading = true
         runCatching { api.paperExecutionDeferrals(state = "active", limit = 100) }
             .onSuccess { deferrals = it; error = null }
-            .onFailure { error = it.message ?: "无法读取执行延迟状态" }
+            .onFailure { error = "无法获取延迟执行状态" }
         loading = false
     }
 
-    Column(
-        modifier = modifier.fillMaxWidth().padding(horizontal = 20.dp, vertical = 10.dp),
-        verticalArrangement = Arrangement.spacedBy(7.dp),
+    Card(
+        modifier = modifier.fillMaxWidth().padding(horizontal = AppSpacing.xxLarge, vertical = AppSpacing.medium),
+        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
+        shape = MaterialTheme.shapes.large,
+        elevation = CardDefaults.cardElevation(defaultElevation = 1.dp)
     ) {
-        Text("执行安全", style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.SemiBold)
-        Text(
-            "可卖、T+1 锁定和延迟状态来自模拟账本；这里不自行推算交易权限。",
-            style = MaterialTheme.typography.labelSmall,
-            color = MaterialTheme.colorScheme.onSurfaceVariant,
-        )
+        Column(Modifier.padding(AppSpacing.large), verticalArrangement = Arrangement.spacedBy(AppSpacing.medium)) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Icon(Icons.Default.GppGood, null, tint = MaterialTheme.colorScheme.primary, modifier = Modifier.size(20.dp))
+                Spacer(Modifier.width(AppSpacing.small))
+                Text("执行安全检查", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.ExtraBold)
+            }
 
-        if (positions.isEmpty()) {
-            Text("当前无持仓，无 T+1 可卖状态。", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
-        } else {
-            positions.forEach { position ->
-                val sellable = position.sellable_quantity
-                val locked = position.locked_quantity
-                Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
-                    Text(position.name.ifBlank { position.symbol } + " · " + position.symbol, style = MaterialTheme.typography.labelMedium, fontWeight = FontWeight.SemiBold)
-                    Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-                        SafetyMetric("总持仓", "${position.quantity.paperQuantity()} 股", Modifier.weight(1f))
-                        SafetyMetric("可卖", sellable?.let { "${it.paperQuantity()} 股" } ?: "未提供", Modifier.weight(1f))
-                        SafetyMetric("T+1 锁定", locked?.let { "${it.paperQuantity()} 股" } ?: "未提供", Modifier.weight(1f))
-                    }
-                    if ((locked ?: 0.0) > 0.0) {
-                        Text(
-                            position.next_eligible_sell_at?.let { "下次可卖/复核：${paperSafetyTimestamp(it)}" }
-                                ?: "存在 T+1 锁定，但服务未提供下次可卖时间。",
-                            style = MaterialTheme.typography.labelSmall,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant,
-                        )
-                    }
-                    deferrals.filter { it.symbol == position.symbol }.forEach { deferral ->
-                        Text(
-                            "等待执行：${paperDeferralAction(deferral.action)} · ${paperDeferralReason(deferral.reason_code)} · 下次复核 ${paperSafetyTimestamp(deferral.next_eligible_at)}",
-                            style = MaterialTheme.typography.labelSmall,
-                            fontWeight = FontWeight.SemiBold,
-                            color = MaterialTheme.colorScheme.primary,
+            if (positions.isEmpty()) {
+                Surface(
+                    color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.3f),
+                    shape = MaterialTheme.shapes.medium,
+                    modifier = Modifier.fillMaxWidth()
+                ) {
+                    Text(
+                        "当前无模拟持仓，交易权限正常。",
+                        Modifier.padding(AppSpacing.large),
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                }
+            } else {
+                positions.forEach { position ->
+                    SafetyPositionItem(position, deferrals.filter { it.symbol == position.symbol })
+                    if (position != positions.last()) {
+                        HorizontalDivider(
+                            modifier = Modifier.padding(vertical = AppSpacing.small),
+                            thickness = 0.5.dp,
+                            color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.3f)
                         )
                     }
                 }
             }
         }
+    }
+}
 
-        when {
-            loading -> Text("正在核对活动延迟状态…", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
-            error != null -> Text("延迟状态暂不可用：$error", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.error)
-            deferrals.isNotEmpty() && deferrals.none { d -> positions.any { it.symbol == d.symbol } } -> Text(
-                "还有 ${deferrals.size} 条活动延迟不属于当前持仓列表；请查看执行链路确认是否已被新决策取代。",
-                style = MaterialTheme.typography.labelSmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-            )
+@Composable
+private fun SafetyPositionItem(position: PaperTradingPositionDto, activeDeferrals: List<PaperExecutionDeferralDto>) {
+    val colors = MaterialTheme.marketColors
+    val locked = (position.locked_quantity ?: 0.0) > 0.0
+
+    Column(verticalArrangement = Arrangement.spacedBy(AppSpacing.small)) {
+        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
+            Column {
+                Text(position.name.ifBlank { position.symbol }, style = MaterialTheme.typography.bodyMedium, fontWeight = FontWeight.Bold)
+                Text(position.symbol, style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            }
+            if (locked) {
+                Surface(
+                    color = colors.warning.copy(alpha = 0.1f),
+                    shape = RoundedCornerShape(4.dp)
+                ) {
+                    Row(Modifier.padding(horizontal = 6.dp, vertical = 2.dp), verticalAlignment = Alignment.CenterVertically) {
+                        Icon(Icons.Default.Lock, null, Modifier.size(10.dp), tint = colors.warning)
+                        Spacer(Modifier.width(4.dp))
+                        Text("T+1 锁定中", style = MaterialTheme.typography.labelSmall, color = colors.warning, fontWeight = FontWeight.Bold)
+                    }
+                }
+            }
+        }
+
+        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(AppSpacing.medium)) {
+            SafetyFact("可用卖出", position.sellable_quantity?.let { "${it.toInt()} 股" } ?: "--", Modifier.weight(1f))
+            SafetyFact("冻结锁定", position.locked_quantity?.let { "${it.toInt()} 股" } ?: "0 股", Modifier.weight(1f))
+            SafetyFact("下次复核", position.next_eligible_sell_at?.let { paperSafetyTimestamp(it) } ?: "随时", Modifier.weight(1f))
+        }
+
+        activeDeferrals.forEach { deferral ->
+            Surface(
+                color = MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.3f),
+                shape = MaterialTheme.shapes.small,
+                modifier = Modifier.fillMaxWidth()
+            ) {
+                Text(
+                    text = "已拦截挂单：${paperDeferralAction(deferral.action)} · ${paperDeferralReason(deferral.reason_code)}",
+                    modifier = Modifier.padding(horizontal = AppSpacing.medium, vertical = AppSpacing.small),
+                    style = MaterialTheme.typography.labelSmall,
+                    color = MaterialTheme.colorScheme.primary,
+                    fontWeight = FontWeight.Bold
+                )
+            }
         }
     }
 }
 
 @Composable
-private fun SafetyMetric(label: String, value: String, modifier: Modifier) {
+private fun SafetyFact(label: String, value: String, modifier: Modifier) {
     Column(modifier) {
         Text(label, style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
-        Text(value, style = MaterialTheme.typography.bodySmall, fontWeight = FontWeight.SemiBold)
+        Text(value, style = MaterialTheme.typography.bodySmall, fontWeight = FontWeight.Bold)
     }
 }
 
 private fun paperDeferralAction(value: String): String = when (value.uppercase(Locale.ROOT)) {
     "REDUCE" -> "减仓"
-    "EXIT" -> "退出"
+    "EXIT" -> "清仓"
     "SELL" -> "卖出"
+    "BUY", "OPEN" -> "买入"
     else -> value
 }
 
 private fun paperDeferralReason(value: String): String = when {
-    value.contains("paper_t1_unsellable_quantity") -> "A 股 T+1 锁定"
-    value.contains("execution_quote") -> "等待合格成交报价"
-    value.contains("cooldown") -> "冷却期未结束"
-    else -> value.ifBlank { "等待重新评估" }
+    value.contains("paper_t1_unsellable_quantity") -> "T+1 交易限制"
+    value.contains("execution_quote") -> "行情不满足触发价"
+    value.contains("cooldown") -> "冷却期内"
+    else -> "策略暂未授权"
 }
 
 private fun paperSafetyTimestamp(value: String): String = runCatching {
     OffsetDateTime.parse(value)
         .withOffsetSameInstant(ZoneOffset.ofHours(8))
         .format(DateTimeFormatter.ofPattern("MM-dd HH:mm"))
-}.getOrElse { value.replace('T', ' ').substringBefore("+").substringBefore("Z") }
+}.getOrElse { "待定" }
 
 private fun Double.paperQuantity(): String = if (this % 1.0 == 0.0) toLong().toString() else "%.2f".format(Locale.US, this)

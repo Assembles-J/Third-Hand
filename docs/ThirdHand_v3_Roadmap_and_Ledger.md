@@ -21,7 +21,8 @@
 >
 > **Active product implementation track:** Personal Universe + Review Cadence +
 > first-class Watchlist. PUX1 backend/API is `BACKEND_READY / API_VISIBLE` via
-> #86; Android first-class Watchlist is tracked by #92. PUX2 ReviewPolicy /
+> #86; Android first-class Watchlist is implemented under #92 and awaits CI /
+> device acceptance. PUX2 ReviewPolicy /
 > AnalysisBudget is tracked by #93 and PUX3 bounded Discovery by #94. N3 is
 > `PRODUCT_DONE`; N4 AI Strategy Lab Shadow is the next Evaluation/AI-Lab
 > implementation milestone under #95.
@@ -151,11 +152,11 @@ Legend:
 | AI Strategy Lab | KEEP NEXT / #95 | N4 isolated paper-intent/forecast experiment plane; never a production arbiter |
 | ExperimentDefinition / StrategyEvaluation | KEEP / N3 PRODUCT_DONE | N3.1-N3.8 are accepted end to end for Formal `SWING_V1`: immutable experiment/universe lineage -> point-in-time outcomes -> strategy/benchmark evaluation -> GET-only Lab API -> Android Lab. Evaluation remains read-only and cannot rewrite Formal Action or production policy. |
 | full-stack product observability | KEEP | Backend -> API -> Android -> observable reasons/errors required before `PRODUCT_DONE` |
-| PersonalUniversePolicy | KEEP / API_VISIBLE / #92 | Portfolio + Watchlist remain primary daily universe; PUX1 backend/API accepted in #86 and Android first-class Watchlist remains pending |
+| PersonalUniversePolicy | KEEP / ANDROID_VISIBLE / #92 | Portfolio + Watchlist remain primary daily universe; PUX1 backend/API accepted in #86 and Android first-class Watchlist awaits CI/device acceptance |
 | ReviewPolicy / AnalysisBudget | KEEP / DESIGNED / #93 | scheduler wake-up is not analysis permission; NO_REVIEW/GUARD_ONLY/POSITION_REVIEW/FULL_RESEARCH |
 | Discovery / Candidate demotion | KEEP / DESIGNED / #94 | bounded optional Discovery is research-only and requires explicit Watchlist promotion |
 | Personal vs Experiment universe separation | KEEP / DESIGNED | mutable user Watchlist must never silently contaminate frozen Evaluation universe |
-| first-class Android Watchlist | KEEP / DESIGNED / #92 | user must manage Watchlist and see review state without admin/log access |
+| first-class Android Watchlist | KEEP / ANDROID_VISIBLE / #92 | user can manage Watchlist and positions without admin/log access; ReviewPolicy state remains PUX2 |
 
 ## B. Current-code conformance findings
 
@@ -168,10 +169,10 @@ Legend:
 7. Production verification on 2026-08-18 confirmed that the deployed ledger correctly blocks same-day CN sells, but Phase 5 is not closed until the #46 deployed acceptance matrix confirms no impossible order leaks through decision/sizing/scheduler/session/UI behavior.
 8. `DECISION_SHADOW_MODE` controls research/decision shadow output; it is not a switch for the simulated ledger. Automatic paper fills are governed by the persisted paper-trading setting and every execution entry point must honor the paper-execution safety contract.
 9. Report-period currentness and official CorporateEvent lifecycle reconciliation are implemented in repository code, but deployed Xiaomi/HK acceptance remains active.
-10. Android already has Watchlist API consumption and a buried self-selected list/add flow, but the bottom navigation remains News/Market/Trading/Admin. The new design promotes Watchlist to a first-class product entry rather than creating duplicate storage.
+10. Android Watchlist is now a first-class bottom-navigation destination backed by Personal Universe, with metadata edit, pause, screenshot coverage and stock-detail routing. CI and device acceptance remain required before `PRODUCT_DONE`.
 11. Existing Candidate lifecycle/cooldown remains useful as Discovery research infrastructure; it must no longer be presented as an AI stock-picking authority.
 12. Existing adaptive DISCOVERY/HOLDING_FOCUS/FULL_FOCUS scheduling already suppresses new discovery near full allocation, but it still conflates capital occupancy with research cadence. The new design separates universe membership, review permission and analysis depth.
-13. PUX1 backend/API is accepted on main-base CI with typed Personal Universe contracts, additive Watchlist metadata migration, local-only composition and explicit v2 routes; the user-visible Android entry remains the next slice.
+13. PUX1 backend/API is accepted on main-base CI with typed Personal Universe contracts, additive Watchlist metadata migration, local-only composition and explicit v2 routes; the user-visible Android entry is implemented and awaits CI/device acceptance.
 
 Therefore v3 remains an evolution of the present architecture, not a rewrite.
 
@@ -379,11 +380,12 @@ Canonical Architecture/Roadmap
   -> same-change canonical status sync
 ```
 
-### PUX1 — Personal Universe + first-class Watchlist — API_VISIBLE
+### PUX1 — Personal Universe + first-class Watchlist — ANDROID_VISIBLE / ACCEPTANCE_PENDING
 
-Current delivery state: `BACKEND_READY / API_VISIBLE` via #86. Android first-class
-entry and product acceptance are tracked by #92, so PUX1 is not
-`ANDROID_VISIBLE`, `OBSERVABLE`, or `PRODUCT_DONE` yet.
+Current delivery state: `BACKEND_READY / API_VISIBLE` via #86 and
+`ANDROID_VISIBLE` via #92. The Android surface has local JVM, screenshot,
+Debug and Release validation, but repository CI and physical-device acceptance
+remain open; PUX1 is therefore not `PRODUCT_DONE` yet.
 
 Backend/domain:
 - additive Watchlist metadata with priority/note/enabled on the existing table;
@@ -699,15 +701,16 @@ Also preserve:
 - **#75 cache-first symbol search:** local identities resolve without blocking on
   provider I/O and true misses use bounded background enrichment. This is useful
   infrastructure for the Watchlist Add flow and introduces no trading authority.
-- **PUX1 Personal Universe / Watchlist:** `BACKEND_READY / API_VISIBLE` via #86.
+- **PUX1 Personal Universe / Watchlist:** `BACKEND_READY / API_VISIBLE` via #86;
+  `ANDROID_VISIBLE / ACCEPTANCE_PENDING` via #92.
   The accepted backend/API slice adds typed Watchlist/Personal Universe contracts,
   additive `0019_pux1_watchlist_metadata`, local-only Portfolio + Watchlist
   composition, explicit `GET /v1/personal-universe` and
   `PUT /v1/watchlist/{symbol}`, v2 route registration and regression tests.
   Main-base acceptance passed compileall, full backend pytest (**423 passed,
   7 warnings**), Docker build, documentation-governance and `ci-gate`. Android
-  first-class Watchlist remains the next PUX1 slice under #92, so PUX1 is not
-  `PRODUCT_DONE`.
+  first-class Watchlist is implemented under #92; repository CI and physical
+  device acceptance remain required before `PRODUCT_DONE`.
 - **PUX2 Review Cadence / AnalysisBudget (#93) and PUX3 Discovery controls (#94):**
   remain `DESIGNED`. The approved target makes Portfolio + explicit Watchlist the
   primary personal research universe, demotes Candidate Pool product semantics

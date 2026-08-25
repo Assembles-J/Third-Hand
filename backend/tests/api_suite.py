@@ -1,7 +1,7 @@
 import hashlib
 import json
 import time
-from datetime import date, timedelta
+from datetime import date, datetime, timedelta
 
 from fastapi.testclient import TestClient
 
@@ -22,6 +22,38 @@ def setup_function():
 
 def test_health():
     assert client.get("/health").json() == {"status": "ok"}
+
+
+def test_market_quote_endpoint_exposes_completed_session_as_displayable(monkeypatch):
+    """The Android client must receive display freshness from the API, not infer it by age."""
+    from app.time_utils import BEIJING_TIMEZONE
+    from app.trading_calendar import TradingCalendarService
+    from app.legacy import application_legacy
+
+    symbol = "600519"
+    store.save_quotes([{
+        "symbol": symbol,
+        "name": "测试股票",
+        "price": 88.66,
+        "change_percent": 0.0,
+        "currency": "CNY",
+        "source": "test",
+        "as_of": "2026-08-19T15:00:00+08:00",
+        "retrieved_at": "2026-08-19T15:00:10+08:00",
+    }])
+    fixed_now = datetime(2026, 8, 19, 21, 47, tzinfo=BEIJING_TIMEZONE)
+
+    class FixedCalendar(TradingCalendarService):
+        def normalize_moment(self, moment=None):
+            return fixed_now
+
+    monkeypatch.setattr(application_legacy, "trading_calendar", FixedCalendar())
+    monkeypatch.setattr(main, "queue_background", lambda *_args, **_kwargs: None)
+
+    response = client.post("/v1/market/quotes/batch", json={"symbols": [symbol], "refresh": False})
+
+    assert response.status_code == 200
+    assert response.json()[0]["display_freshness"] == "session_close", response.json()
 
 
 def test_manual_paper_run_is_analysis_only_when_market_is_closed(monkeypatch):
