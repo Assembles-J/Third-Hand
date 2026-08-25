@@ -907,3 +907,16 @@ Paper Broker or Evaluation authority.
 - **Acceptance outstanding:** screenshot regression, repository CI and a
   physical-device walkthrough for loading, empty, ready, partial/stale and
   error states. Therefore this item is not `PRODUCT_DONE`.
+
+### Mobile execution-chain detail repair — IN_PROGRESS
+
+- **Android entry:** Bottom navigation -> Trading -> Execution chain records ->
+  Chain detail.
+- **Implemented slice:** selecting a run now loads the authoritative
+  `paperTradingRunDetail(runId)` payload and renders its loading, error, empty,
+  symbol-result and stage states. The record list closes before the detail
+  dialog opens, preventing stacked dialogs from obscuring the result.
+- **Authority impact:** none. This is read-only execution observability and
+  does not add or change execution authority.
+- **Acceptance outstanding:** repository CI, screenshot regression and a
+  physical-device walkthrough. It is not `PRODUCT_DONE`.

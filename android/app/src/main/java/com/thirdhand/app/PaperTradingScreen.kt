@@ -90,6 +90,21 @@ fun PaperTradingScreen(onOpenDetail: (ResearchTargetDto) -> Unit) {
 
     LaunchedEffect(Unit) { refresh() }
 
+    LaunchedEffect(selectedRunDetailId) {
+        val runId = selectedRunDetailId
+        runDetail = null
+        runDetailError = null
+        if (runId == null) {
+            runDetailLoading = false
+            return@LaunchedEffect
+        }
+        runDetailLoading = true
+        runCatching { api.paperTradingRunDetail(runId) }
+            .onSuccess { runDetail = it }
+            .onFailure { runDetailError = "无法读取本次执行链路，请稍后重试" }
+        runDetailLoading = false
+    }
+
     Scaffold(
         topBar = {
             TradingPageHeader("交易账户", "模拟账套 · 持仓驱动 · 影子交易") {
@@ -185,7 +200,14 @@ fun PaperTradingScreen(onOpenDetail: (ResearchTargetDto) -> Unit) {
 
     // Dialogs...
     if (showAllLogs) PaperLogHistoryDialog(dashboard?.logs.orEmpty(), onDismiss = { showAllLogs = false }, onOpenDecision = { selectedDecisionId = it })
-    if (showRunChain) PaperRunChainDialog(runs, onDismiss = { showRunChain = false }, onOpenRun = { selectedRunDetailId = it })
+    if (showRunChain) PaperRunChainDialog(
+        runs,
+        onDismiss = { showRunChain = false },
+        onOpenRun = {
+            showRunChain = false
+            selectedRunDetailId = it
+        },
+    )
     if (selectedRunDetailId != null) PaperRunDetailDialog(runDetail, runDetailLoading, runDetailError, onDismiss = { selectedRunDetailId = null }, onOpenDecision = { selectedDecisionId = it })
     if (selectedDecisionId != null) PaperDecisionAuditDialog(decisionReport, decisionContext, decisionLoading, decisionError, decisionLineage, onDismiss = { selectedDecisionId = null })
 }
@@ -393,16 +415,50 @@ private fun paperBeijingTimestamp(value: String): String = runCatching { OffsetD
     onDismissRequest = onDismiss,
     title = { Text("链路详情") },
     text = {
-        LazyColumn(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+        LazyColumn(
+            modifier = Modifier.heightIn(max = 440.dp),
+            verticalArrangement = Arrangement.spacedBy(8.dp),
+        ) {
             if (loading) item { LinearProgressIndicator(Modifier.fillMaxWidth()) }
+            error?.let { message ->
+                item {
+                    Surface(color = MaterialTheme.colorScheme.errorContainer, shape = MaterialTheme.shapes.medium) {
+                        Text(message, modifier = Modifier.padding(AppSpacing.medium), style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onErrorContainer)
+                    }
+                }
+            }
+            if (!loading && run == null && error == null) {
+                item { Text("该次执行没有可展示的链路数据。", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant) }
+            }
             run?.let { data ->
-                item { Text(data.message, style = MaterialTheme.typography.bodySmall) }
+                item {
+                    Text("${paperBeijingTimestamp(data.started_at)} · ${if (data.trigger == "manual") "手动" else "自动"}", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    Text(data.message.ifBlank { "本次执行已完成。" }, style = MaterialTheme.typography.bodySmall)
+                }
+                item {
+                    Text("标的结果", style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.Bold)
+                }
+                if (data.symbols.isEmpty()) {
+                    item { Text("本轮没有可处理标的。", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant) }
+                }
                 data.symbols.forEach { symbol ->
                     item {
-                         Row(Modifier.fillMaxWidth().clickable { onOpenDecision(symbol.detail["decision_id"] as? String) }.padding(vertical = 4.dp)) {
+                         Row(Modifier.fillMaxWidth().clickable(enabled = symbol.detail["decision_id"] is String, onClick = { onOpenDecision(symbol.detail["decision_id"] as? String) }).padding(vertical = 4.dp)) {
                              Text(symbol.symbol, fontWeight = FontWeight.Bold, modifier = Modifier.weight(1f))
                              Text(symbol.terminal_state, style = MaterialTheme.typography.labelSmall)
                          }
+                    }
+                }
+                if (data.stages.isNotEmpty()) {
+                    item { Text("执行阶段", style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.Bold, modifier = Modifier.padding(top = AppSpacing.small)) }
+                    items(data.stages, key = { it.id }) { stage ->
+                        Column(Modifier.fillMaxWidth()) {
+                            Row(Modifier.fillMaxWidth()) {
+                                Text(stage.stage, style = MaterialTheme.typography.bodySmall, fontWeight = FontWeight.SemiBold, modifier = Modifier.weight(1f))
+                                Text(stage.status, style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                            }
+                            if (stage.symbol != null) Text(stage.symbol, style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                        }
                     }
                 }
             }
