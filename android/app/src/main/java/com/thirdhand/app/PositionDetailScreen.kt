@@ -74,12 +74,12 @@ fun PositionDetailRoute(
             val quoteDeferred = async { runCatching { loadLatestDisplayQuotes(api, listOf(target.symbol)).firstOrNull() } }
             val holdingDeferred = async { runCatching { api.holdings().firstOrNull { it.symbol == target.symbol } } }
             val accountDeferred = async { runCatching { api.paperTradingAccount() } }
-            val logsDeferred = async { runCatching { api.paperTradingLogs(target.symbol, 100) } }
+            val salesDeferred = async { runCatching { api.sales(target.symbol) } }
 
             val quote = quoteDeferred.await().getOrNull()
             val holding = holdingDeferred.await().getOrNull()
             val paperPosition = accountDeferred.await().getOrNull()?.positions?.firstOrNull { it.symbol == target.symbol }
-            val logs = logsDeferred.await().getOrDefault(emptyList())
+            val sales = salesDeferred.await().getOrDefault(emptyList())
 
             val name = firstValidSecurityName(target.symbol, quote?.name, holding?.name, paperPosition?.name, target.name) ?: target.symbol
 
@@ -88,7 +88,7 @@ fun PositionDetailRoute(
                 quote = quote,
                 holding = holding,
                 paperPosition = paperPosition,
-                paperLogs = logs,
+                sales = sales,
                 resolvedName = name,
                 error = if (quote == null && holding == null && paperPosition == null) "无法连接行情服务" else null,
             )
@@ -151,14 +151,13 @@ fun PositionDetailRoute(
                 SectionLabel("成交流水", "Transaction History")
             }
 
-            val executedLogs = state.paperLogs.filter { it.status == "executed" }
-            if (executedLogs.isEmpty()) {
+            if (state.sales.isEmpty()) {
                 item {
-                    Text("暂无成交事实记录", Modifier.fillMaxWidth().padding(AppSpacing.xxLarge), textAlign = TextAlign.Center, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    Text("暂无卖出成交记录", Modifier.fillMaxWidth().padding(AppSpacing.xxLarge), textAlign = TextAlign.Center, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
                 }
             } else {
-                items(executedLogs.take(20)) { log ->
-                    LogItem(log)
+                items(state.sales.take(20), key = { it.id }) { sale ->
+                    SaleHistoryItem(sale)
                 }
             }
         }
@@ -168,9 +167,9 @@ fun PositionDetailRoute(
 @Composable
 private fun PositionHeroSection(state: PositionDetailUiState) {
     val colors = MaterialTheme.marketColors
-    val currentPrice = state.quote?.price ?: state.paperPosition?.last_price ?: 0.0
-    val averageCost = state.paperPosition?.average_cost ?: state.holding?.average_cost ?: 0.0
-    val quantity = state.paperPosition?.quantity ?: state.holding?.quantity ?: 0.0
+    val currentPrice = state.quote?.price ?: state.holding?.average_cost ?: state.paperPosition?.last_price ?: 0.0
+    val averageCost = state.holding?.average_cost ?: state.paperPosition?.average_cost ?: 0.0
+    val quantity = state.holding?.quantity ?: state.paperPosition?.quantity ?: 0.0
     val pnl = if(averageCost > 0) (currentPrice - averageCost) * quantity else 0.0
     val isPositive = pnl >= 0
 
@@ -181,7 +180,7 @@ private fun PositionHeroSection(state: PositionDetailUiState) {
         Column(Modifier.padding(AppSpacing.xxLarge)) {
             Text("当前持仓市值", style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
             Text(
-                text = "¥${state.paperPosition?.market_value?.positionMoney() ?: (currentPrice * quantity).positionMoney()}",
+                text = "${state.quote?.currency.positionCurrencySymbol()}${(currentPrice * quantity).positionMoney()}",
                 style = MaterialTheme.typography.displayMedium,
                 fontWeight = FontWeight.ExtraBold,
                 color = MaterialTheme.colorScheme.onSurface
@@ -215,9 +214,9 @@ private fun PositionHeroSection(state: PositionDetailUiState) {
 
 @Composable
 private fun PositionMetricsGrid(state: PositionDetailUiState) {
-    val quantity = state.paperPosition?.quantity ?: state.holding?.quantity ?: 0.0
-    val cost = state.paperPosition?.average_cost ?: state.holding?.average_cost ?: 0.0
-    val current = state.quote?.price ?: state.paperPosition?.last_price ?: 0.0
+    val quantity = state.holding?.quantity ?: state.paperPosition?.quantity ?: 0.0
+    val cost = state.holding?.average_cost ?: state.paperPosition?.average_cost ?: 0.0
+    val current = state.quote?.price ?: state.holding?.average_cost ?: state.paperPosition?.last_price ?: 0.0
 
     Card(
         modifier = Modifier.padding(horizontal = AppSpacing.xxLarge, vertical = AppSpacing.medium),
@@ -261,22 +260,20 @@ private fun SectionLabel(title: String, subtitle: String) {
 }
 
 @Composable
-private fun LogItem(log: PaperTradingLogDto) {
-    val isBuy = log.side == "BUY"
+private fun SaleHistoryItem(sale: SaleRecordDto) {
     val colors = MaterialTheme.marketColors
-    val color = if (isBuy) colors.rise else colors.fall
 
     Column(Modifier.fillMaxWidth().padding(horizontal = AppSpacing.xxLarge, vertical = AppSpacing.medium)) {
         Row(verticalAlignment = Alignment.CenterVertically) {
-            Box(Modifier.size(8.dp).clip(CircleShape).background(color))
+            Box(Modifier.size(8.dp).clip(CircleShape).background(colors.fall))
             Spacer(Modifier.width(AppSpacing.medium))
-            Text(if(isBuy) "买入成交" else "卖出成交", style = MaterialTheme.typography.bodyMedium, fontWeight = FontWeight.Bold)
+            Text("卖出成交", style = MaterialTheme.typography.bodyMedium, fontWeight = FontWeight.Bold)
             Spacer(Modifier.weight(1f))
-            Text("¥${log.price.positionMoney()}", style = MaterialTheme.typography.bodyMedium, fontWeight = FontWeight.Bold)
+            Text("¥${sale.sale_price.positionMoney()}", style = MaterialTheme.typography.bodyMedium, fontWeight = FontWeight.Bold)
         }
         Row(Modifier.padding(start = 16.dp, top = 2.dp)) {
             Text(
-                "${log.executed_at.take(10)} · ${log.quantity.toInt()} 股",
+                "${sale.sold_at.take(10)} · ${sale.quantity.positionQuantity()} · 已实现盈亏 ${if (sale.realized_pnl >= 0) "+" else ""}${sale.realized_pnl.positionMoney()}",
                 style = MaterialTheme.typography.labelSmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant
             )
@@ -352,7 +349,7 @@ private data class PositionDetailUiState(
     val quote: MarketQuoteDto? = null,
     val holding: HoldingDto? = null,
     val paperPosition: PaperTradingPositionDto? = null,
-    val paperLogs: List<PaperTradingLogDto> = emptyList(),
+    val sales: List<SaleRecordDto> = emptyList(),
     val resolvedName: String? = null,
     val error: String? = null,
 )
@@ -361,6 +358,13 @@ private enum class PositionSecondaryPage { DECISION, RESEARCH }
 
 private fun Double.positionMoney(): String = "%.2f".format(Locale.US, this)
 private fun Double.positionQuantity(): String = if (this % 1.0 == 0.0) "${toLong()} 股" else "%.2f 股".format(Locale.US, this)
+
+private fun String?.positionCurrencySymbol(): String = when (this?.uppercase(Locale.ROOT)) {
+    "HKD" -> "HK$"
+    "USD" -> "\$"
+    "CNY", "RMB", null, "" -> "¥"
+    else -> "$this "
+}
 
 private fun calendarHoldingDays(value: String): Long {
     val start = runCatching { OffsetDateTime.parse(value).withOffsetSameInstant(ZoneOffset.ofHours(8)).toLocalDate() }
