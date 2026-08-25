@@ -2,6 +2,7 @@ package com.thirdhand.app.watchlist
 
 import android.content.Context
 import com.thirdhand.app.EndpointStore
+import com.thirdhand.app.HoldingDto
 import kotlinx.coroutines.CancellationException
 import okhttp3.OkHttpClient
 import okhttp3.ResponseBody
@@ -16,6 +17,7 @@ import retrofit2.http.POST
 import retrofit2.http.PUT
 import retrofit2.http.Path
 import java.io.IOException
+import java.util.Locale
 import java.util.concurrent.TimeUnit
 
 data class PersonalUniverseCountsDto(
@@ -77,6 +79,14 @@ data class WatchlistMetadataDto(
     val updated_at: String = "",
 )
 
+internal data class LegacyWatchlistItemDto(
+    val symbol: String,
+    val name: String = "",
+    val enabled: Boolean = true,
+    val priority: String = "NORMAL",
+    val note: String = "",
+)
+
 sealed interface WatchlistLoadResult {
     data class Success(val response: PersonalUniverseResponseDto) : WatchlistLoadResult
     data class Failure(val message: String, val recoverable: Boolean = true) : WatchlistLoadResult
@@ -92,6 +102,12 @@ interface WatchlistRepository {
 private interface WatchlistApi {
     @GET("v1/personal-universe")
     suspend fun personalUniverse(): PersonalUniverseResponseDto
+
+    @GET("v1/watchlist")
+    suspend fun legacyWatchlist(): List<LegacyWatchlistItemDto>
+
+    @GET("v1/holdings")
+    suspend fun holdings(): List<HoldingDto>
 
     @POST("v1/watchlist")
     suspend fun addWatchlist(@Body request: WatchlistCreateRequestDto): Response<ResponseBody>
@@ -116,11 +132,11 @@ class NetworkWatchlistRepository(
     private var configuredBaseUrl = ""
     private var configuredService: WatchlistApi? = null
 
-    override suspend fun load(): WatchlistLoadResult = execute { service().personalUniverse() }
+    override suspend fun load(): WatchlistLoadResult = execute { loadPersonalUniverse(service()) }
 
     override suspend fun add(symbol: String, name: String): WatchlistLoadResult = execute {
         service().addWatchlist(WatchlistCreateRequestDto(symbol = symbol, name = name)).requireSuccess()
-        service().personalUniverse()
+        loadPersonalUniverse(service())
     }
 
     override suspend fun update(symbol: String, enabled: Boolean, priority: String, note: String): WatchlistLoadResult = execute {
@@ -128,12 +144,19 @@ class NetworkWatchlistRepository(
             symbol,
             WatchlistUpdateRequestDto(enabled = enabled, priority = priority, note = note),
         )
-        service().personalUniverse()
+        loadPersonalUniverse(service())
     }
 
     override suspend fun remove(symbol: String): WatchlistLoadResult = execute {
         service().deleteWatchlist(symbol).requireSuccess()
-        service().personalUniverse()
+        loadPersonalUniverse(service())
+    }
+
+    private suspend fun loadPersonalUniverse(api: WatchlistApi): PersonalUniverseResponseDto = try {
+        api.personalUniverse()
+    } catch (error: HttpException) {
+        if (error.code() != 404) throw error
+        legacyPersonalUniverse(api.legacyWatchlist(), api.holdings())
     }
 
     private suspend fun execute(block: suspend () -> PersonalUniverseResponseDto): WatchlistLoadResult = try {
@@ -165,4 +188,42 @@ class NetworkWatchlistRepository(
         }
         return requireNotNull(configuredService)
     }
+}
+
+internal fun legacyPersonalUniverse(
+    watchlist: List<LegacyWatchlistItemDto>,
+    holdings: List<HoldingDto>,
+): PersonalUniverseResponseDto {
+    val watchBySymbol = watchlist.associateBy { it.symbol.trim().uppercase(Locale.ROOT) }
+    val holdingBySymbol = holdings.associateBy { it.symbol.trim().uppercase(Locale.ROOT) }
+    val symbols = (watchBySymbol.keys + holdingBySymbol.keys).distinct()
+    val items = symbols.map { symbol ->
+        val watch = watchBySymbol[symbol]
+        val holding = holdingBySymbol[symbol]
+        PersonalUniverseItemDto(
+            symbol = symbol,
+            name = holding?.name?.takeIf { it.isNotBlank() } ?: watch?.name.orEmpty(),
+            membership = when {
+                watch != null && holding != null -> "POSITION_AND_WATCHLIST"
+                holding != null -> "POSITION"
+                else -> "WATCHLIST"
+            },
+            watchlist_priority = watch?.priority,
+            watchlist_note = watch?.note,
+            watchlist_enabled = watch?.enabled,
+            position_quantity = holding?.quantity,
+            quote_display_state = "unavailable",
+        )
+    }
+    return PersonalUniverseResponseDto(
+        generated_at = "",
+        items = items,
+        counts = PersonalUniverseCountsDto(
+            positions = holdingBySymbol.size,
+            watchlist = watchBySymbol.size,
+            combined = items.size,
+        ),
+        data_state = "legacy_fallback",
+        warnings = listOf("服务器暂未提供 Personal Universe 聚合接口，已使用兼容数据"),
+    )
 }

@@ -22,6 +22,17 @@ sealed interface WatchlistUiState {
 fun WatchlistUiState.Ready.visibleItems(): List<PersonalUniverseItemDto> = when (selectedTab) {
     PersonalUniverseTab.WATCHLIST -> response.items.filter { it.isWatchlist }
     PersonalUniverseTab.POSITIONS -> response.items.filter { it.isPosition }
+}.sortedWith(
+    compareBy<PersonalUniverseItemDto> { watchlistPriorityRank(it.watchlist_priority) }
+        .thenBy { it.name.ifBlank { it.symbol } }
+        .thenBy { it.symbol },
+)
+
+private fun watchlistPriorityRank(priority: String?): Int = when (priority?.uppercase()) {
+    "CORE" -> 0
+    "FOCUS" -> 1
+    "NORMAL" -> 2
+    else -> 3
 }
 
 class WatchlistController(private val repository: WatchlistRepository) {

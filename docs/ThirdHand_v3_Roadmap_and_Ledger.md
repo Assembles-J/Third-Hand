@@ -932,3 +932,25 @@ Paper Broker or Evaluation authority.
 - **Acceptance outstanding:** screenshot regression, repository CI and a
   physical-device check of monthly, weekly, daily and intraday periods. It is
   not `PRODUCT_DONE`.
+## Delivery update — 2026-08-25 — S0.2 Watchlist Recovery
+
+- **Android entry:** Bottom navigation -> Watchlist remains first-class and opens
+  the selected Stock Detail without requiring an admin/log surface.
+- **404 recovery:** Android first requests the authoritative
+  `GET /v1/personal-universe`; an explicit HTTP 404 falls back to the existing
+  `GET /v1/watchlist` + `GET /v1/holdings` contracts, merges overlap without
+  duplicates and visibly labels the compatibility state. Other HTTP failures
+  still fail closed and remain observable.
+- **Daily management:** edit and remove actions are both reachable for Watchlist
+  rows; priority/note/enabled metadata, deterministic priority/name sorting and
+  review status are visible. Position-only rows cannot be removed as Watchlist.
+- **Observable states:** compatibility warning, mutation success, transient
+  failure with retry, initial error with retry, loading and empty states are
+  explicit. Mutations reload authoritative server state.
+- **Tests:** controller coverage now includes deterministic ordering and legacy
+  overlap reconciliation in addition to mutation/refresh behavior.
+- **Delivery state:** `ANDROID_READY / ACCEPTANCE_PENDING`; official CI and a
+  physical-device add/edit/remove/restart walkthrough remain required before
+  `PRODUCT_DONE`.
+- **Authority impact:** none. Personal Universe affects attention/display only;
+  it does not alter Formal Decision or execution authority.
