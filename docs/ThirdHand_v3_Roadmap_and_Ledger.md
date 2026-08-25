@@ -987,3 +987,22 @@ Paper Broker or Evaluation authority.
 - **Delivery state:** `ANDROID_READY / ACCEPTANCE_PENDING`; CI and physical-device
   period switching remain required before `PRODUCT_DONE`.
 - **Authority impact:** none. K-line remains read-only timing evidence.
+
+## Delivery update — 2026-08-25 — S0.5 canonical AI entry
+
+- **Stock facts first:** Stock Detail now defaults to quote/market facts and
+  K-line only. Formal Decision, company research and paper audit history no
+  longer continue as long-form content on the basic facts surface.
+- **Canonical secondary entry:** the top-bar `决策与 AI` action opens the
+  dedicated Decision Workspace. From there, `AI Research` remains an explicit
+  deeper action; Back returns to unchanged stock facts.
+- **Holding path:** Holding Detail keeps its existing Decision icon and the same
+  Decision -> AI Research hierarchy, so held and Watchlist-only symbols no
+  longer expose competing AI destinations.
+- **Failure isolation:** AI/research availability cannot blank or block the
+  quote/K-line facts screen.
+- **Delivery state:** `ANDROID_READY / ACCEPTANCE_PENDING`; CI and a
+  physical-device Stock Detail -> Decision -> AI Research -> Back walkthrough
+  remain required before `PRODUCT_DONE`.
+- **Authority impact:** none. AI remains explanation/research only and cannot
+  override Formal Decision or execution gates.

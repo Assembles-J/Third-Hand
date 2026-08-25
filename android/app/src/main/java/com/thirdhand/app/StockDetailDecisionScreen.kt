@@ -1,5 +1,6 @@
 package com.thirdhand.app
 
+import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
@@ -55,6 +56,7 @@ fun StockDetailDecisionRoute(
     var paperDecisionLoading by remember(target.symbol) { mutableStateOf(false) }
     var loading by remember(target.symbol) { mutableStateOf(true) }
     var error by remember(target.symbol) { mutableStateOf<String?>(null) }
+    var decisionWorkspaceOpen by remember(target.symbol) { mutableStateOf(false) }
 
     fun load() = scope.launch {
         loading = true
@@ -76,6 +78,69 @@ fun StockDetailDecisionRoute(
 
     LaunchedEffect(target.symbol) { load() }
 
+    BackHandler(enabled = decisionWorkspaceOpen) { decisionWorkspaceOpen = false }
+
+    if (decisionWorkspaceOpen) {
+        Scaffold(
+            topBar = {
+                TopAppBar(
+                    title = {
+                        Column {
+                            Text("决策工作区", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
+                            Text("${target.name} · ${target.symbol}", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                        }
+                    },
+                    navigationIcon = {
+                        IconButton(onClick = { decisionWorkspaceOpen = false }) {
+                            Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "返回股票事实")
+                        }
+                    },
+                    actions = {
+                        IconButton(onClick = { onResearch(target) }) {
+                            Icon(Icons.Default.AutoGraph, contentDescription = "进入 AI Research", tint = MaterialTheme.colorScheme.primary)
+                        }
+                    },
+                )
+            },
+        ) { paddingValues ->
+            LazyColumn(
+                modifier = Modifier.fillMaxSize().padding(paddingValues),
+                contentPadding = PaddingValues(bottom = AppSpacing.xxLarge),
+            ) {
+                item { DecisionStatusBanner(quote, report) }
+                item {
+                    SectionHeader("决策报告", "Formal Decision · What Changed")
+                    DecisionReportCard(report, onResearch = { onResearch(target) })
+                }
+                item {
+                    SectionHeader("公司情报", "Research Evidence")
+                    CompanyIntelligencePanel(
+                        symbol = target.symbol,
+                        researchPriority = if (paperPosition != null || holding != null) "L3" else "L2",
+                    )
+                }
+                item {
+                    SectionHeader("交易历史", "Paper Trading Logs")
+                    if (paperLogs.isEmpty()) EmptyStateSmall("暂无交易记录")
+                }
+                items(paperLogs.take(10), key = { it.id }) { log ->
+                    PaperLogRow(log, onOpenAnalysis = { selectedPaperDecisionId = log.decision_id })
+                }
+            }
+        }
+
+        if (selectedPaperDecisionId != null) {
+            PaperDecisionAuditDialog(
+                paperDecision,
+                paperDecisionContext,
+                paperDecisionLoading,
+                paperDecisionError,
+                onDismiss = { selectedPaperDecisionId = null }
+            )
+        }
+        return
+    }
+
     Scaffold(
         topBar = {
             TopAppBar(
@@ -91,6 +156,9 @@ fun StockDetailDecisionRoute(
                     }
                 },
                 actions = {
+                    IconButton(onClick = { decisionWorkspaceOpen = true }) {
+                        Icon(Icons.Default.AutoGraph, contentDescription = "决策与 AI", tint = MaterialTheme.colorScheme.primary)
+                    }
                     IconButton(onClick = ::load, enabled = !loading) {
                         if (loading) CircularProgressIndicator(Modifier.size(20.dp), strokeWidth = 2.dp)
                         else Icon(Icons.Filled.Refresh, "刷新")
@@ -115,48 +183,10 @@ fun StockDetailDecisionRoute(
             }
 
             item {
-                DecisionStatusBanner(quote, report)
-            }
-
-            item {
                 SectionHeader("行情走势", "Real-time K-Line")
                 TradingPeriodKLinePanel(symbol = target.symbol, quote = quote)
             }
-
-            item {
-                SectionHeader("AI 决策报告", "Decision Analysis")
-                DecisionReportCard(report, onResearch = { onResearch(target) })
-            }
-
-            item {
-                SectionHeader("公司情报", "Company Intelligence")
-                CompanyIntelligencePanel(
-                    symbol = target.symbol,
-                    researchPriority = if (paperPosition != null || holding != null) "L3" else "L2",
-                )
-            }
-
-            item {
-                SectionHeader("交易历史", "Paper Trading Logs")
-                if (paperLogs.isEmpty()) {
-                    EmptyStateSmall("暂无交易记录")
-                }
-            }
-
-            items(paperLogs.take(10), key = { it.id }) { log ->
-                PaperLogRow(log, onOpenAnalysis = { selectedPaperDecisionId = log.decision_id })
-            }
         }
-    }
-
-    if (selectedPaperDecisionId != null) {
-        PaperDecisionAuditDialog(
-            paperDecision,
-            paperDecisionContext,
-            paperDecisionLoading,
-            paperDecisionError,
-            onDismiss = { selectedPaperDecisionId = null }
-        )
     }
 }
 
