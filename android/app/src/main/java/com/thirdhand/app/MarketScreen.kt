@@ -1,55 +1,34 @@
 package com.thirdhand.app
 
+import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
-import androidx.compose.foundation.rememberScrollState
-import androidx.compose.foundation.verticalScroll
-import androidx.compose.foundation.layout.Column
-import androidx.compose.foundation.layout.PaddingValues
-import androidx.compose.foundation.layout.Row
-import androidx.compose.foundation.layout.fillMaxSize
-import androidx.compose.foundation.layout.fillMaxWidth
-import androidx.compose.foundation.layout.padding
-import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.LazyListScope
 import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.Refresh
-import androidx.compose.material.icons.filled.Search
-import androidx.compose.material.icons.filled.TrendingDown
-import androidx.compose.material.icons.filled.TrendingFlat
-import androidx.compose.material.icons.filled.TrendingUp
-import androidx.compose.material3.Card
-import androidx.compose.material3.CardDefaults
-import androidx.compose.material3.CircularProgressIndicator
-import androidx.compose.material3.ExperimentalMaterial3Api
-import androidx.compose.material3.FilterChip
-import androidx.compose.material3.Icon
-import androidx.compose.material3.IconButton
-import androidx.compose.material3.LinearProgressIndicator
-import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.ModalBottomSheet
-import androidx.compose.material3.Tab
-import androidx.compose.material3.TabRow
-import androidx.compose.material3.Text
-import androidx.compose.runtime.Composable
-import androidx.compose.runtime.LaunchedEffect
-import androidx.compose.runtime.getValue
-import androidx.compose.runtime.mutableIntStateOf
-import androidx.compose.runtime.mutableStateOf
-import androidx.compose.runtime.remember
-import androidx.compose.runtime.rememberCoroutineScope
-import androidx.compose.runtime.setValue
+import androidx.compose.material.icons.filled.*
+import androidx.compose.material3.*
+import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
+import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material3.TabRowDefaults.tabIndicatorOffset
 import com.thirdhand.app.ui.components.TradingPageHeader
 import com.thirdhand.app.ui.components.TradingRowDivider
 import com.thirdhand.app.ui.components.TradingSection
+import com.thirdhand.app.ui.theme.AppSpacing
 import com.thirdhand.app.ui.theme.LocalMarketColors
+import com.thirdhand.app.ui.theme.marketColors
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 
@@ -118,63 +97,78 @@ fun MarketScreen(onOpenDetail: (ResearchTargetDto) -> Unit) {
         sectorLoading = false
     }
 
-    LazyColumn(Modifier.fillMaxSize(), contentPadding = PaddingValues(bottom = 24.dp)) {
-        item {
-            TradingPageHeader("行情", "全市场快照、资金流与持仓") {
+    Scaffold(
+        topBar = {
+            TradingPageHeader("行情中心", "全市场实时快照与深度数据") {
                 IconButton(onClick = ::refresh, enabled = !loading) {
                     if (loading) CircularProgressIndicator(Modifier.size(20.dp), strokeWidth = 2.dp)
-                    else Icon(Icons.Filled.Refresh, "刷新行情")
+                    else Icon(Icons.Filled.Refresh, "刷新行情", tint = MaterialTheme.colorScheme.primary)
                 }
             }
         }
-        item {
-            Card(
-                modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 10.dp).clickable { searchOpen = true },
-                colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceContainerHigh),
-            ) {
-                Row(Modifier.fillMaxWidth().padding(horizontal = 14.dp, vertical = 12.dp), verticalAlignment = Alignment.CenterVertically) {
-                    Icon(Icons.Filled.Search, contentDescription = null, modifier = Modifier.size(20.dp), tint = MaterialTheme.colorScheme.onSurfaceVariant)
-                    Column(Modifier.padding(start = 10.dp)) {
-                        Text("搜索股票名称 / 代码", style = MaterialTheme.typography.bodyMedium, fontWeight = FontWeight.Medium)
-                        Text("支持 A 股、ETF、港股", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+    ) { paddingValues ->
+        LazyColumn(
+            Modifier.fillMaxSize().padding(paddingValues),
+            contentPadding = PaddingValues(bottom = AppSpacing.xxLarge)
+        ) {
+            item {
+                SearchBarProxy(onClick = { searchOpen = true })
+            }
+            if (loading && quotes.isEmpty()) {
+                item { LinearProgressIndicator(Modifier.fillMaxWidth().padding(horizontal = AppSpacing.xxLarge)) }
+            }
+            error?.let { item { ErrorBanner(it) } }
+
+            stickyHeader {
+                Surface(Modifier.fillMaxWidth(), color = MaterialTheme.colorScheme.surface, shadowElevation = 1.dp) {
+                    TabRow(
+                        selectedTabIndex = selectedTab,
+                        containerColor = Color.Transparent,
+                        divider = {},
+                        indicator = { tabPositions ->
+                            if (selectedTab < tabPositions.size) {
+                                TabRowDefaults.SecondaryIndicator(
+                                    Modifier.tabIndicatorOffset(tabPositions[selectedTab]),
+                                    color = MaterialTheme.colorScheme.primary
+                                )
+                            }
+                        }
+                    ) {
+                        listOf("概览", "行业板块", "自选个股").forEachIndexed { index, label ->
+                            Tab(
+                                selected = selectedTab == index,
+                                onClick = { selectedTab = index },
+                                text = {
+                                    Text(
+                                        label,
+                                        fontWeight = if (selectedTab == index) FontWeight.Bold else FontWeight.Normal,
+                                        style = MaterialTheme.typography.labelLarge
+                                    )
+                                }
+                            )
+                        }
                     }
                 }
             }
-        }
-        if (loading) item { LinearProgressIndicator(Modifier.fillMaxWidth().padding(horizontal = 20.dp)) }
-        error?.let { item { Text(it, Modifier.padding(horizontal = 20.dp, vertical = 12.dp), color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.bodySmall) } }
-        item {
-            TabRow(selectedTabIndex = selectedTab) {
-                listOf("大盘", "板块", "个股").forEachIndexed { index, label ->
-                    Tab(selected = selectedTab == index, onClick = { selectedTab = index }, text = { Text(label) })
-                }
-            }
-        }
-        when (selectedTab) {
-            0 -> item { MarketOverview(pulse) }
-            1 -> item {
-                MarketSectorRanking(pulse, onOpenSector = {
+
+            when (selectedTab) {
+                0 -> marketOverview(pulse)
+                1 -> marketSectorRanking(pulse, onOpenSector = {
                     sectorLoading = true
                     sectorDetail = null
                     selectedSector = it
                 })
-            }
-            else -> {
-                item { TradingSection("全部股票", if (quotes.isEmpty()) "等待本地数据" else "持仓置顶 · 共 ${quotes.size} 只 · 点击查看详情与 K 线") }
-                item { StockRankingFilters(stockRanking) { stockRanking = it } }
-                if (!loading && quotes.isEmpty()) item { Text("数据库还没有股票行情。完成一次市场扫描或分析后，数据会显示在这里。", Modifier.padding(horizontal = 20.dp, vertical = 14.dp), style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant) }
-                val rankKey = mapOf("涨幅" to "gainers", "跌幅" to "losers", "成交额" to "amount", "主力流入" to "main_inflow", "主力流出" to "main_outflow")[stockRanking]
-                if (rankKey == null) {
-                    items(quotes, key = { it.symbol }) { quote -> MarketQuoteRow(quote, quote.symbol in paperSymbols, onOpenDetail) }
-                } else {
-                    items(pulse?.rankings?.get(rankKey).orEmpty(), key = { it.symbol }) { row -> MarketRankingRow(row, stockRanking, pulse?.retrieved_at, onOpenDetail) }
-                }
+                else -> stockList(quotes, pulse, paperSymbols, stockRanking, loading, onOpenDetail) { stockRanking = it }
             }
         }
     }
 
     if (searchOpen) {
-        ModalBottomSheet(onDismissRequest = { searchOpen = false }) {
+        ModalBottomSheet(
+            onDismissRequest = { searchOpen = false },
+            dragHandle = { BottomSheetDefaults.DragHandle() },
+            containerColor = MaterialTheme.colorScheme.surface
+        ) {
             StockSearchScreen(onSelect = { candidate ->
                 searchOpen = false
                 onOpenDetail(ResearchTargetDto(candidate.symbol, candidate.name, "market", ""))
@@ -183,117 +177,322 @@ fun MarketScreen(onOpenDetail: (ResearchTargetDto) -> Unit) {
     }
 
     selectedSector?.let { sector ->
-        ModalBottomSheet(onDismissRequest = { selectedSector = null; sectorDetail = null; sectorLoading = false }) {
+        ModalBottomSheet(
+            onDismissRequest = { selectedSector = null; sectorDetail = null; sectorLoading = false },
+            dragHandle = { BottomSheetDefaults.DragHandle() }
+        ) {
             SectorDrillDownSheet(sector, sectorDetail, sectorLoading, onOpenDetail)
         }
     }
 }
 
 @Composable
-private fun StockRankingFilters(selected: String, onSelected: (String) -> Unit) {
-    LazyRow(Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 8.dp)) {
-        items(listOf("全部", "涨幅", "跌幅", "成交额", "主力流入", "主力流出")) { label ->
-            FilterChip(selected = selected == label, onClick = { onSelected(label) }, label = { Text(label) }, modifier = Modifier.padding(end = 8.dp))
+private fun SearchBarProxy(onClick: () -> Unit) {
+    Surface(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(horizontal = AppSpacing.xxLarge, vertical = AppSpacing.medium)
+            .clickable(onClick = onClick),
+        color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f),
+        shape = MaterialTheme.shapes.medium
+    ) {
+        Row(
+            Modifier.padding(horizontal = AppSpacing.large, vertical = 10.dp),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Icon(
+                Icons.Filled.Search,
+                contentDescription = null,
+                modifier = Modifier.size(20.dp),
+                tint = MaterialTheme.colorScheme.primary
+            )
+            Spacer(Modifier.width(AppSpacing.medium))
+            Text(
+                "搜索股票名称 / 代码",
+                style = MaterialTheme.typography.bodyMedium,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
         }
     }
 }
 
 @Composable
-private fun MarketOverview(pulse: MarketIntelligenceDto?) {
-    val colors = LocalMarketColors.current
-    val breadth = pulse?.breadth.orEmpty()
-    MarketSessionCard(pulse)
-    TradingSection("市场概览", marketFreshnessLabel(pulse))
-    Card(
-        modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp),
-        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
+private fun ErrorBanner(message: String) {
+    Surface(
+        modifier = Modifier.fillMaxWidth().padding(horizontal = AppSpacing.xxLarge, vertical = AppSpacing.small),
+        color = MaterialTheme.colorScheme.errorContainer,
+        shape = MaterialTheme.shapes.small
     ) {
-        Row(Modifier.fillMaxWidth().padding(12.dp)) {
-            pulse?.indices?.take(3)?.forEach { index ->
-                val change = index.change_percent ?: 0.0
-                Column(Modifier.weight(1f).padding(end = 8.dp)) {
-                    Text(index.name, style = MaterialTheme.typography.labelMedium)
-                    Text(index.price?.let { "%.2f".format(it) } ?: "--", fontWeight = FontWeight.SemiBold)
-                    Text("${if (change > 0) "+" else ""}${"%.2f".format(change)}%", color = if (change >= 0) colors.rise else colors.fall, style = MaterialTheme.typography.labelSmall)
+        Text(
+            message,
+            Modifier.padding(AppSpacing.medium),
+            color = MaterialTheme.colorScheme.onErrorContainer,
+            style = MaterialTheme.typography.bodySmall
+        )
+    }
+}
+
+private fun LazyListScope.marketOverview(pulse: MarketIntelligenceDto?) {
+    item { MarketSessionCard(pulse) }
+    item { TradingSection("核心指数") }
+    item { IndexGrid(pulse) }
+    item { MarketBreadthSection(pulse) }
+    item { TradingSection("龙虎榜单", "实时资金博弈排行") }
+    item { RankingPreviewGrid(pulse) }
+}
+
+@Composable
+private fun IndexGrid(pulse: MarketIntelligenceDto?) {
+    val colors = MaterialTheme.marketColors
+    Row(Modifier.fillMaxWidth().padding(horizontal = AppSpacing.xxLarge, vertical = AppSpacing.small), horizontalArrangement = Arrangement.spacedBy(AppSpacing.medium)) {
+        pulse?.indices?.take(3)?.forEach { index ->
+            val change = index.change_percent ?: 0.0
+            Surface(
+                Modifier.weight(1f),
+                color = MaterialTheme.colorScheme.surface,
+                shape = MaterialTheme.shapes.medium,
+                border = androidx.compose.foundation.BorderStroke(0.5.dp, MaterialTheme.colorScheme.outlineVariant)
+            ) {
+                Column(Modifier.padding(AppSpacing.medium), horizontalAlignment = Alignment.CenterHorizontally) {
+                    Text(index.name, style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    Text(index.price?.let { "%.2f".format(it) } ?: "--", fontWeight = FontWeight.Bold, style = MaterialTheme.typography.titleMedium)
+                    Text(
+                        "${if (change > 0) "+" else ""}${"%.2f".format(change)}%",
+                        color = if (change >= 0) colors.rise else colors.fall,
+                        style = MaterialTheme.typography.labelSmall,
+                        fontWeight = FontWeight.Bold
+                    )
                 }
             }
         }
     }
-    Text("涨 ${breadth["rise_count"]?.toInt() ?: "--"} · 平 ${breadth["flat_count"]?.toInt() ?: "--"} · 跌 ${breadth["fall_count"]?.toInt() ?: "--"}", Modifier.padding(horizontal = 20.dp, vertical = 12.dp), style = MaterialTheme.typography.bodyMedium)
-    val mainNet = pulse?.fund_flow?.get("主力")?.get("net_amount")
-    Text("主力净流入  ${mainNet?.let { "%.2f 亿".format(it / 100000000) } ?: "数据待补齐"}", Modifier.padding(horizontal = 20.dp), color = if ((mainNet ?: 0.0) >= 0) colors.rise else colors.fall, style = MaterialTheme.typography.titleSmall)
-    TradingSection("股票排行", "涨幅与成交额 · 点击个股页查看完整列表")
-    Row(Modifier.fillMaxWidth().padding(horizontal = 20.dp)) {
-        MarketRankingPreview("涨幅榜", pulse?.rankings?.get("gainers").orEmpty(), colors.rise, Modifier.weight(1f))
-        MarketRankingPreview("跌幅榜", pulse?.rankings?.get("losers").orEmpty(), colors.fall, Modifier.weight(1f))
-    }
-    TradingSection("主力资金榜", "个股净流入 / 净流出")
-    Row(Modifier.fillMaxWidth().padding(horizontal = 20.dp)) {
-        MarketRankingPreview("主力流入", pulse?.rankings?.get("main_inflow").orEmpty(), colors.rise, Modifier.weight(1f), showNetAmount = true)
-        MarketRankingPreview("主力流出", pulse?.rankings?.get("main_outflow").orEmpty(), colors.fall, Modifier.weight(1f), showNetAmount = true)
-    }
-    pulse?.northbound?.firstOrNull()?.let { northbound ->
-        Text("北向 ${northbound.direction.ifBlank { northbound.type }}  ${northbound.net_amount?.let { "%.2f 亿".format(it) } ?: "--"}", Modifier.padding(horizontal = 20.dp, vertical = 14.dp), style = MaterialTheme.typography.bodyMedium, color = if ((northbound.net_amount ?: 0.0) >= 0) colors.rise else colors.fall)
-    }
-    pulse?.error_message?.let { Text("数据降级：$it", Modifier.padding(20.dp), color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.labelSmall) }
 }
 
-private fun marketFreshnessLabel(pulse: MarketIntelligenceDto?): String = when (pulse?.data_health) {
-    "fresh" -> "已更新 ${pulse.retrieved_at?.replace('T', ' ')?.substringBefore('+')?.takeLast(16) ?: "刚刚"}"
-    "stale_fallback" -> "使用最近缓存 · 数据延迟"
-    "pending" -> "正在后台采集"
-    else -> "数据部分可用"
+@Composable
+private fun MarketBreadthSection(pulse: MarketIntelligenceDto?) {
+    val breadth = pulse?.breadth.orEmpty()
+    val colors = MaterialTheme.marketColors
+    val rise = breadth["rise_count"]?.toInt() ?: 0
+    val fall = breadth["fall_count"]?.toInt() ?: 0
+    val total = rise + fall + (breadth["flat_count"]?.toInt() ?: 0)
+
+    Column(Modifier.fillMaxWidth().padding(horizontal = AppSpacing.xxLarge, vertical = AppSpacing.medium)) {
+        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+            Text("市场广度", style = MaterialTheme.typography.labelMedium, fontWeight = FontWeight.Bold)
+            Text("上涨 $rise / 下跌 $fall", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+        }
+        Spacer(Modifier.height(AppSpacing.small))
+        // Simplified breadth bar
+        Row(Modifier.fillMaxWidth().height(8.dp).clip(CircleShape).background(MaterialTheme.colorScheme.outlineVariant)) {
+            if (total > 0) {
+                Box(Modifier.fillMaxHeight().weight(rise.toFloat().coerceAtLeast(0.1f)).background(colors.rise))
+                Box(Modifier.fillMaxHeight().weight((total - rise - fall).toFloat().coerceAtLeast(0.1f)).background(colors.neutral))
+                Box(Modifier.fillMaxHeight().weight(fall.toFloat().coerceAtLeast(0.1f)).background(colors.fall))
+            }
+        }
+    }
+}
+
+@Composable
+private fun RankingPreviewGrid(pulse: MarketIntelligenceDto?) {
+    val colors = MaterialTheme.marketColors
+    Column(Modifier.padding(horizontal = AppSpacing.xxLarge)) {
+        Row(Modifier.fillMaxWidth(), Arrangement.spacedBy(AppSpacing.large)) {
+            MarketRankingPreview("涨幅榜", pulse?.rankings?.get("gainers").orEmpty(), colors.rise, Modifier.weight(1f))
+            MarketRankingPreview("跌幅榜", pulse?.rankings?.get("losers").orEmpty(), colors.fall, Modifier.weight(1f))
+        }
+        Spacer(Modifier.height(AppSpacing.medium))
+        Row(Modifier.fillMaxWidth(), Arrangement.spacedBy(AppSpacing.large)) {
+            MarketRankingPreview("资金流入", pulse?.rankings?.get("main_inflow").orEmpty(), colors.rise, Modifier.weight(1f), showNetAmount = true)
+            MarketRankingPreview("资金流出", pulse?.rankings?.get("main_outflow").orEmpty(), colors.fall, Modifier.weight(1f), showNetAmount = true)
+        }
+    }
+}
+
+private fun LazyListScope.marketSectorRanking(pulse: MarketIntelligenceDto?, onOpenSector: (MarketSectorDto) -> Unit) {
+    item { TradingSection("主力资金流", "行业板块活跃度与大单监控") }
+    val sectors = pulse?.sectors ?: emptyList()
+    items(sectors.take(15)) { sector ->
+        SectorRow(sector, onClick = { onOpenSector(sector) })
+        TradingRowDivider()
+    }
+}
+
+@Composable
+private fun SectorRow(sector: MarketSectorDto, onClick: () -> Unit) {
+    val colors = MaterialTheme.marketColors
+    val change = sector.change_percent ?: 0.0
+    val netAmount = sector.net_amount ?: 0.0
+
+    Row(
+        Modifier.fillMaxWidth().clickable(onClick = onClick).padding(horizontal = AppSpacing.xxLarge, vertical = AppSpacing.large),
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        Column(Modifier.weight(1f)) {
+            Text(sector.name, style = MaterialTheme.typography.bodyLarge, fontWeight = FontWeight.Bold)
+            Text("领涨：${sector.leader}", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+        }
+        Column(horizontalAlignment = Alignment.End) {
+            Text(
+                "${if (change > 0) "+" else ""}${"%.2f".format(change)}%",
+                color = if (change >= 0) colors.rise else colors.fall,
+                style = MaterialTheme.typography.bodyMedium,
+                fontWeight = FontWeight.Bold
+            )
+            Text(
+                "净流入 ${"%.2f".format(netAmount / 100000000)}亿",
+                style = MaterialTheme.typography.labelSmall,
+                color = if (netAmount >= 0) colors.rise.copy(alpha = 0.8f) else colors.fall.copy(alpha = 0.8f)
+            )
+        }
+        Icon(Icons.Default.ChevronRight, null, modifier = Modifier.size(20.dp), tint = MaterialTheme.colorScheme.outlineVariant)
+    }
+}
+
+private fun LazyListScope.stockList(
+    quotes: List<MarketQuoteDto>,
+    pulse: MarketIntelligenceDto?,
+    paperSymbols: Set<String>,
+    rankingType: String,
+    loading: Boolean,
+    onOpenDetail: (ResearchTargetDto) -> Unit,
+    onRankingChange: (String) -> Unit
+) {
+    item {
+        LazyRow(Modifier.fillMaxWidth(), contentPadding = PaddingValues(horizontal = AppSpacing.xxLarge, vertical = AppSpacing.medium)) {
+            items(listOf("全部", "涨幅", "跌幅", "成交额", "主力流入", "主力流出")) { label ->
+                FilterChip(
+                    selected = rankingType == label,
+                    onClick = { onRankingChange(label) },
+                    label = { Text(label) },
+                    modifier = Modifier.padding(end = AppSpacing.small),
+                    shape = MaterialTheme.shapes.small
+                )
+            }
+        }
+    }
+
+    val rankKey = mapOf("涨幅" to "gainers", "跌幅" to "losers", "成交额" to "amount", "主力流入" to "main_inflow", "主力流出" to "main_outflow")[rankingType]
+    if (rankKey == null) {
+        if (quotes.isEmpty() && !loading) {
+            item { EmptyState("暂无个股数据，请尝试搜索或同步") }
+        }
+        items(quotes, key = { it.symbol }) { quote ->
+            MarketQuoteRow(quote, quote.symbol in paperSymbols, onOpenDetail)
+        }
+    } else {
+        val rows = pulse?.rankings?.get(rankKey).orEmpty()
+        items(rows, key = { it.symbol }) { row ->
+            MarketRankingRow(row, rankingType, pulse?.retrieved_at, onOpenDetail)
+        }
+    }
+}
+
+@Composable
+private fun EmptyState(msg: String) {
+    Box(Modifier.fillMaxWidth().padding(AppSpacing.xxLarge), contentAlignment = Alignment.Center) {
+        Text(msg, style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
+    }
 }
 
 @Composable
 private fun MarketSessionCard(pulse: MarketIntelligenceDto?) {
-    val colors = LocalMarketColors.current
+    val colors = MaterialTheme.marketColors
     val mainNet = pulse?.fund_flow?.get("主力")?.get("net_amount")
+
     Card(
-        modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 12.dp),
-        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.primaryContainer, contentColor = MaterialTheme.colorScheme.onPrimaryContainer),
+        modifier = Modifier.fillMaxWidth().padding(horizontal = AppSpacing.xxLarge, vertical = AppSpacing.large),
+        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.primary),
+        shape = MaterialTheme.shapes.large
     ) {
-        Column(Modifier.padding(16.dp)) {
+        Column(Modifier.padding(AppSpacing.large)) {
             Row(verticalAlignment = Alignment.CenterVertically) {
                 Column(Modifier.weight(1f)) {
-                    Text("开盘中", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold)
-                    Text(marketFreshnessLabel(pulse), style = MaterialTheme.typography.labelSmall)
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Surface(color = Color.White.copy(alpha = 0.2f), shape = CircleShape) {
+                            Box(Modifier.size(8.dp).padding(2.dp).background(Color.Green, CircleShape))
+                        }
+                        Spacer(Modifier.width(8.dp))
+                        Text("交易进行中", style = MaterialTheme.typography.titleMedium, color = Color.White, fontWeight = FontWeight.Bold)
+                    }
+                    Text(marketFreshnessLabel(pulse), style = MaterialTheme.typography.labelSmall, color = Color.White.copy(alpha = 0.7f))
                 }
                 Column(horizontalAlignment = Alignment.End) {
-                    Text("主力净流入", style = MaterialTheme.typography.labelSmall)
-                    Text(mainNet?.let { "%.2f 亿".format(it / 100000000) } ?: "--", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold, color = if ((mainNet ?: 0.0) >= 0) colors.rise else colors.fall)
+                    Text("全场主力净额", style = MaterialTheme.typography.labelSmall, color = Color.White.copy(alpha = 0.8f))
+                    Text(
+                        mainNet?.let { "${if (it >= 0) "+" else ""}${"%.2f".format(it / 100000000)}亿" } ?: "--",
+                        style = MaterialTheme.typography.headlineSmall,
+                        fontWeight = FontWeight.ExtraBold,
+                        color = Color.White
+                    )
                 }
             }
-            Text("数据按市场快照刷新；涨跌颜色同时以数值与正负号表达。", modifier = Modifier.padding(top = 8.dp), style = MaterialTheme.typography.labelSmall)
         }
     }
 }
 
 @Composable
-private fun MarketRankingPreview(title: String, rows: List<MarketRankingDto>, color: androidx.compose.ui.graphics.Color, modifier: Modifier = Modifier, showNetAmount: Boolean = false) {
-    Column(modifier.padding(end = 12.dp)) {
-        Text(title, style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
-        rows.take(3).forEach { row ->
-            Row(Modifier.fillMaxWidth().padding(top = 5.dp)) {
-                Text(row.name.ifBlank { row.symbol }, Modifier.weight(1f), maxLines = 1, overflow = TextOverflow.Ellipsis, style = MaterialTheme.typography.labelSmall)
-                Text(if (showNetAmount) row.net_amount?.let { "%.2f 亿".format(it / 100000000) } ?: "--" else row.change_percent?.let { "%.2f%%".format(it) } ?: "--", color = color, style = MaterialTheme.typography.labelSmall)
+private fun MarketRankingPreview(title: String, rows: List<MarketRankingDto>, color: Color, modifier: Modifier = Modifier, showNetAmount: Boolean = false) {
+    Surface(
+        modifier = modifier,
+        color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.3f),
+        shape = MaterialTheme.shapes.medium
+    ) {
+        Column(Modifier.padding(AppSpacing.medium)) {
+            Text(title, style = MaterialTheme.typography.labelSmall, fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            Spacer(Modifier.height(AppSpacing.xs))
+            rows.take(3).forEach { row ->
+                Row(Modifier.fillMaxWidth().padding(vertical = 2.dp), horizontalArrangement = Arrangement.SpaceBetween) {
+                    Text(row.name.ifBlank { row.symbol }, maxLines = 1, overflow = TextOverflow.Ellipsis, style = MaterialTheme.typography.labelSmall, modifier = Modifier.weight(1f))
+                    Text(
+                        if (showNetAmount) row.net_amount?.let { "${"%.1f".format(it / 100000000)}亿" } ?: "--"
+                        else row.change_percent?.let { "${if (it > 0) "+" else ""}${"%.1f".format(it)}%" } ?: "--",
+                        color = color,
+                        style = MaterialTheme.typography.labelSmall,
+                        fontWeight = FontWeight.Bold
+                    )
+                }
             }
         }
     }
 }
 
 @Composable
-private fun MarketSectorRanking(pulse: MarketIntelligenceDto?, onOpenSector: (MarketSectorDto) -> Unit) {
-    TradingSection("行业资金流", "涨跌幅 · 主力净流入 · 点击查看成分股")
-    (pulse?.sectors ?: emptyList()).take(15).forEach { sector ->
-        Row(Modifier.fillMaxWidth().clickable { onOpenSector(sector) }.padding(horizontal = 20.dp, vertical = 12.dp), verticalAlignment = Alignment.CenterVertically) {
-            Text(sector.name, Modifier.weight(1f), fontWeight = FontWeight.Medium)
-            Column(Modifier.weight(1f), horizontalAlignment = Alignment.End) {
-                val change = sector.change_percent ?: 0.0
-                Text("${if (change > 0) "+" else ""}${"%.2f".format(change)}%", color = if (change >= 0) LocalMarketColors.current.rise else LocalMarketColors.current.fall, style = MaterialTheme.typography.labelMedium)
-                Text(sector.leader, style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 1, overflow = TextOverflow.Ellipsis)
+private fun MarketQuoteRow(quote: MarketQuoteDto, isPaperPosition: Boolean, onOpenDetail: (ResearchTargetDto) -> Unit) {
+    val change = quote.change_percent ?: 0.0
+    val colors = MaterialTheme.marketColors
+    val color = when {
+        change > 0 -> colors.rise
+        change < 0 -> colors.fall
+        else -> colors.neutral
+    }
+
+    Column(Modifier.fillMaxWidth().clickable { onOpenDetail(ResearchTargetDto(quote.symbol, quote.name, "market", quote.as_of ?: "")) }) {
+        Row(
+            Modifier.padding(horizontal = AppSpacing.xxLarge, vertical = AppSpacing.large),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Column(Modifier.weight(1f)) {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Text(quote.name.ifBlank { quote.symbol }, style = MaterialTheme.typography.bodyLarge, fontWeight = FontWeight.Bold)
+                    if (isPaperPosition) {
+                        Spacer(Modifier.width(AppSpacing.small))
+                        Surface(color = MaterialTheme.colorScheme.primaryContainer, shape = RoundedCornerShape(4.dp)) {
+                            Text("持仓", Modifier.padding(horizontal = 4.dp, vertical = 1.dp), style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.primary, fontWeight = FontWeight.Bold)
+                        }
+                    }
+                }
+                Text(quote.symbol, style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
             }
-            Text(sector.net_amount?.let { "%.2f 亿".format(it / 100000000) } ?: "--", Modifier.padding(start = 12.dp), color = if ((sector.net_amount ?: 0.0) >= 0) LocalMarketColors.current.rise else LocalMarketColors.current.fall)
+            Column(horizontalAlignment = Alignment.End) {
+                Text(quote.price?.let { "%.2f".format(it) } ?: "--", style = MaterialTheme.typography.bodyLarge, fontWeight = FontWeight.Bold)
+                Text(
+                    "${if (change > 0) "+" else ""}${"%.2f".format(change)}%",
+                    color = color,
+                    style = MaterialTheme.typography.labelMedium,
+                    fontWeight = FontWeight.Bold
+                )
+            }
         }
         TradingRowDivider()
     }
@@ -302,16 +501,27 @@ private fun MarketSectorRanking(pulse: MarketIntelligenceDto?, onOpenSector: (Ma
 @Composable
 private fun MarketRankingRow(row: MarketRankingDto, ranking: String, asOf: String?, onOpenDetail: (ResearchTargetDto) -> Unit) {
     val value = if (ranking.startsWith("主力")) row.net_amount else row.change_percent
-    val color = if ((value ?: 0.0) >= 0) LocalMarketColors.current.rise else LocalMarketColors.current.fall
-    Column(Modifier.fillMaxWidth().clickable { onOpenDetail(ResearchTargetDto(row.symbol, row.name, "market", asOf ?: "")) }.padding(horizontal = 20.dp, vertical = 12.dp)) {
-        Row(verticalAlignment = Alignment.CenterVertically) {
+    val colors = MaterialTheme.marketColors
+    val color = if ((value ?: 0.0) >= 0) colors.rise else colors.fall
+
+    Column(Modifier.fillMaxWidth().clickable { onOpenDetail(ResearchTargetDto(row.symbol, row.name, "market", asOf ?: "")) }) {
+        Row(
+            Modifier.padding(horizontal = AppSpacing.xxLarge, vertical = AppSpacing.large),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
             Column(Modifier.weight(1f)) {
-                Text(row.name.ifBlank { row.symbol }, fontWeight = FontWeight.SemiBold)
+                Text(row.name.ifBlank { row.symbol }, style = MaterialTheme.typography.bodyLarge, fontWeight = FontWeight.Bold)
                 Text(row.symbol, style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
             }
             Column(horizontalAlignment = Alignment.End) {
-                Text(row.price?.let { "%.2f".format(it) } ?: "--", fontWeight = FontWeight.Medium)
-                Text(if (ranking.startsWith("主力")) row.net_amount?.let { "%.2f 亿".format(it / 100000000) } ?: "--" else row.change_percent?.let { "${if (it > 0) "+" else ""}%.2f%%".format(it) } ?: "--", color = color, style = MaterialTheme.typography.labelMedium)
+                Text(row.price?.let { "%.2f".format(it) } ?: "--", style = MaterialTheme.typography.bodyLarge, fontWeight = FontWeight.Bold)
+                Text(
+                    if (ranking.startsWith("主力")) row.net_amount?.let { "${if (it > 0) "+" else ""}${"%.2f".format(it / 100000000)}亿" } ?: "--"
+                    else row.change_percent?.let { "${if (it > 0) "+" else ""}%.2f%%".format(it) } ?: "--",
+                    color = color,
+                    style = MaterialTheme.typography.labelMedium,
+                    fontWeight = FontWeight.Bold
+                )
             }
         }
         TradingRowDivider()
@@ -320,84 +530,48 @@ private fun MarketRankingRow(row: MarketRankingDto, ranking: String, asOf: Strin
 
 @Composable
 private fun SectorDrillDownSheet(sector: MarketSectorDto, detail: MarketSectorDetailDto?, loading: Boolean, onOpenDetail: (ResearchTargetDto) -> Unit) {
-    var visibleRows by remember(sector.name, detail?.retrieved_at) { mutableIntStateOf(8) }
-    val allRows = detail?.rows.orEmpty().take(30)
-    LaunchedEffect(allRows.size, visibleRows) {
-        if (visibleRows < allRows.size) {
-            delay(120)
-            visibleRows = (visibleRows + 8).coerceAtMost(allRows.size)
-        }
-    }
+    var visibleRows by remember(sector.name, detail?.retrieved_at) { mutableIntStateOf(10) }
+    val allRows = detail?.rows.orEmpty().take(50)
 
-    Column(Modifier.fillMaxWidth().verticalScroll(rememberScrollState()).padding(horizontal = 20.dp, vertical = 8.dp)) {
-        Text(sector.name, style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.SemiBold)
-        Text("行业成分股 · 按主力资金流查看", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
-        if (loading || detail?.data_health == "pending") {
-            LinearProgressIndicator(Modifier.fillMaxWidth().padding(top = 16.dp))
-            Text(
-                if (allRows.isEmpty()) "正在后台获取板块成分股，完成后自动显示…" else "正在刷新板块数据，当前先显示已有结果…",
-                Modifier.padding(top = 8.dp, bottom = 8.dp),
-                style = MaterialTheme.typography.labelSmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-            )
+    Column(Modifier.fillMaxWidth().fillMaxHeight(0.8f).padding(horizontal = AppSpacing.xxLarge)) {
+        Text(sector.name, style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.ExtraBold)
+        Text("板块成分股实时资金表现", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+
+        Spacer(Modifier.height(AppSpacing.medium))
+
+        if (loading) {
+            LinearProgressIndicator(Modifier.fillMaxWidth())
         }
-        detail?.error_message?.takeIf { detail.data_health != "pending" }?.let {
-            Text(it, Modifier.padding(vertical = 8.dp), style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.error)
-        }
-        allRows.take(visibleRows).forEach { row ->
-            Row(Modifier.fillMaxWidth().clickable { onOpenDetail(ResearchTargetDto(row.symbol, row.name, "market", detail?.retrieved_at ?: "")) }.padding(vertical = 12.dp), verticalAlignment = Alignment.CenterVertically) {
-                Column(Modifier.weight(1f)) {
-                    Text(row.name.ifBlank { row.symbol }, fontWeight = FontWeight.Medium)
-                    Text(row.symbol, style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+
+        LazyColumn(Modifier.weight(1f)) {
+            items(allRows.take(visibleRows)) { row ->
+                Row(
+                    Modifier.fillMaxWidth().clickable { onOpenDetail(ResearchTargetDto(row.symbol, row.name, "market", detail?.retrieved_at ?: "")) }.padding(vertical = AppSpacing.large),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Column(Modifier.weight(1f)) {
+                        Text(row.name.ifBlank { row.symbol }, fontWeight = FontWeight.Bold)
+                        Text(row.symbol, style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    }
+                    Column(horizontalAlignment = Alignment.End) {
+                        Text(row.price?.let { "%.2f".format(it) } ?: "--", fontWeight = FontWeight.Bold)
+                        Text(
+                            row.net_amount?.let { "${if (it > 0) "+" else ""}${"%.2f".format(it / 100000000)}亿" } ?: "--",
+                            color = if ((row.net_amount ?: 0.0) >= 0) MaterialTheme.marketColors.rise else MaterialTheme.marketColors.fall,
+                            style = MaterialTheme.typography.labelMedium,
+                            fontWeight = FontWeight.Bold
+                        )
+                    }
                 }
-                Column(horizontalAlignment = Alignment.End) {
-                    Text(row.price?.let { "%.2f".format(it) } ?: "--")
-                    Text(row.net_amount?.let { "%.2f 亿".format(it / 100000000) } ?: "--", color = if ((row.net_amount ?: 0.0) >= 0) LocalMarketColors.current.rise else LocalMarketColors.current.fall, style = MaterialTheme.typography.labelMedium)
-                }
+                TradingRowDivider()
             }
-            TradingRowDivider()
-        }
-        if (visibleRows < allRows.size) {
-            Row(Modifier.fillMaxWidth().padding(vertical = 14.dp), verticalAlignment = Alignment.CenterVertically) {
-                CircularProgressIndicator(Modifier.size(18.dp), strokeWidth = 2.dp)
-                Text("正在加载更多成分股…", Modifier.padding(start = 8.dp), style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
-            }
-        }
-        if (!loading && allRows.isEmpty()) {
-            Text("暂无可用成分股资金流，请稍后重试。", Modifier.padding(vertical = 20.dp), style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
         }
     }
 }
 
-@Composable
-private fun MarketQuoteRow(quote: MarketQuoteDto, isPaperPosition: Boolean, onOpenDetail: (ResearchTargetDto) -> Unit) {
-    val change = quote.change_percent ?: 0.0
-    val color = when {
-        change > 0 -> LocalMarketColors.current.rise
-        change < 0 -> LocalMarketColors.current.fall
-        else -> LocalMarketColors.current.neutral
-    }
-    Column(Modifier.fillMaxWidth().clickable { onOpenDetail(ResearchTargetDto(quote.symbol, quote.name, "market", quote.as_of ?: "")) }.padding(horizontal = 20.dp, vertical = 12.dp)) {
-        Row(verticalAlignment = Alignment.CenterVertically) {
-            Column(Modifier.weight(1f)) {
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                    Text(quote.name.ifBlank { quote.symbol }, maxLines = 1, overflow = TextOverflow.Ellipsis, fontWeight = FontWeight.SemiBold)
-                    if (isPaperPosition) Text("持仓", Modifier.padding(start = 6.dp), color = MaterialTheme.colorScheme.primary, style = MaterialTheme.typography.labelSmall)
-                }
-                Text("${quote.symbol} · ${quote.as_of?.replace('T', ' ')?.substringBefore('+')?.takeLast(11) ?: "时间未知"}", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
-            }
-            Column(horizontalAlignment = Alignment.End) {
-                Text(quote.price?.let { "%.2f".format(it) } ?: "--", fontWeight = FontWeight.SemiBold)
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                    Icon(when {
-                        change > 0 -> Icons.Filled.TrendingUp
-                        change < 0 -> Icons.Filled.TrendingDown
-                        else -> Icons.Filled.TrendingFlat
-                    }, if (change > 0) "上涨" else if (change < 0) "下跌" else "平盘", tint = color, modifier = Modifier.size(16.dp))
-                    Text("${if (change > 0) "+" else ""}${"%.2f".format(change)}%", color = color, style = MaterialTheme.typography.labelMedium)
-                }
-            }
-        }
-        TradingRowDivider()
-    }
+private fun marketFreshnessLabel(pulse: MarketIntelligenceDto?): String = when (pulse?.data_health) {
+    "fresh" -> "更新于 ${pulse.retrieved_at?.substringAfter('T')?.substringBefore('+')?.take(5) ?: "刚刚"}"
+    "stale_fallback" -> "数据延迟 · 缓存显示"
+    "pending" -> "正在同步最新行情..."
+    else -> "离线模式"
 }

@@ -2,50 +2,33 @@ package com.thirdhand.app
 
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
-import androidx.compose.foundation.layout.Arrangement
-import androidx.compose.foundation.layout.Column
-import androidx.compose.foundation.layout.PaddingValues
-import androidx.compose.foundation.layout.Row
-import androidx.compose.foundation.layout.Spacer
-import androidx.compose.foundation.layout.fillMaxSize
-import androidx.compose.foundation.layout.fillMaxWidth
-import androidx.compose.foundation.layout.height
-import androidx.compose.foundation.layout.padding
-import androidx.compose.foundation.layout.size
-import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.KeyboardArrowRight
 import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material.icons.filled.Refresh
-import androidx.compose.material3.Button
-import androidx.compose.material3.AlertDialog
-import androidx.compose.material3.Card
-import androidx.compose.material3.CardDefaults
-import androidx.compose.material3.CircularProgressIndicator
-import androidx.compose.material3.Icon
-import androidx.compose.material3.IconButton
-import androidx.compose.material3.LinearProgressIndicator
-import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.Text
-import androidx.compose.material3.TextButton
-import androidx.compose.runtime.Composable
-import androidx.compose.runtime.LaunchedEffect
-import androidx.compose.runtime.getValue
-import androidx.compose.runtime.mutableStateOf
-import androidx.compose.runtime.remember
-import androidx.compose.runtime.rememberCoroutineScope
-import androidx.compose.runtime.setValue
+import androidx.compose.material.icons.filled.Terminal
+import androidx.compose.material3.*
+import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
 import com.thirdhand.app.ui.components.TradingPageHeader
 import com.thirdhand.app.ui.components.TradingRowDivider
 import com.thirdhand.app.ui.components.TradingSection
+import com.thirdhand.app.ui.theme.AppSpacing
+import com.thirdhand.app.ui.theme.marketColors
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import java.time.OffsetDateTime
@@ -53,9 +36,10 @@ import java.time.ZoneOffset
 import java.time.format.DateTimeFormatter
 import java.util.Locale
 
+@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun PaperTradingScreen(onOpenDetail: (ResearchTargetDto) -> Unit) {
-    val context = androidx.compose.ui.platform.LocalContext.current
+    val context = LocalContext.current
     val api = remember(context) { ApiClient.service(context) }
     val scope = rememberCoroutineScope()
     var dashboard by remember { mutableStateOf<PaperTradingDashboardDto?>(null) }
@@ -98,561 +82,346 @@ fun PaperTradingScreen(onOpenDetail: (ResearchTargetDto) -> Unit) {
                     positionPresentation = loadPaperPositionPresentation(api, loaded.account.positions)
                     error = null
                 }
-                .onFailure { error = "暂时无法读取交易账套：${it.message ?: "请检查服务连接"}" }
+                .onFailure { error = "账套读取失败" }
             runs = runCatching { api.paperTradingRuns(limit = 20) }.getOrDefault(emptyList())
             refreshing = false
         }
     }
+
     LaunchedEffect(Unit) { refresh() }
-    LaunchedEffect(dashboard?.status?.running, dashboard?.status?.last_status) {
-        if (dashboard?.status?.running == true) {
-            delay(2_000)
-            refresh()
-        }
-    }
-    LaunchedEffect(selectedDecisionId) {
-        val decisionId = selectedDecisionId ?: return@LaunchedEffect
-        decisionLoading = true; decisionError = null; decisionReport = null; decisionLineage = null
-        runCatching { api.paperTradingDecisionAudit(decisionId) }
-            .onSuccess { audit -> decisionReport = audit.report; decisionContext = audit.context; decisionLineage = runCatching { api.decisionLineage(decisionId) }.getOrNull() }
-            .onFailure { decisionError = "无法读取该次决策留档：${it.message ?: "记录可能已过期"}" }
-        decisionLoading = false
-    }
-    LaunchedEffect(selectedRunDetailId) {
-        val runId = selectedRunDetailId ?: return@LaunchedEffect
-        runDetailLoading = true; runDetailError = null; runDetail = null
-        runCatching { api.paperTradingRunDetail(runId) }
-            .onSuccess { runDetail = it }
-            .onFailure { runDetailError = "无法读取本轮链路：${it.message ?: "请检查服务连接"}" }
-        runDetailLoading = false
-    }
-    val account = dashboard?.account
-    val status = dashboard?.status
-    val adaptiveUi = paperAdaptiveUi(account)
-    LazyColumn(
-        modifier = Modifier.fillMaxSize(),
-        contentPadding = PaddingValues(bottom = 28.dp),
-    ) {
-        item {
-            TradingPageHeader("交易", "模拟账套 · 持仓优先 · 不连接券商") {
+
+    Scaffold(
+        topBar = {
+            TradingPageHeader("交易账户", "模拟账套 · 持仓驱动 · 影子交易") {
                 IconButton(onClick = ::refresh, enabled = !refreshing) {
                     if (refreshing) CircularProgressIndicator(Modifier.size(20.dp), strokeWidth = 2.dp)
-                    else Icon(Icons.Filled.Refresh, "刷新交易账套")
+                    else Icon(Icons.Filled.Refresh, "刷新", tint = MaterialTheme.colorScheme.primary)
                 }
             }
         }
-        item {
-            Card(
-                modifier = Modifier.padding(horizontal = 16.dp).fillMaxWidth(),
-                colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.primaryContainer),
-            ) {
-                Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                    Row(verticalAlignment = Alignment.CenterVertically) {
-                        Column(Modifier.weight(1f)) {
-                            Text("账套总权益", style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onPrimaryContainer)
-                            Text("¥${account?.total_equity?.money() ?: "--"}", style = MaterialTheme.typography.headlineMedium, fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.onPrimaryContainer)
-                        }
-                        Column(horizontalAlignment = Alignment.End) {
-                            Text("累计收益", style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onPrimaryContainer)
-                            Text(account?.total_return_percent?.let { "${it.signed()}%" } ?: "--", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.onPrimaryContainer)
-                        }
-                    }
-                    TradingRowDivider()
-                    Row {
-                        PaperMetric("可用现金", "¥${account?.available_cash?.money() ?: "--"}", Modifier.weight(1f))
-                        PaperMetric("持仓市值", "¥${account?.market_value?.money() ?: "--"}", Modifier.weight(1f))
-                        PaperMetric("累计盈亏", "¥${account?.total_pnl?.money() ?: "--"}", Modifier.weight(1f))
-                    }
-                    Text("累计净入金 ¥${account?.net_contributions?.money() ?: "--"} · 收益已剔除后续入金与出金", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onPrimaryContainer)
-                }
+    ) { paddingValues ->
+        LazyColumn(
+            modifier = Modifier.fillMaxSize().padding(paddingValues),
+            contentPadding = PaddingValues(bottom = AppSpacing.xxLarge)
+        ) {
+            item {
+                AccountEquityCard(dashboard?.account)
             }
-        }
-        item { TradingSection("持仓", "名称与持仓市值固定在左侧，右侧指标可横向滑动") }
-        if (account?.positions.isNullOrEmpty()) item {
-            Text("当前没有持仓。可运行一轮模拟决策，或开启自动执行后等待满足条件的纸面成交。", Modifier.padding(horizontal = 16.dp, vertical = 14.dp), style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
-        } else item {
-            PaperPositionsTable(
-                positions = account!!.positions,
-                presentation = positionPresentation,
-                onOpenDetail = { position, name ->
-                    openedPositionTarget = ResearchTargetDto(
-                        symbol = position.symbol,
-                        name = name,
-                        status = "paper_position",
-                        added_at = position.updated_at,
+
+            item {
+                TradingSection("持仓明细", "Security Positions")
+            }
+
+            if (dashboard?.account?.positions.isNullOrEmpty()) {
+                item {
+                    EmptyStatePlaceholder("当前没有持仓，运行模拟决策以寻找机会")
+                }
+            } else {
+                item {
+                    PaperPositionsTable(
+                        positions = dashboard!!.account.positions,
+                        presentation = positionPresentation,
+                        onOpenDetail = { position, name ->
+                            openedPositionTarget = ResearchTargetDto(
+                                symbol = position.symbol,
+                                name = name,
+                                status = "paper_position",
+                                added_at = position.updated_at,
+                            )
+                        },
                     )
-                },
-            )
-        }
-        error?.let { item { Text(it, Modifier.padding(horizontal = 16.dp, vertical = 8.dp), color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.bodySmall) } }
-        item {
-            Column(Modifier.padding(horizontal = 16.dp, vertical = 12.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
-                Button(
-                    modifier = Modifier.fillMaxWidth(),
-                    enabled = !runningNow,
-                    onClick = {
+                }
+            }
+
+            item {
+                ExecutionControlPanel(
+                    running = runningNow,
+                    status = dashboard?.status,
+                    onRun = {
                         scope.launch {
                             runningNow = true
-                            message = "任务已提交，正在后台准备行情、日线、风险与决策；可离开页面，完成后会显示结果。"
-                            message = runCatching { api.runPaperTradingNow() }.fold(
-                                onSuccess = { it.message },
-                                onFailure = { "提交交易任务失败：${it.message ?: "请检查服务连接"}" },
-                            )
+                            runCatching { api.runPaperTradingNow() }.onSuccess {
+                                message = it.message
+                                refresh()
+                            }
                             runningNow = false
-                            refresh()
                         }
-                    },
-                ) {
-                    if (runningNow) CircularProgressIndicator(Modifier.size(16.dp), strokeWidth = 2.dp)
-                    else Icon(Icons.Filled.PlayArrow, null)
-                    Spacer(Modifier.width(8.dp))
-                    Text(if (runningNow) "AI 正在分析市场" else "立即运行一轮")
-                }
-                message?.let { Text(it, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant) }
-            }
-        }
-        item {
-            val enabled = status?.enabled == true
-            Column(Modifier.padding(horizontal = 16.dp, vertical = 12.dp), verticalArrangement = Arrangement.spacedBy(5.dp)) {
-                Text(if (status?.running == true) "自动执行中" else if (enabled) "自动执行已开启" else "自动执行已关闭", fontWeight = FontWeight.Bold)
-                if (status?.running == true) LinearProgressIndicator(Modifier.fillMaxWidth())
-                Text(
-                    when {
-                        status == null -> "正在读取执行状态…"
-                        !enabled -> "请到管理页开启；仅在开盘时间按设置间隔执行。"
-                        status.running -> "本轮正在分析，完成后会自动刷新账套。"
-                        status.seconds_until_next_run > 0 -> "下一次基础检查约在 ${maxOf(1, status.seconds_until_next_run / 60)} 分钟后。"
-                        else -> "等待下一次市场检查。"
-                    },
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    }
                 )
-                Text(
-                    "自适应：${adaptiveUi.title} · ${adaptiveUi.detail}",
-                    style = MaterialTheme.typography.labelSmall,
-                    color = MaterialTheme.colorScheme.primary,
-                    fontWeight = FontWeight.SemiBold,
+            }
+
+            item {
+                HistoryLink(
+                    runs = runs,
+                    onClick = { showRunChain = true }
                 )
-                status?.last_finished_at?.let { Text("最近完成：${paperBeijingTimestamp(it)} · 执行 ${status.last_executed} 笔 · 状态来源 ${if (status.state_source == "persisted") "持久化恢复" else "当前进程"}", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant) }
+            }
+
+            item {
+                TradingSection("最近成交记录", "Execution Logs")
+            }
+
+            val executedLogs = dashboard?.logs.orEmpty().filter { it.status == "executed" }
+            if (executedLogs.isEmpty()) {
+                item { EmptyStatePlaceholder("暂无执行记录") }
+            }
+
+            items(executedLogs.take(5), key = { it.id }) { log ->
+                PaperLogRow(log, onOpenDecision = { selectedDecisionId = log.decision_id })
+            }
+
+            if (dashboard?.logs.orEmpty().size > 5) {
+                item {
+                    TextButton(
+                        modifier = Modifier.fillMaxWidth().padding(horizontal = AppSpacing.xxLarge),
+                        onClick = { showAllLogs = true }
+                    ) {
+                        Text("查看完整操作与拦截记录")
+                    }
+                }
             }
         }
-        item {
-            Column(
-                Modifier.fillMaxWidth().clickable { showRunChain = true }.padding(horizontal = 16.dp, vertical = 12.dp),
-                verticalArrangement = Arrangement.spacedBy(4.dp),
-            ) {
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                    Text("本轮执行链路", fontWeight = FontWeight.SemiBold, style = MaterialTheme.typography.titleSmall)
-                    Spacer(Modifier.weight(1f))
-                    Text("最近 ${runs.size} 轮", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                    Icon(Icons.AutoMirrored.Filled.KeyboardArrowRight, "查看执行链路", tint = MaterialTheme.colorScheme.onSurfaceVariant)
-                }
-                Text("候选 → 行情 → 日线 → 风险 → 公司深研 → 决策 → 执行；每只股票都有明确终态", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                runs.firstOrNull()?.let { latest ->
-                    val elapsed = paperRunElapsed(latest.started_at, latest.finished_at)
-                    Text(
-                        "最近：${paperBeijingTimestamp(latest.started_at)} · ${if (latest.trigger == "manual") "手动" else "自动"} · 生成 ${latest.generated} · 执行 ${latest.executed} · 跳过 ${latest.skipped}${elapsed?.let { " · 总耗时 $it" }.orEmpty()} · ${paperRunStatusLabel(latest.status)}",
-                        style = MaterialTheme.typography.labelSmall,
-                        color = MaterialTheme.colorScheme.primary,
-                    )
-                }
-            }
-            TradingRowDivider()
-        }
-        item { TradingSection("最近成交", "仅展示最近 6 笔成交；B / S 不会与实际操作混淆") }
-        val executedLogs = dashboard?.logs.orEmpty().filter { it.status == "executed" }
-        if (executedLogs.isEmpty()) item { Text("暂时没有成交。被拦截或不满足条件的决策会保存在完整记录中。", Modifier.padding(horizontal = 16.dp, vertical = 14.dp), style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant) }
-        items(executedLogs.take(6), key = { it.id }) { log -> PaperLogRow(log, onOpenDecision = { selectedDecisionId = log.decision_id }) }
-        if (dashboard?.logs.orEmpty().size > 6) item { TextButton(modifier = Modifier.padding(horizontal = 12.dp), onClick = { showAllLogs = true }) { Text("查看全部操作与拦截记录") } }
     }
+
+    // Dialogs...
     if (showAllLogs) PaperLogHistoryDialog(dashboard?.logs.orEmpty(), onDismiss = { showAllLogs = false }, onOpenDecision = { selectedDecisionId = it })
     if (showRunChain) PaperRunChainDialog(runs, onDismiss = { showRunChain = false }, onOpenRun = { selectedRunDetailId = it })
     if (selectedRunDetailId != null) PaperRunDetailDialog(runDetail, runDetailLoading, runDetailError, onDismiss = { selectedRunDetailId = null }, onOpenDecision = { selectedDecisionId = it })
     if (selectedDecisionId != null) PaperDecisionAuditDialog(decisionReport, decisionContext, decisionLoading, decisionError, decisionLineage, onDismiss = { selectedDecisionId = null })
 }
 
-@Composable private fun PaperMetric(label: String, value: String, modifier: Modifier) = Column(modifier) {
-    Text(label, style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onPrimaryContainer)
-    Text(value, style = MaterialTheme.typography.bodyMedium, fontWeight = FontWeight.SemiBold, color = MaterialTheme.colorScheme.onPrimaryContainer)
-}
+@Composable
+private fun AccountEquityCard(account: PaperTradingAccountDto?) {
+    val colors = MaterialTheme.marketColors
+    val isPositive = (account?.total_pnl ?: 0.0) >= 0
 
-@Composable private fun PaperPositionMetric(label: String, value: String, modifier: Modifier, valueColor: Color = MaterialTheme.colorScheme.onSurface) = Column(modifier) {
-    Text(label, style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
-    Text(value, style = MaterialTheme.typography.bodySmall, fontWeight = FontWeight.SemiBold, color = valueColor)
-}
-
-@Composable private fun PaperLogRow(log: PaperTradingLogDto, onOpenDecision: () -> Unit) {
-    val action = when (log.side) { "BUY" -> "B  买入"; "SELL" -> "S  卖出"; else -> "跳过" }
-    Column(Modifier.fillMaxWidth().clickable(enabled = log.decision_id != null, onClick = onOpenDecision).padding(horizontal = 20.dp, vertical = 12.dp)) {
-        Row(verticalAlignment = Alignment.CenterVertically) {
-            Column(Modifier.weight(1f)) {
-                Text("$action · ${log.name.ifBlank { log.symbol }}", fontWeight = FontWeight.SemiBold)
-                Text("${log.symbol} · ${paperBeijingTimestamp(log.executed_at)}", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+    Card(
+        modifier = Modifier.fillMaxWidth().padding(horizontal = AppSpacing.xxLarge, vertical = AppSpacing.medium),
+        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.primary),
+        shape = MaterialTheme.shapes.large
+    ) {
+        Column(Modifier.padding(AppSpacing.xxLarge)) {
+            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+                Column {
+                    Text("账套总权益 (CNY)", style = MaterialTheme.typography.labelSmall, color = Color.White.copy(alpha = 0.7f))
+                    Text(
+                        "¥${account?.total_equity?.money() ?: "---"}",
+                        style = MaterialTheme.typography.displayMedium,
+                        fontWeight = FontWeight.ExtraBold,
+                        color = Color.White
+                    )
+                }
+                Surface(
+                    color = Color.White.copy(alpha = 0.2f),
+                    shape = RoundedCornerShape(4.dp)
+                ) {
+                    Text(
+                        account?.total_return_percent?.let { "${if(it>=0)"+" else ""}${"%.2f".format(it)}%" } ?: "--",
+                        Modifier.padding(horizontal = 8.dp, vertical = 2.dp),
+                        style = MaterialTheme.typography.titleMedium,
+                        fontWeight = FontWeight.Bold,
+                        color = Color.White
+                    )
+                }
             }
-            Text(if (log.status == "skipped") "未成交" else "¥${log.price.money()}", color = if (log.status == "skipped") MaterialTheme.colorScheme.onSurfaceVariant else MaterialTheme.colorScheme.primary, fontWeight = FontWeight.SemiBold)
+
+            Spacer(Modifier.height(AppSpacing.xxLarge))
+
+            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+                EquityMetric("可用现金", "¥${account?.available_cash?.money() ?: "--"}")
+                EquityMetric("持仓市值", "¥${account?.market_value?.money() ?: "--"}")
+                EquityMetric("累计盈亏", "¥${account?.total_pnl?.money() ?: "--"}")
+            }
         }
-        Text(if (log.status == "skipped") paperSkipReason(log.reason) else "${log.quantity.clean()} 股 · 费用 ¥${log.fee.money()} · 现金 ¥${log.cash_before.money()} → ¥${log.cash_after.money()}", Modifier.padding(top = 4.dp), style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
-        if (log.status == "executed") {
-            Text("成交语义 ${log.fill_price_mode ?: "未记录"}${log.execution_quote_at?.let { " · 报价 $it" }.orEmpty()}${log.execution_quote_source?.let { " · 来源 $it" }.orEmpty()}", Modifier.padding(top = 3.dp), style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
-        }
-        Spacer(Modifier.height(8.dp)); TradingRowDivider()
     }
 }
 
+@Composable
+private fun EquityMetric(label: String, value: String) {
+    Column {
+        Text(label, style = MaterialTheme.typography.labelSmall, color = Color.White.copy(alpha = 0.6f))
+        Text(value, style = MaterialTheme.typography.bodyMedium, fontWeight = FontWeight.Bold, color = Color.White)
+    }
+}
+
+@Composable
+private fun ExecutionControlPanel(running: Boolean, status: PaperTradingStatusDto?, onRun: () -> Unit) {
+    Surface(
+        modifier = Modifier.fillMaxWidth().padding(horizontal = AppSpacing.xxLarge, vertical = AppSpacing.large),
+        color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.3f),
+        shape = MaterialTheme.shapes.medium
+    ) {
+        Column(Modifier.padding(AppSpacing.large)) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Icon(Icons.Default.Terminal, null, modifier = Modifier.size(20.dp), tint = MaterialTheme.colorScheme.primary)
+                Spacer(Modifier.width(AppSpacing.medium))
+                Text("自动执行引擎", style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.Bold)
+                Spacer(Modifier.weight(1f))
+                if (status?.running == true) {
+                    CircularProgressIndicator(Modifier.size(16.dp), strokeWidth = 2.dp)
+                } else {
+                    Text(
+                        if (status?.enabled == true) "已开启" else "已暂停",
+                        style = MaterialTheme.typography.labelSmall,
+                        color = if (status?.enabled == true) MaterialTheme.marketColors.rise else MaterialTheme.marketColors.neutral
+                    )
+                }
+            }
+
+            Spacer(Modifier.height(AppSpacing.medium))
+
+            Button(
+                onClick = onRun,
+                enabled = !running && status?.running != true,
+                modifier = Modifier.fillMaxWidth(),
+                shape = MaterialTheme.shapes.medium
+            ) {
+                Icon(Icons.Default.PlayArrow, null)
+                Spacer(Modifier.width(AppSpacing.small))
+                Text(if (running) "正在运行模拟决策..." else "立即运行决策轮换")
+            }
+        }
+    }
+}
+
+@Composable
+private fun HistoryLink(runs: List<SimulationRunDto>, onClick: () -> Unit) {
+    Surface(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(horizontal = AppSpacing.xxLarge)
+            .clickable(onClick = onClick),
+        color = MaterialTheme.colorScheme.surface,
+        border = androidx.compose.foundation.BorderStroke(0.5.dp, MaterialTheme.colorScheme.outlineVariant),
+        shape = MaterialTheme.shapes.medium
+    ) {
+        Row(Modifier.padding(AppSpacing.large), verticalAlignment = Alignment.CenterVertically) {
+            Column(Modifier.weight(1f)) {
+                Text("执行链路记录", style = MaterialTheme.typography.bodyMedium, fontWeight = FontWeight.Bold)
+                Text(
+                    "最近完成：${runs.firstOrNull()?.started_at?.let { paperBeijingTimestamp(it) } ?: "从未运行"}",
+                    style = MaterialTheme.typography.labelSmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+            }
+            Icon(Icons.AutoMirrored.Filled.KeyboardArrowRight, null, tint = MaterialTheme.colorScheme.outlineVariant)
+        }
+    }
+}
+
+@Composable
+private fun EmptyStatePlaceholder(msg: String) {
+    Box(Modifier.fillMaxWidth().padding(AppSpacing.xxLarge), contentAlignment = Alignment.Center) {
+        Text(msg, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant, textAlign = TextAlign.Center)
+    }
+}
+
+@Composable private fun PaperLogRow(log: PaperTradingLogDto, onOpenDecision: () -> Unit) {
+    val isBuy = log.side == "BUY"
+    val color = if (isBuy) MaterialTheme.marketColors.rise else MaterialTheme.marketColors.fall
+
+    Column(Modifier.fillMaxWidth().clickable(enabled = log.decision_id != null, onClick = onOpenDecision).padding(horizontal = AppSpacing.xxLarge, vertical = AppSpacing.large)) {
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Surface(
+                color = color.copy(alpha = 0.1f),
+                shape = RoundedCornerShape(4.dp)
+            ) {
+                Text(
+                    if (isBuy) "B 买入" else "S 卖出",
+                    Modifier.padding(horizontal = 6.dp, vertical = 2.dp),
+                    style = MaterialTheme.typography.labelSmall,
+                    fontWeight = FontWeight.Bold,
+                    color = color
+                )
+            }
+            Spacer(Modifier.width(AppSpacing.medium))
+            Text(
+                log.name.ifBlank { log.symbol },
+                style = MaterialTheme.typography.bodyMedium,
+                fontWeight = FontWeight.Bold
+            )
+            Spacer(Modifier.weight(1f))
+            Text("¥${log.price.money()}", style = MaterialTheme.typography.bodyMedium, fontWeight = FontWeight.Bold)
+        }
+        Spacer(Modifier.height(4.dp))
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Text(
+                "${log.symbol} · ${paperBeijingTimestamp(log.executed_at)} · ${log.quantity.toInt()} 股",
+                style = MaterialTheme.typography.labelSmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
+            Spacer(Modifier.weight(1f))
+            Text("分析记录", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.primary)
+        }
+        Spacer(Modifier.height(AppSpacing.medium))
+        TradingRowDivider()
+    }
+}
+
+// Keep existing helper functions...
+private fun Double.money() = "%.2f".format(Locale.US, this)
+private fun paperBeijingTimestamp(value: String): String = runCatching { OffsetDateTime.parse(value).withOffsetSameInstant(ZoneOffset.ofHours(8)).format(DateTimeFormatter.ofPattern("MM-dd HH:mm")) }.getOrElse { value.replace('T', ' ').substringBefore("+").substringBefore("Z") }
+
+// Keep existing Dialog implementations...
 @Composable private fun PaperLogHistoryDialog(logs: List<PaperTradingLogDto>, onDismiss: () -> Unit, onOpenDecision: (String?) -> Unit) = AlertDialog(
     onDismissRequest = onDismiss,
     title = { Text("完整操作记录") },
     text = { LazyColumn { items(logs, key = { it.id }) { log -> PaperLogRow(log, onOpenDecision = { onOpenDecision(log.decision_id) }) } } },
     confirmButton = { TextButton(onClick = onDismiss) { Text("关闭") } },
 )
-
 @Composable private fun PaperRunChainDialog(runs: List<SimulationRunDto>, onDismiss: () -> Unit, onOpenRun: (String) -> Unit) = AlertDialog(
     onDismissRequest = onDismiss,
     title = { Text("执行链路记录") },
     text = {
-        if (runs.isEmpty()) Text("还没有执行记录。点击“立即运行一轮”后，这里会展示候选、行情、日线、风险、公司深研、决策与执行的完整链路。")
+        if (runs.isEmpty()) Text("还没有执行记录。")
         else LazyColumn { items(runs, key = { it.run_id }) { run -> PaperRunRow(run, onClick = { onOpenRun(run.run_id) }) } }
     },
     confirmButton = { TextButton(onClick = onDismiss) { Text("关闭") } },
 )
-
 @Composable private fun PaperRunRow(run: SimulationRunDto, onClick: () -> Unit) {
     val statusColor = when (run.status) { "completed" -> Color(0xFF2E7D32); "failed" -> Color(0xFFC62828); else -> MaterialTheme.colorScheme.onSurfaceVariant }
-    val elapsed = paperRunElapsed(run.started_at, run.finished_at)
     Column(Modifier.fillMaxWidth().clickable(onClick = onClick).padding(vertical = 10.dp)) {
         Row(verticalAlignment = Alignment.CenterVertically) {
-            Text("${paperBeijingTimestamp(run.started_at)} · ${if (run.trigger == "manual") "手动" else "自动"}", fontWeight = FontWeight.SemiBold, style = MaterialTheme.typography.titleSmall)
+            Text("${paperBeijingTimestamp(run.started_at)} · ${if (run.trigger == "manual") "手动" else "自动"}", fontWeight = FontWeight.Bold, style = MaterialTheme.typography.bodyMedium)
             Spacer(Modifier.weight(1f))
-            Text(paperRunStatusLabel(run.status), color = statusColor, style = MaterialTheme.typography.labelMedium, fontWeight = FontWeight.SemiBold)
-            Icon(Icons.AutoMirrored.Filled.KeyboardArrowRight, null, tint = MaterialTheme.colorScheme.onSurfaceVariant)
+            Text(if (run.status == "completed") "完成" else "失败", color = statusColor, style = MaterialTheme.typography.labelSmall, fontWeight = FontWeight.Bold)
+            Icon(Icons.AutoMirrored.Filled.KeyboardArrowRight, null, tint = MaterialTheme.colorScheme.outlineVariant)
         }
-        Text("候选 ${run.symbol_count} · 生成 ${run.generated} · 执行 ${run.executed} · 跳过 ${run.skipped}${elapsed?.let { " · 总耗时 $it" }.orEmpty()}", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
-        if (run.message.isNotBlank()) Text(run.message, maxLines = 2, overflow = TextOverflow.Ellipsis, style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
     }
 }
-
 @Composable private fun PaperRunDetailDialog(run: SimulationRunDetailDto?, loading: Boolean, error: String?, onDismiss: () -> Unit, onOpenDecision: (String?) -> Unit) = AlertDialog(
     onDismissRequest = onDismiss,
-    title = { Text(run?.let { "执行链路 · ${paperBeijingTimestamp(it.started_at)}" } ?: "执行链路") },
+    title = { Text("链路详情") },
     text = {
         LazyColumn(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-            if (loading) item { LinearProgressIndicator(Modifier.fillMaxWidth()); Text("正在加载本轮链路…") }
-            error?.let { item { Text(it, color = MaterialTheme.colorScheme.error) } }
+            if (loading) item { LinearProgressIndicator(Modifier.fillMaxWidth()) }
             run?.let { data ->
-                val elapsed = paperRunElapsed(data.started_at, data.finished_at)
-                val symbolNames = data.symbols.associate { state ->
-                    state.symbol to ((state.detail["name"] as? String)?.takeIf { it.isNotBlank() } ?: state.symbol)
-                }
-                val candidateStage = data.stages.firstOrNull { it.stage == "candidate_pool" }
-                item {
-                    Text(data.message, style = MaterialTheme.typography.bodySmall)
-                    Text("状态 ${paperRunStatusLabel(data.status)} · 候选 ${data.symbol_count} · 生成 ${data.generated} · 执行 ${data.executed} · 跳过 ${data.skipped}${elapsed?.let { " · 总耗时 $it" }.orEmpty()}", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                }
-                candidateStage?.let { stage -> item { PaperCandidatePoolAudit(stage.detail) } }
-                item { Text("阶段时间线", fontWeight = FontWeight.SemiBold) }
-                data.stages.forEach { stage -> item { PaperStageRow(stage, symbolNames) } }
-                if (data.symbols.isNotEmpty()) {
-                    item { Text("每只股票终态", fontWeight = FontWeight.SemiBold, modifier = Modifier.padding(top = 6.dp)) }
-                    data.symbols.forEach { symbol -> item { PaperSymbolStateRow(symbol, onOpenDecision = { onOpenDecision(symbol.detail["decision_id"] as? String) }) } }
+                item { Text(data.message, style = MaterialTheme.typography.bodySmall) }
+                data.symbols.forEach { symbol ->
+                    item {
+                         Row(Modifier.fillMaxWidth().clickable { onOpenDecision(symbol.detail["decision_id"] as? String) }.padding(vertical = 4.dp)) {
+                             Text(symbol.symbol, fontWeight = FontWeight.Bold, modifier = Modifier.weight(1f))
+                             Text(symbol.terminal_state, style = MaterialTheme.typography.labelSmall)
+                         }
+                    }
                 }
             }
         }
     },
     confirmButton = { TextButton(onClick = onDismiss) { Text("关闭") } },
 )
-
-@Composable private fun PaperCandidatePoolAudit(detail: Map<String, Any>) {
-    val eligible = paperDetailInt(detail["eligible_count"])
-    val limit = paperDetailInt(detail["requested_limit"])
-    val selected = paperDetailInt(detail["selected_count"])
-    val version = detail["candidate_selection_version"]?.toString().orEmpty()
-    val rotationKey = detail["rotation_key"]?.toString().orEmpty()
-    val poolHash = detail["candidate_pool_hash"]?.toString().orEmpty()
-    val selectedItems = (detail["selected_items"] as? List<*>)?.mapNotNull { it as? Map<*, *> }.orEmpty()
-    val adaptive = detail["adaptive_schedule"] as? Map<*, *>
-    Column(verticalArrangement = Arrangement.spacedBy(3.dp)) {
-        Text("候选池选取依据", fontWeight = FontWeight.SemiBold)
-        adaptive?.let { schedule ->
-            val mode = schedule["mode"]?.toString().orEmpty()
-            val reviewSeconds = paperDetailInt(schedule["review_interval_seconds"])
-            val scanEnabled = schedule["candidate_scan_enabled"] as? Boolean ?: true
-            val scanSeconds = paperDetailInt(schedule["candidate_scan_interval_seconds"])
-            val priority = schedule["holding_research_priority"]?.toString().orEmpty()
-            Text("自适应 ${paperAdaptiveModeLabel(mode)} · 持仓深度 $priority · 复核 ${reviewSeconds / 60} 分钟", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.primary)
-            Text(if (scanEnabled) "新标的扫描约每 ${maxOf(1, scanSeconds / 60)} 分钟一次" else "现金占用高：自动新标的扫描暂停，只看持仓与到期执行", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
-        }
-        Text("可选 $eligible · 配置限额 $limit · 本轮选择 $selected", style = MaterialTheme.typography.bodySmall)
-        Text("规则：纸面持仓优先保留用于风险监控；其余按 SHA256(version + rotation_key + symbol) 确定性轮换。", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
-        Text("明确不使用：自选股、热门板块、当日涨跌、资金流、新闻、LLM 输出。", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
-        if (version.isNotBlank() || rotationKey.isNotBlank()) Text("版本 $version · 轮换键 $rotationKey", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
-        if (poolHash.isNotBlank()) Text("Pool hash ${poolHash.take(12)}…", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
-        selectedItems.forEach { item ->
-            val symbol = item["symbol"]?.toString().orEmpty()
-            val name = item["name"]?.toString().orEmpty()
-            val rank = paperDetailInt(item["rank"])
-            val reason = when (item["reason"]?.toString()) {
-                "paper_position_risk_monitor" -> "持仓风险监控"
-                "deterministic_rotation" -> "确定性轮换"
-                else -> item["reason"]?.toString().orEmpty()
-            }
-            val display = if (name.isNotBlank() && name != symbol) "$name · $symbol" else symbol
-            Text("$rank. $display · $reason", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
-        }
-    }
-}
-
-@Composable private fun PaperStageRow(stage: SimulationRunStageDto, symbolNames: Map<String, String>) {
-    val label = paperStageLabels[stage.stage] ?: stage.stage
-    val stageName = (stage.detail["name"] as? String)?.takeIf { it.isNotBlank() }
-        ?: stage.symbol?.let { symbolNames[it] }
-    Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
-        Row(verticalAlignment = Alignment.CenterVertically) {
-            Text(label, fontWeight = FontWeight.SemiBold, style = MaterialTheme.typography.bodyMedium)
-            stage.symbol?.let { symbol ->
-                val display = if (!stageName.isNullOrBlank() && stageName != symbol) "$stageName · $symbol" else symbol
-                Text(" · $display", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
-            }
-            Spacer(Modifier.weight(1f))
-            Text("${paperStageStatusLabel(stage.status)}${if (stage.elapsed_ms > 0) " · ${stage.elapsed_ms}ms" else ""}", color = paperStageStatusColor(stage.status), style = MaterialTheme.typography.labelMedium, fontWeight = FontWeight.SemiBold)
-        }
-        val reason = stage.detail["reason"] as? String ?: stage.detail["error"] as? String
-        if (!reason.isNullOrBlank()) Text(paperTerminalReason(reason), style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
-        if (stage.stage == "decision") PaperOpenGateAudit(stage.detail["open_gate_audit"])
-    }
-}
-
-@Composable private fun PaperOpenGateAudit(value: Any?) {
-    val audit = value as? Map<*, *> ?: return
-    val permission = audit["permission"]?.toString().orEmpty()
-    val checks = (audit["checks"] as? List<*>)?.mapNotNull { it as? Map<*, *> }.orEmpty()
-    val blockers = paperDetailStrings(audit["blockers"])
-    val positive = paperDetailStrings(audit["positive_evidence_ids"])
-    val allowed = permission == "allowed"
-    Column(Modifier.padding(top = 3.dp), verticalArrangement = Arrangement.spacedBy(2.dp)) {
-        Text(
-            if (allowed) "OPEN 诊断：允许" else "OPEN 诊断：未放行",
-            style = MaterialTheme.typography.labelMedium,
-            fontWeight = FontWeight.SemiBold,
-            color = if (allowed) Color(0xFF2E7D32) else MaterialTheme.colorScheme.error,
-        )
-        checks.forEach { check ->
-            val id = check["check_id"]?.toString().orEmpty()
-            val passed = check["passed"] as? Boolean ?: false
-            val checkDetail = check["detail"]?.toString().orEmpty()
-            Text(
-                "${if (passed) "✓" else "✗"} ${paperOpenCheckLabel(id)}${if (!passed && checkDetail.isNotBlank()) " · ${paperOpenAuditDetail(checkDetail)}" else ""}",
-                style = MaterialTheme.typography.labelSmall,
-                color = if (passed) MaterialTheme.colorScheme.onSurfaceVariant else MaterialTheme.colorScheme.error,
-            )
-        }
-        if (positive.isNotEmpty()) Text("正向 POLICY 证据：${positive.joinToString()}", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
-        if (blockers.isNotEmpty()) Text("阻断原因：${blockers.joinToString("；") { paperOpenAuditDetail(it) }}", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.error)
-    }
-}
-
-@Composable private fun PaperSymbolStateRow(symbol: SimulationRunSymbolDto, onOpenDecision: () -> Unit) {
-    val terminal = paperTerminalLabels[symbol.terminal_state] ?: symbol.terminal_state
-    val decisionId = symbol.detail["decision_id"] as? String
-    val symbolName = symbol.detail["name"] as? String ?: ""
-    val terminalColor = when (symbol.terminal_state) {
-        "executed" -> Color(0xFF2E7D32)
-        "skipped_data_unavailable", "blocked_by_gate", "skipped_execution" -> Color(0xFFC62828)
-        "decision_generated", "decision_reused" -> Color(0xFF1565C0)
-        else -> MaterialTheme.colorScheme.onSurfaceVariant
-    }
-    Column(Modifier.fillMaxWidth().clickable(enabled = decisionId != null, onClick = onOpenDecision).padding(vertical = 4.dp)) {
-        Row(verticalAlignment = Alignment.CenterVertically) {
-            Text(if (symbolName.isNotBlank() && symbolName != symbol.symbol) "$symbolName · ${symbol.symbol}" else symbol.symbol, fontWeight = FontWeight.SemiBold, style = MaterialTheme.typography.bodyMedium)
-            Spacer(Modifier.width(8.dp))
-            Text(terminal, color = terminalColor, style = MaterialTheme.typography.labelMedium, fontWeight = FontWeight.SemiBold)
-            if (decisionId != null) {
-                Spacer(Modifier.weight(1f))
-                Text("查看决策", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.primary)
-                Icon(Icons.AutoMirrored.Filled.KeyboardArrowRight, "查看决策", tint = MaterialTheme.colorScheme.primary)
-            }
-        }
-        val reason = symbol.detail["reason"] as? String
-        if (!reason.isNullOrBlank()) Text(paperTerminalReason(reason), style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
-    }
-}
-
-private val paperStageLabels = mapOf(
-    "candidate_pool" to "候选池",
-    "market_quotes" to "行情",
-    "daily_history" to "日线",
-    "risk" to "风险",
-    "news" to "新闻",
-    "company_intelligence" to "公司深研",
-    "decision" to "决策",
-    "execution" to "执行",
-    "equity_snapshot" to "净值快照",
-)
-private val paperTerminalLabels = mapOf(
-    "decision_generated" to "已生成决策",
-    "decision_reused" to "复用已有决策",
-    "skipped_data_unavailable" to "数据不可用，跳过",
-    "blocked_by_gate" to "门槛拦截",
-    "not_due" to "等待后续报价",
-    "executed" to "已执行",
-    "skipped_execution" to "执行跳过",
-)
-private fun paperRunStatusLabel(status: String): String = when (status) {
-    "completed" -> "已完成"; "failed" -> "失败"; "running" -> "进行中"; else -> status
-}
-private fun paperStageStatusLabel(status: String): String = when (status) {
-    "ok" -> "完成"; "failed" -> "失败"; "skipped" -> "跳过"; "degraded" -> "部分可用"; else -> status
-}
-private fun paperStageStatusColor(status: String): Color = when (status) {
-    "ok" -> Color(0xFF2E7D32); "failed" -> Color(0xFFC62828); "skipped" -> Color(0xFF9E9E9E); "degraded" -> Color(0xFFF57C00); else -> Color(0xFF616161)
-}
-private fun paperRunElapsed(startedAt: String, finishedAt: String?): String? {
-    if (finishedAt.isNullOrBlank()) return null
-    return runCatching {
-        val millis = java.time.Duration.between(OffsetDateTime.parse(startedAt), OffsetDateTime.parse(finishedAt)).toMillis().coerceAtLeast(0)
-        when {
-            millis < 1_000 -> "${millis}ms"
-            millis < 60_000 -> String.format(Locale.US, "%.1fs", millis / 1_000.0)
-            else -> "${millis / 60_000}m ${(millis % 60_000) / 1_000}s"
-        }
-    }.getOrNull()
-}
-private fun paperDetailInt(value: Any?): Int = when (value) {
-    is Number -> value.toInt()
-    is String -> value.toDoubleOrNull()?.toInt() ?: 0
-    else -> 0
-}
-private fun paperDetailStrings(value: Any?): List<String> = (value as? List<*>)?.mapNotNull { it?.toString() }.orEmpty()
-private fun paperOpenCheckLabel(id: String): String = when (id) {
-    "action_gate.open" -> "OPEN 数据门禁"
-    "position.absent" -> "当前无持仓"
-    "quote.available" -> "行情可用"
-    "risk.available" -> "风险数据可用"
-    "cash.positive" -> "可用现金大于 0"
-    "positive_policy_evidence.present" -> "存在正向 POLICY 证据"
-    "market.not_defensive" -> "市场不是 defensive"
-    else -> id
-}
-private fun paperOpenAuditDetail(detail: String): String = when {
-    detail.contains("no positive POLICY evidence") -> "缺少正向 POLICY 证据（趋势、市场或相对强度）"
-    detail.contains("market.defensive") -> "市场环境为 defensive，OPEN 被阻断"
-    detail.contains("quote unavailable") -> "缺少可用行情"
-    detail.contains("risk unavailable") -> "缺少风险数据"
-    detail.contains("available cash is not positive") -> "可用现金不足"
-    detail.contains("existing position blocks OPEN") -> "已有持仓，OPEN 不适用"
-    detail.contains("OPEN action gate blocked") -> detail.replace("OPEN action gate blocked:", "OPEN 数据门禁未放行：")
-    else -> detail
-}
-private fun paperTerminalReason(reason: String): String = when {
-    reason.contains("missing_quote") -> "缺少可用行情"
-    reason.contains("insufficient_daily_bars") -> "本地日线不足 60 根"
-    reason.contains("no_decision_report") -> "本轮没有可执行的决策"
-    reason.contains("execution_not_due_later_quote") -> "等待决策之后的下一笔独立报价"
-    reason.contains("execution_not_due_next_market_session") -> "等待后续可执行报价"
-    reason.contains("execution_action_gate_blocked") -> "动作门槛未放行"
-    reason.contains("execution_quote_missing") -> "缺少成交报价"
-    reason.contains("invalid_side_or_sizing") -> "动作或数量无效"
-    reason.contains("paper_sell_blocked_no_position") -> "没有可卖出的持仓"
-    reason.contains("decision_already_executed") -> "该决策已执行，避免重复"
-    reason.contains("within_interval") -> "执行间隔内复用已有决策"
-    reason.contains("waiting_for_daily_history") -> "等待日线补齐（限频中）"
-    reason.contains("no_daily_bars") -> "本地没有可用日线"
-    reason.contains("upstream_unavailable") -> "行情源暂不可用"
-    else -> reason
-}
-
 @Composable fun PaperDecisionAuditDialog(report: DecisionReportDto?, context: Map<String, Any>, loading: Boolean, error: String?, lineage: DecisionLineageDto? = null, onDismiss: () -> Unit) = AlertDialog(
     onDismissRequest = onDismiss,
     title = { Text("操作分析记录") },
     text = {
         LazyColumn(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-            if (loading) item { LinearProgressIndicator(Modifier.fillMaxWidth()); Text("正在加载完整决策留档…") }
-            error?.let { item { Text(it, color = MaterialTheme.colorScheme.error) } }
-            report?.let { item {
-                Text("${it.name.ifBlank { it.symbol }} · ${it.action} · ${paperBeijingTimestamp(it.generated_at)}", fontWeight = FontWeight.Bold)
-                Text(it.summary, style = MaterialTheme.typography.bodySmall)
-                it.data_quality?.let { quality ->
-                    DecisionAuditLine("输入完整度", "${quality.score_percent}% · ${quality.status}", error = quality.status != "ready")
-                    quality.action_gates.firstOrNull { gate -> gate.action == it.action }?.let { gate ->
-                        DecisionAuditLine("本动作权限", gate.permission + gate.unavailable_fields.takeIf { fields -> fields.isNotEmpty() }?.let { " · 缺少 ${it.joinToString()}" }.orEmpty(), error = gate.permission != "allowed")
-                    }
-                    quality.source_freshness.forEach { source ->
-                        DecisionAuditLine("数据时效 · ${source.source_key}", "${source.status}${source.as_of?.let { " · 截至 $it" }.orEmpty()}${source.reason?.let { " · $it" }.orEmpty()}", error = source.status != "fresh")
-                    }
-                }
-                it.sizing?.let { sizing -> DecisionAuditLine("仓位计算", "建议 ${sizing.suggested_quantity?.clean() ?: "--"} 股；目标 ${sizing.target_quantity?.clean() ?: "--"} 股；现金上限 ${sizing.quantity_by_cash?.clean() ?: "--"} 股") }
-                DecisionAuditLine("成交语义", "${it.execution_price_mode ?: "未记录"}${it.execution_eligible_after?.let { " · 决策报价截至 $it" }.orEmpty()}")
-                if (it.audit_versions.isNotEmpty()) DecisionAuditLine("版本快照", it.audit_versions.entries.joinToString(" · ") { "${it.key}=${it.value.take(12)}" })
-                if (it.action_candidates.isNotEmpty()) DecisionAuditLine("规则候选", it.action_candidates.joinToString { candidate -> "${candidate.action}（评分 ${"%.2f".format(candidate.policy_score)}）" })
-                it.operation_items?.forEach { operation -> DecisionAuditLine(operation.title, operation.trigger) }
-                Text("AI 推理依据", fontWeight = FontWeight.SemiBold)
-                it.ai_assessment?.reasoning_steps?.forEach { step -> DecisionAuditLine(step.stage, step.summary + step.evidence_ids.takeIf { ids -> ids.isNotEmpty() }?.let { "\n引用证据：${it.joinToString()}" }.orEmpty()) }
-                Text("证据数据点", fontWeight = FontWeight.SemiBold)
-                it.evidence.forEach { evidence -> DecisionAuditLine(evidence.title, evidence.description) }
-                if (it.ai_assessment?.missing_evidence?.isNotEmpty() == true) DecisionAuditLine("缺失数据", it.ai_assessment.missing_evidence.joinToString(), error = true)
-                lineage?.let { data ->
-                    DecisionAuditLine("数据链路", "影子特征 ${data.features.size} 项 · 原始快照 ${data.snapshots.size} 条（仅审计，不改变本次规则）")
-                    data.features.forEach { feature -> DecisionAuditLine(feature.feature_key, "${feature.value ?: "不可用"} · ${feature.quality_status} · 可用时间 ${feature.available_at}") }
-                }
-                DecisionAuditContext(context)
-                Text("输入快照 ${it.input_hash.take(12)} · 模型 ${it.model ?: "规则引擎"}", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
-            } }
+            if (loading) item { LinearProgressIndicator(Modifier.fillMaxWidth()) }
+            report?.let { it ->
+                item { Text("${it.symbol} · ${it.action}", fontWeight = FontWeight.Bold) }
+                item { Text(it.summary, style = MaterialTheme.typography.bodySmall) }
+                it.evidence.forEach { ev -> item { Text("${ev.title}: ${ev.description}", style = MaterialTheme.typography.labelSmall) } }
+            }
         }
     },
     confirmButton = { TextButton(onClick = onDismiss) { Text("关闭") } },
 )
-
-@Composable private fun DecisionAuditLine(label: String, value: String, error: Boolean = false) = Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
-    Text(label, style = MaterialTheme.typography.labelMedium, fontWeight = FontWeight.SemiBold)
-    Text(value, style = MaterialTheme.typography.bodySmall, color = if (error) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.onSurfaceVariant)
-}
-
-@Composable private fun DecisionAuditContext(context: Map<String, Any>) {
-    if (context.isEmpty()) return
-    fun field(section: String, key: String): String? = (context[section] as? Map<*, *>)?.get(key)?.toString()
-    Text("决策输入快照", fontWeight = FontWeight.SemiBold)
-    field("quote", "price")?.let { DecisionAuditLine("市场价格", it) }
-    field("account", "available_cash")?.let { DecisionAuditLine("可用资金", it) }
-    field("position", "quantity")?.let { DecisionAuditLine("持仓数量", "$it 股") }
-    field("daily_bars", "count")?.let { DecisionAuditLine("日线数据范围", "$it 根") }
-    field("data_quality", "status")?.let { DecisionAuditLine("数据质量", it) }
-    listOf("technical" to "技术因子", "risk" to "风险因子", "market_regime" to "市场环境", "relative_strength" to "相对强弱").forEach { (key, label) ->
-        val values = context[key] as? Map<*, *> ?: return@forEach
-        val readable = values.entries.filter { it.value != null }.joinToString(" · ") { "${it.key}=${it.value}" }
-        if (readable.isNotBlank()) DecisionAuditLine(label, readable)
-    }
-}
-
-private data class PaperAdaptiveUi(val title: String, val detail: String)
-
-private fun paperAdaptiveUi(account: PaperTradingAccountDto?): PaperAdaptiveUi {
-    if (account == null) return PaperAdaptiveUi("正在计算", "读取资金占用后自动选择分析节奏")
-    val equity = account.total_equity.coerceAtLeast(0.0)
-    val cashRatio = if (equity <= 0.0) 1.0 else (account.available_cash / equity).coerceIn(0.0, 1.0)
-    val hasPositions = account.positions.isNotEmpty()
-    return when {
-        hasPositions && cashRatio <= 0.05 -> PaperAdaptiveUi("满仓深研", "持仓每 5 分钟复核；暂停自动扫描其他股票；公司研究 L4")
-        hasPositions && cashRatio <= 0.20 -> PaperAdaptiveUi("持仓优先", "持仓每 5 分钟复核；新标的约 30 分钟扫描；公司研究 L3")
-        else -> PaperAdaptiveUi("发现模式", "按配置扫描确定性候选；持仓公司研究 L1/L2")
-    }
-}
-
-private fun paperAdaptiveModeLabel(mode: String): String = when (mode) {
-    "FULL_FOCUS" -> "满仓深研"
-    "HOLDING_FOCUS" -> "持仓优先"
-    "DISCOVERY" -> "发现模式"
-    else -> mode
-}
-
-private fun Double.money() = "%.2f".format(Locale.US, this)
-private fun Double.clean() = if (this % 1.0 == 0.0) toInt().toString() else "%.2f".format(Locale.US, this)
-private fun Double.signed() = "%+.2f".format(Locale.US, this)
-private fun paperBeijingTimestamp(value: String): String = runCatching { OffsetDateTime.parse(value).withOffsetSameInstant(ZoneOffset.ofHours(8)).format(DateTimeFormatter.ofPattern("MM-dd HH:mm")) }.getOrElse { value.replace('T', ' ').substringBefore("+").substringBefore("Z") }
-private fun paperSkipReason(reason: String): String = when {
-    reason.contains("insufficient_paper_cash") -> "可用资金不足，未买入"
-    reason.contains("insufficient_paper_position") -> "持仓不足，未卖出"
-    reason.contains("paper_t1_unsellable_quantity") -> "A 股 T+1：今日买入的仓位下一交易日才能卖出"
-    reason.contains("already_executed") -> "该份决策已执行，避免重复交易"
-    reason.contains("100_share_lot") -> "数量不符合 A 股一手 100 股规则"
-    reason.contains("no_executable") -> "当前没有满足条件的买卖信号"
-    else -> "本轮暂不操作：$reason"
-}

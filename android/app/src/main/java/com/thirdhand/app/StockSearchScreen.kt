@@ -1,47 +1,34 @@
 package com.thirdhand.app
 
+import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
-import androidx.compose.foundation.layout.Arrangement
-import androidx.compose.foundation.layout.Column
-import androidx.compose.foundation.layout.Row
-import androidx.compose.foundation.layout.Spacer
-import androidx.compose.foundation.layout.fillMaxWidth
-import androidx.compose.foundation.layout.height
-import androidx.compose.foundation.layout.padding
-import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Clear
 import androidx.compose.material.icons.filled.Search
-import androidx.compose.material3.CircularProgressIndicator
-import androidx.compose.material3.Icon
-import androidx.compose.material3.IconButton
-import androidx.compose.material3.LinearProgressIndicator
-import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.OutlinedTextField
-import androidx.compose.material3.Text
-import androidx.compose.material3.TextButton
-import androidx.compose.runtime.Composable
-import androidx.compose.runtime.LaunchedEffect
-import androidx.compose.runtime.getValue
-import androidx.compose.runtime.mutableIntStateOf
-import androidx.compose.runtime.mutableStateOf
-import androidx.compose.runtime.remember
-import androidx.compose.runtime.setValue
+import androidx.compose.material3.*
+import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.ImeAction
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
 import com.thirdhand.app.ui.components.MarketTag
 import com.thirdhand.app.ui.components.TradingRowDivider
+import com.thirdhand.app.ui.theme.AppSpacing
 import kotlinx.coroutines.delay
 
 private const val SEARCH_DEBOUNCE_MS = 450L
@@ -63,21 +50,13 @@ private fun MarketQuoteDto.toSearchCandidate(): SecurityCandidateDto = SecurityC
 private fun normalizeSearchText(value: String): String = value
     .trim()
     .uppercase()
-    .replace(" ", "")
-    .replace("-", "")
-    .replace("_", "")
-    .replace(".", "")
-    .replace("·", "")
-    .replace("(", "")
-    .replace(")", "")
-    .replace("（", "")
-    .replace("）", "")
+    .replace(Regex("[^A-Z0-9]"), "")
 
 private fun rankCandidate(candidate: SecurityCandidateDto, query: String): Int {
     val cleaned = query.trim().uppercase()
     val normalized = normalizeSearchText(query)
     val normalizedName = normalizeSearchText(candidate.name)
-    val paddedHk = if (cleaned.all(Char::isDigit) && cleaned.length < 5) cleaned.padStart(5, '0') else cleaned
+    val paddedHk = if (cleaned.all { it.isDigit() } && cleaned.length < 5) cleaned.padStart(5, '0') else cleaned
     return when {
         candidate.symbol == cleaned || candidate.symbol == paddedHk -> 100
         normalizedName == normalized -> 95
@@ -96,6 +75,7 @@ private fun sortCandidates(
     .sortedWith(compareByDescending<SecurityCandidateDto> { rankCandidate(it, query) }.thenBy { it.symbol })
     .take(20)
 
+@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun StockSearchScreen(
     onSelect: (SecurityCandidateDto) -> Unit,
@@ -133,25 +113,15 @@ fun StockSearchScreen(
 
         val normalized = normalizeSearchText(cleaned)
         val cleanedUpper = cleaned.uppercase()
-        val paddedHk = if (cleanedUpper.all(Char::isDigit) && cleanedUpper.length < 5) cleanedUpper.padStart(5, '0') else cleanedUpper
-        val localMatches = cachedQuotes.asSequence()
-            .filter {
-                it.symbol == paddedHk ||
-                    it.symbol.startsWith(cleanedUpper) ||
-                    normalizeSearchText(it.name).contains(normalized)
-            }
-            .map(MarketQuoteDto::toSearchCandidate)
-            .let { sortCandidates(cleaned, it.toList()) }
+        val localMatches = cachedQuotes.filter {
+            it.symbol.startsWith(cleanedUpper) || normalizeSearchText(it.name).contains(normalized)
+        }.map { it.toSearchCandidate() }
 
-        // Existing local quotes are sufficient for interactive search. Never
-        // start a provider-backed directory lookup just to "complete" these
-        // results. This also prevents an intermediate query such as "小米" from
-        // spawning a remote HK lookup while the user is still typing.
         if (localMatches.isNotEmpty()) {
-            results = localMatches
+            results = sortCandidates(cleaned, localMatches)
             loading = false
             remoteAttempt = 0
-            statusMessage = "已从本地行情缓存命中，不需要远程查询。"
+            statusMessage = "本地缓存匹配"
             error = null
             return@LaunchedEffect
         }
@@ -165,228 +135,221 @@ fun StockSearchScreen(
             return@LaunchedEffect
         }
 
-        // A true debounce cancels this coroutine while the user is still typing.
-        // Only a stable local miss reaches the server.
         delay(SEARCH_DEBOUNCE_MS)
         loading = true
         remoteAttempt = 0
         results = emptyList()
-        statusMessage = "正在查询本地证券数据库…"
+        statusMessage = "正在检索证券目录..."
         error = null
 
-        while (true) {
-            val response = runCatching {
+        var remoteFinished = false
+        while (!remoteFinished) {
+            val responseResult = runCatching {
                 api.symbolLookup(SymbolResolveRequestDto(listOf(cleaned))).firstOrNull()
-            }.getOrElse {
-                loading = false
-                remoteAttempt = 0
-                statusMessage = null
-                error = "搜索服务连接失败：${it.message ?: "请检查服务连接"}"
-                return@LaunchedEffect
             }
 
+            val response = responseResult.getOrNull()
             if (response == null) {
                 loading = false
-                remoteAttempt = 0
-                results = emptyList()
-                statusMessage = null
-                error = "搜索服务没有返回结果，请稍后重试。"
-                return@LaunchedEffect
+                error = "搜索服务未响应"
+                remoteFinished = true
+                break
             }
 
             results = sortCandidates(cleaned, response.matches)
             statusMessage = response.lookup_message.takeIf { it.isNotBlank() }
 
-            when (response.lookup_status) {
-                "matched" -> {
-                    loading = false
-                    remoteAttempt = 0
-                    error = null
-                    responseCache[cleaned] = response
-                    return@LaunchedEffect
-                }
+            if (response.lookup_status == "matched" || response.lookup_status == "not_found") {
+                loading = false
+                if (response.lookup_status == "matched") responseCache[cleaned] = response
+                remoteFinished = true
+                break
+            }
 
-                "not_found" -> {
-                    loading = false
-                    remoteAttempt = 0
-                    error = null
-                    return@LaunchedEffect
-                }
+            remoteAttempt += 1
+            if (remoteAttempt >= REMOTE_POLL_LIMIT) {
+                loading = false
+                error = "远程检索超时，请稍后重试"
+                remoteFinished = true
+                break
+            }
+            delay(REMOTE_POLL_INTERVAL_MS)
+        }
+    }
 
-                "pending", "refreshing" -> {
-                    remoteAttempt += 1
-                    loading = true
-                    error = null
-                    if (remoteAttempt >= REMOTE_POLL_LIMIT) {
-                        loading = false
-                        error = "远程证券目录响应较慢，后台仍在查询。稍后点“重新查询”即可读取已经写入的缓存。"
-                        return@LaunchedEffect
+    Surface(modifier = modifier.fillMaxSize(), color = MaterialTheme.colorScheme.surface) {
+        Column(modifier = Modifier.fillMaxSize()) {
+            Column(Modifier.padding(horizontal = AppSpacing.xxLarge, vertical = AppSpacing.large)) {
+                Text(
+                    text = "查找证券",
+                    style = MaterialTheme.typography.headlineSmall,
+                    fontWeight = FontWeight.ExtraBold
+                )
+                Text(
+                    text = "支持 A 股代码、拼音缩写或港股标的",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+
+                Spacer(Modifier.height(AppSpacing.large))
+
+                TextField(
+                    value = query,
+                    onValueChange = { query = it },
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .focusRequester(focusRequester),
+                    colors = TextFieldDefaults.colors(
+                        focusedContainerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f),
+                        unfocusedContainerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.3f),
+                        focusedIndicatorColor = Color.Transparent,
+                        unfocusedIndicatorColor = Color.Transparent,
+                        disabledIndicatorColor = Color.Transparent
+                    ),
+                    shape = MaterialTheme.shapes.medium,
+                    singleLine = true,
+                    placeholder = { Text("输入名称或代码", style = MaterialTheme.typography.bodyMedium) },
+                    leadingIcon = { Icon(Icons.Filled.Search, null, tint = MaterialTheme.colorScheme.primary) },
+                    trailingIcon = {
+                        if (query.isNotEmpty()) {
+                            IconButton(onClick = { query = "" }) {
+                                Icon(Icons.Filled.Clear, null)
+                            }
+                        }
+                    },
+                    keyboardOptions = KeyboardOptions(imeAction = ImeAction.Search),
+                    keyboardActions = KeyboardActions(onSearch = { retryToken += 1 }),
+                )
+            }
+
+            if (loading) {
+                LinearProgressIndicator(
+                    modifier = Modifier.fillMaxWidth().height(2.dp),
+                    color = MaterialTheme.colorScheme.primary,
+                    trackColor = MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.3f)
+                )
+            } else {
+                HorizontalDivider(thickness = 0.5.dp, color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.3f))
+            }
+
+            Box(Modifier.fillMaxSize()) {
+                val currentError = error
+                val currentStatus = statusMessage
+                if (query.isBlank()) {
+                    Column(
+                        modifier = Modifier.align(Alignment.Center).padding(bottom = 60.dp),
+                        horizontalAlignment = Alignment.CenterHorizontally
+                    ) {
+                        Surface(
+                            modifier = Modifier.size(64.dp),
+                            color = MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.5f),
+                            shape = CircleShape
+                        ) {
+                            Box(contentAlignment = Alignment.Center) {
+                                Icon(Icons.Default.Search, null, tint = MaterialTheme.colorScheme.primary, modifier = Modifier.size(32.dp))
+                            }
+                        }
+                        Spacer(Modifier.height(AppSpacing.large))
+                        Text(text = "开始搜索标的", style = MaterialTheme.typography.bodyLarge, fontWeight = FontWeight.Bold)
+                        Text(text = "输入公司名称或 6 位/5 位股票代码", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
                     }
-                    delay(REMOTE_POLL_INTERVAL_MS)
-                }
+                } else if (!loading && results.isEmpty() && currentError == null) {
+                    Text(
+                        text = "未找到相关结果",
+                        modifier = Modifier.align(Alignment.TopCenter).padding(top = 40.dp).fillMaxWidth(),
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        textAlign = TextAlign.Center
+                    )
+                } else if (currentError != null) {
+                    Column(
+                        modifier = Modifier.align(Alignment.TopCenter).padding(top = 40.dp).padding(horizontal = AppSpacing.xxLarge),
+                        horizontalAlignment = Alignment.CenterHorizontally
+                    ) {
+                        Surface(
+                            color = MaterialTheme.colorScheme.errorContainer.copy(alpha = 0.1f),
+                            shape = MaterialTheme.shapes.small,
+                            modifier = Modifier.fillMaxWidth()
+                        ) {
+                            Column(Modifier.padding(AppSpacing.large), horizontalAlignment = Alignment.CenterHorizontally) {
+                                Text(text = currentError, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.error, textAlign = TextAlign.Center)
+                                Spacer(Modifier.height(AppSpacing.small))
+                                TextButton(onClick = { retryToken += 1 }) {
+                                    Text("重新检索")
+                                }
+                            }
+                        }
+                    }
+                } else {
+                    Column {
+                        if (currentStatus != null) {
+                            Text(
+                                text = currentStatus,
+                                modifier = Modifier.padding(horizontal = AppSpacing.xxLarge, vertical = AppSpacing.small),
+                                style = MaterialTheme.typography.labelSmall,
+                                color = MaterialTheme.colorScheme.primary
+                            )
+                        }
+                        LazyColumn(
+                            modifier = Modifier.fillMaxSize(),
+                            contentPadding = PaddingValues(bottom = AppSpacing.xxLarge)
+                        ) {
+                            items(results, key = { "${it.market}:${it.symbol}" }) { candidate ->
+                                SearchCandidateRow(candidate) { onSelect(candidate) }
+                            }
 
-                "partial_failure", "remote_error" -> {
-                    loading = false
-                    remoteAttempt = 0
-                    error = response.lookup_message.ifBlank { "远程证券目录暂时不可用，请稍后重试。" }
-                    return@LaunchedEffect
-                }
-
-                else -> {
-                    loading = false
-                    remoteAttempt = 0
-                    error = null
-                    return@LaunchedEffect
+                            if (loading && results.isNotEmpty()) {
+                                item {
+                                    Row(
+                                        modifier = Modifier.fillMaxWidth().padding(AppSpacing.large),
+                                        horizontalArrangement = Arrangement.Center,
+                                        verticalAlignment = Alignment.CenterVertically
+                                    ) {
+                                        CircularProgressIndicator(modifier = Modifier.size(16.dp), strokeWidth = 2.dp)
+                                        Spacer(Modifier.width(AppSpacing.medium))
+                                        Text(text = "正在深度搜索...", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                    }
+                                }
+                            }
+                        }
+                    }
                 }
             }
         }
     }
+}
 
-    Column(modifier.fillMaxWidth().padding(horizontal = 20.dp)) {
-        Text("搜索股票", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.SemiBold)
-        Text(
-            "本地数据库优先；只有本地没有结果时才后台查询远程证券目录。",
-            modifier = Modifier.padding(top = 4.dp, bottom = 12.dp),
-            style = MaterialTheme.typography.bodySmall,
-            color = MaterialTheme.colorScheme.onSurfaceVariant,
-        )
-        OutlinedTextField(
-            value = query,
-            onValueChange = { query = it },
-            modifier = Modifier.fillMaxWidth().focusRequester(focusRequester),
-            singleLine = true,
-            label = { Text("股票名称 / 代码") },
-            placeholder = { Text("例如 小米集团 / 01810") },
-            leadingIcon = { Icon(Icons.Filled.Search, contentDescription = null) },
-            trailingIcon = {
-                if (query.isNotEmpty()) {
-                    IconButton(onClick = { query = "" }) {
-                        Icon(Icons.Filled.Clear, contentDescription = "清空搜索")
-                    }
-                }
-            },
-            keyboardOptions = KeyboardOptions(imeAction = ImeAction.Search),
-            keyboardActions = KeyboardActions(onSearch = { retryToken += 1 }),
-        )
-
-        if (loading) {
-            if (remoteAttempt > 0) {
-                LinearProgressIndicator(
-                    progress = { remoteAttempt.toFloat() / REMOTE_POLL_LIMIT.toFloat() },
-                    modifier = Modifier.fillMaxWidth().padding(top = 10.dp),
+@Composable
+private fun SearchCandidateRow(candidate: SecurityCandidateDto, onClick: () -> Unit) {
+    Column(Modifier.fillMaxWidth().clickable(onClick = onClick)) {
+        Row(
+            Modifier.padding(horizontal = AppSpacing.xxLarge, vertical = AppSpacing.large),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Column(Modifier.weight(1f)) {
+                Text(
+                    text = candidate.name.ifBlank { candidate.symbol },
+                    style = MaterialTheme.typography.bodyLarge,
+                    fontWeight = FontWeight.Bold,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis
                 )
-            } else {
-                LinearProgressIndicator(Modifier.fillMaxWidth().padding(top = 10.dp))
+                Text(
+                    text = candidate.symbol,
+                    style = MaterialTheme.typography.labelSmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
             }
-        }
-        statusMessage?.let {
-            Text(
-                if (remoteAttempt > 0) "远程查询 ${remoteAttempt}/$REMOTE_POLL_LIMIT · $it" else it,
-                Modifier.padding(top = 10.dp),
-                style = MaterialTheme.typography.labelSmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
+
+            MarketTag(
+                label = when (candidate.market) {
+                    "CN" -> "A股"
+                    "HK" -> "港股"
+                    "ETF" -> "基金"
+                    else -> candidate.market
+                }
             )
         }
-        error?.let {
-            Column(Modifier.fillMaxWidth().padding(top = 8.dp)) {
-                Text(it, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.error)
-                if (query.isNotBlank()) {
-                    TextButton(onClick = { retryToken += 1 }) {
-                        Text("重新查询")
-                    }
-                }
-            }
-        }
-        Spacer(Modifier.height(8.dp))
-
-        when {
-            query.isBlank() -> {
-                Column(
-                    Modifier.fillMaxWidth().padding(vertical = 28.dp),
-                    horizontalAlignment = Alignment.CenterHorizontally,
-                ) {
-                    Icon(
-                        Icons.Filled.Search,
-                        contentDescription = null,
-                        modifier = Modifier.size(30.dp),
-                        tint = MaterialTheme.colorScheme.onSurfaceVariant,
-                    )
-                    Text("输入股票名称或证券代码", Modifier.padding(top = 10.dp), style = MaterialTheme.typography.bodyMedium)
-                    Text(
-                        "已有股票即时从本地返回；本地没有时才显示远程查询进度。",
-                        Modifier.padding(top = 4.dp),
-                        style = MaterialTheme.typography.labelSmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    )
-                }
-            }
-
-            !loading && results.isEmpty() && error == null -> {
-                Text(
-                    "未找到“${query.trim()}”，请检查股票名称或证券代码。",
-                    Modifier.padding(vertical = 24.dp),
-                    style = MaterialTheme.typography.bodyMedium,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                )
-            }
-
-            else -> {
-                LazyColumn(Modifier.fillMaxWidth()) {
-                    items(results, key = { "${it.market}:${it.symbol}" }) { candidate ->
-                        Row(
-                            Modifier.fillMaxWidth().clickable { onSelect(candidate) }.padding(vertical = 13.dp),
-                            verticalAlignment = Alignment.CenterVertically,
-                        ) {
-                            Column(Modifier.weight(1f)) {
-                                Text(
-                                    candidate.name.ifBlank { candidate.symbol },
-                                    fontWeight = FontWeight.SemiBold,
-                                    maxLines = 1,
-                                    overflow = TextOverflow.Ellipsis,
-                                )
-                                Row(verticalAlignment = Alignment.CenterVertically) {
-                                    Text(
-                                        candidate.symbol,
-                                        style = MaterialTheme.typography.labelSmall,
-                                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                                    )
-                                    Text(
-                                        if (candidate.match_type == "database" || candidate.match_type == "cache") " · 本地缓存" else " · 证券目录",
-                                        style = MaterialTheme.typography.labelSmall,
-                                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                                    )
-                                }
-                            }
-                            MarketTag(
-                                when (candidate.market) {
-                                    "CN" -> "A股"
-                                    "HK" -> "港股"
-                                    else -> candidate.market
-                                },
-                            )
-                        }
-                        TradingRowDivider()
-                    }
-                    if (loading && results.isNotEmpty()) {
-                        item {
-                            Row(
-                                Modifier.fillMaxWidth().padding(vertical = 16.dp),
-                                horizontalArrangement = Arrangement.Center,
-                                verticalAlignment = Alignment.CenterVertically,
-                            ) {
-                                CircularProgressIndicator(Modifier.size(18.dp), strokeWidth = 2.dp)
-                                Text(
-                                    "已显示本地结果，后台查询继续进行…",
-                                    Modifier.padding(start = 8.dp),
-                                    style = MaterialTheme.typography.labelSmall,
-                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                                )
-                            }
-                        }
-                    }
-                }
-            }
-        }
-        Spacer(Modifier.height(24.dp))
+        TradingRowDivider()
     }
 }

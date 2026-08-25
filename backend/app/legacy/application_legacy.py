@@ -39,6 +39,7 @@ from app.price_history import PriceHistoryService, PriceHistoryUnavailable
 from app.market_regime import MarketRegimeService
 from app.relative_strength import RelativeStrengthService
 from app.trading_calendar import TradingCalendarService
+from app.market_freshness import quote_display_status
 from app.opportunity_scoring import score_opportunity
 from app.decision_context import DecisionContextBuilder
 from app.execution_precheck import validate_daily_execution
@@ -565,6 +566,7 @@ class MarketQuote(BaseModel):
     delay_seconds: int | None = None
     license_scope: str = "unknown"
     freshness_note: str = ""
+    display_freshness: str = "unavailable"
     refresh_status: str = "fresh"
     error_code: str | None = None
     error_message: str | None = None
@@ -2013,14 +2015,24 @@ def resolve_market_quotes(
         # is queued after the response rather than turning this read endpoint
         # into a synchronous AKShare request.
         queue_background(refresh_quote_cache, requested, True, "request-forced")
+    def display_quote(symbol: str, payload: dict[str, object], refresh_status: str) -> MarketQuote:
+        row = {**payload, "refresh_status": refresh_status}
+        row["display_freshness"] = quote_display_status(
+            row,
+            symbol,
+            trading_calendar=trading_calendar,
+        )
+        return MarketQuote.model_validate(row)
+
     return [
-        MarketQuote.model_validate({**cached_by_symbol[symbol], "refresh_status": "stored"})
-        if symbol in cached_by_symbol else MarketQuote.model_validate({
-            **MarketDataService._failure_quote(
+        display_quote(symbol, cached_by_symbol[symbol], "stored")
+        if symbol in cached_by_symbol else display_quote(
+            symbol,
+            MarketDataService._failure_quote(
                 symbol, "awaiting_scheduler_refresh", "行情尚未入库，等待服务端定时任务拉取。",
             ),
-            "refresh_status": "pending",
-        })
+            "pending",
+        )
         for symbol in requested
     ]
 
