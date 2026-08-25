@@ -1,6 +1,6 @@
 # ThirdHand v3 Redesign Ledger and Roadmap
 
-> **Canonical status (2026-08-24):** This is the active implementation ledger.
+> **Canonical status (2026-08-25):** This is the active implementation ledger.
 > `ThirdHand_Architecture_v3_consolidated.md` is the paired authority contract.
 > `ThirdHand_v3_Strategy_AI_Lab_Design.md`,
 > `ThirdHand_v3_Fullstack_Technical_Roadmap.md`, and
@@ -863,3 +863,31 @@ Also preserve:
   build on this referee. N4 remains paper-intent/forecast only with no fill
   authority; N5 isolated AI paper execution (#96) and N6 probability calibration
   (#97) remain later phases.
+
+
+## Product recovery decision — 2026-08-25 — S0 Stabilization
+
+Daily mobile usability is now the immediate product priority. The approved
+implementation plan is
+`ThirdHand_Stabilization_Sprint_Plan.md`.
+
+The active order is:
+
+1. S0.1 Portfolio Recovery;
+2. S0.2 Watchlist Recovery and #92 acceptance;
+3. S0.3 Holding Detail fact/interpretation separation;
+4. S0.4 K-line progressive disclosure;
+5. S0.5 canonical AI/Decision entry;
+6. remaining N2/device acceptance;
+7. reassess N4 resumption.
+
+N4 AI Strategy Lab Shadow, N5 AI Paper Trading and N8 Order Flow are paused for
+new implementation until S0 acceptance is recorded here. Existing correctness
+acceptance for #46, #39, #49 and #40 continues and is not weakened.
+
+Every S0 item requires an explicit Android entry and the full
+Backend -> API -> Android -> observable states -> screenshot/test -> device
+acceptance chain. Backend-only or hidden/admin-only capability is not
+`PRODUCT_DONE`. This prioritization changes delivery order only; it does not
+change Formal Decision, StrategyProfile, Risk, sizing, ExecutionPrecheck,
+Paper Broker or Evaluation authority.
