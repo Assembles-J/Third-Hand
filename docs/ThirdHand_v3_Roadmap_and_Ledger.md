@@ -971,3 +971,19 @@ Paper Broker or Evaluation authority.
   before `PRODUCT_DONE`.
 - **Authority impact:** none. This is navigation and information architecture;
   Formal Decision and execution contracts are unchanged.
+
+## Delivery update — 2026-08-25 — S0.4 K-line UX completion slice
+
+- **Progressive hierarchy:** Holding Detail renders position facts first, then
+  the technical chart; Decision/AI, financial and event interpretation remain
+  behind the separate Decision entry rather than continuing below the chart.
+- **Deterministic periods:** symbol changes reset the chart to Daily. Intraday,
+  Daily, Weekly and Monthly select explicit datasets; Weekly/Monthly aggregation
+  retains chronological OHLCV semantics over the complete persisted daily
+  history.
+- **Observable states:** loading, empty and error are distinct; chart failure has
+  an in-place retry and does not hide the position facts above it.
+- **Tests:** JVM coverage protects period selection and monthly OHLCV aggregation.
+- **Delivery state:** `ANDROID_READY / ACCEPTANCE_PENDING`; CI and physical-device
+  period switching remain required before `PRODUCT_DONE`.
+- **Authority impact:** none. K-line remains read-only timing evidence.
