@@ -33,8 +33,8 @@ fun TradingPeriodKLinePanel(symbol: String, quote: MarketQuoteDto?) {
         loading = true
         error = null
         runCatching {
-            val daily = api.marketHistory(symbol)
-            val intraday = api.marketIntraday(symbol).map { bar ->
+            val daily = api.marketHistory(symbol, limit = 5_000)
+            val intraday = api.marketIntraday(symbol, limit = 2_000).map { bar ->
                 DailyPriceDto(
                     trading_date = bar.bar_time,
                     open = bar.open,
@@ -50,7 +50,8 @@ fun TradingPeriodKLinePanel(symbol: String, quote: MarketQuoteDto?) {
             Triple(daily, intraday, logs)
         }.onSuccess { (daily, intraday, logs) ->
             bars = daily
-            intradayBars = intraday
+            val latestSession = intraday.maxOfOrNull { it.trading_date.take(10) }
+            intradayBars = intraday.filter { it.trading_date.take(10) == latestSession }
             paperLogs = logs
         }.onFailure {
             error = "无法加载 K 线数据"
@@ -62,13 +63,7 @@ fun TradingPeriodKLinePanel(symbol: String, quote: MarketQuoteDto?) {
         loadData()
     }
 
-    Card(
-        modifier = Modifier.fillMaxWidth().padding(horizontal = AppSpacing.xxLarge),
-        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
-        shape = MaterialTheme.shapes.large,
-        elevation = CardDefaults.cardElevation(defaultElevation = 1.dp)
-    ) {
-        Column(Modifier.padding(AppSpacing.large)) {
+    Column(Modifier.fillMaxWidth().padding(AppSpacing.large)) {
             Row(
                 modifier = Modifier.fillMaxWidth(),
                 verticalAlignment = Alignment.CenterVertically,
@@ -84,7 +79,7 @@ fun TradingPeriodKLinePanel(symbol: String, quote: MarketQuoteDto?) {
                 }
 
                 Row {
-                    listOf("今日", "日线", "周线").forEach { p ->
+                    listOf("分时", "日线", "周线", "月线").forEach { p ->
                         TextButton(
                             onClick = { period = p },
                             contentPadding = PaddingValues(horizontal = 8.dp, vertical = 0.dp),
@@ -113,9 +108,10 @@ fun TradingPeriodKLinePanel(symbol: String, quote: MarketQuoteDto?) {
                     Text(error!!, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.error)
                 } else {
                     val chartBars = when (period) {
-                        "今日" -> intradayBars
-                        "日线" -> bars.takeLast(120)
+                        "分时" -> intradayBars
+                        "日线" -> bars
                         "周线" -> aggregateBars(bars, "周线")
+                        "月线" -> aggregateBars(bars, "月线")
                         else -> bars
                     }
 
@@ -123,7 +119,7 @@ fun TradingPeriodKLinePanel(symbol: String, quote: MarketQuoteDto?) {
                         KLineChart(
                             bars = chartBars,
                             quote = quote,
-                            useTimeAxis = period == "今日",
+                            useTimeAxis = period == "分时",
                             paperMarkers = paperLogs
                         )
                     } else {
@@ -131,12 +127,11 @@ fun TradingPeriodKLinePanel(symbol: String, quote: MarketQuoteDto?) {
                     }
                 }
             }
-        }
     }
 }
 
 private fun aggregateBars(bars: List<DailyPriceDto>, period: String): List<DailyPriceDto> {
-    if (period == "日线") return bars.takeLast(120)
+    if (period == "日线") return bars
 
     return bars.mapNotNull { bar ->
         runCatching {
@@ -160,5 +155,5 @@ private fun aggregateBars(bars: List<DailyPriceDto>, period: String): List<Daily
             adjustment = rows.last().adjustment,
             source = rows.last().source
         )
-    }.takeLast(120)
+    }
 }

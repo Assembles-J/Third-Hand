@@ -33,7 +33,9 @@ fun KLineChart(
 ) {
     if (bars.isEmpty()) return
 
-    val visible = if (useTimeAxis) bars else bars.takeLast(60)
+    // Weekly/monthly history and daily history are intentionally complete.
+    // Intraday input is already constrained by its caller to one trading day.
+    val visible = bars
     var selectedIndex by remember(visible.lastOrNull()?.trading_date) { mutableIntStateOf(visible.lastIndex) }
     val selected = visible[selectedIndex.coerceIn(0, visible.lastIndex)]
 

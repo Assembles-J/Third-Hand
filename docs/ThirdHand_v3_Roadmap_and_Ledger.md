@@ -891,3 +891,44 @@ acceptance chain. Backend-only or hidden/admin-only capability is not
 `PRODUCT_DONE`. This prioritization changes delivery order only; it does not
 change Formal Decision, StrategyProfile, Risk, sizing, ExecutionPrecheck,
 Paper Broker or Evaluation authority.
+
+### S0.1 Portfolio Recovery — Issue #107 — IN_PROGRESS
+
+- **Android entry:** Bottom navigation -> Portfolio -> Holding Detail.
+- **Implemented slice:** Portfolio cards now expose quote freshness, quantity,
+  average cost, market value, P/L amount and percentage, holding duration and
+  position weight. A holding opens the fact-oriented Holding Detail rather than
+  the mixed Stock Detail route. Holding Detail prioritizes authoritative Holding
+  and Quote DTO facts and reads transaction history from the real sale-record
+  API; K-line remains available from the detail surface.
+- **Authority impact:** none. This is a display/navigation recovery only; it
+  does not alter Formal Decision, Risk, sizing, ExecutionPrecheck or Paper
+  Broker authority.
+- **Acceptance outstanding:** screenshot regression, repository CI and a
+  physical-device walkthrough for loading, empty, ready, partial/stale and
+  error states. Therefore this item is not `PRODUCT_DONE`.
+
+### Mobile execution-chain detail repair — IN_PROGRESS
+
+- **Android entry:** Bottom navigation -> Trading -> Execution chain records ->
+  Chain detail.
+- **Implemented slice:** selecting a run now loads the authoritative
+  `paperTradingRunDetail(runId)` payload and renders its loading, error, empty,
+  symbol-result and stage states. The record list closes before the detail
+  dialog opens, preventing stacked dialogs from obscuring the result.
+- **Authority impact:** none. This is read-only execution observability and
+  does not add or change execution authority.
+- **Acceptance outstanding:** repository CI, screenshot regression and a
+  physical-device walkthrough. It is not `PRODUCT_DONE`.
+
+### S0.4 K-line progressive disclosure — IN_PROGRESS
+
+- **Android entry:** Portfolio -> Holding Detail -> K-line.
+- **Implemented slice:** the K-line panel is rendered directly inside the
+  detail surface rather than through nested cards. Daily history is requested
+  as the complete available series; weekly and monthly candles aggregate that
+  complete daily series without a trailing-window cutoff. Intraday data is
+  constrained to its latest trading date only.
+- **Acceptance outstanding:** screenshot regression, repository CI and a
+  physical-device check of monthly, weekly, daily and intraday periods. It is
+  not `PRODUCT_DONE`.
