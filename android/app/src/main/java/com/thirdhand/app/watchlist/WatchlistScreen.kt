@@ -30,6 +30,7 @@ import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Surface
+import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
@@ -101,9 +102,9 @@ fun WatchlistScreen(onOpenDetail: (ResearchTargetDto) -> Unit) {
         WatchlistEditDialog(
             item = item,
             onDismiss = { editingItem = null },
-            onSave = { priority, note ->
+            onSave = { enabled, priority, note ->
                 editingItem = null
-                scope.launch { controller.update(item.symbol, priority, note) }
+                scope.launch { controller.update(item.symbol, enabled, priority, note) }
             },
         )
     }
@@ -274,6 +275,7 @@ private fun PersonalUniverseRow(
                     item.market?.takeIf { it.isNotBlank() }?.let { MarketTag(it) }
                     if (item.isPosition) MarketTag("持仓")
                     item.watchlist_priority?.let { MarketTag(priorityLabel(it)) }
+                    if (item.isWatchlist && item.watchlist_enabled == false) MarketTag("已暂停")
                 }
                 Text(item.symbol, style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
                 item.watchlist_note?.takeIf { it.isNotBlank() }?.let {
@@ -388,8 +390,9 @@ private fun WatchlistAddDialog(onDismiss: () -> Unit, onSelect: (SecurityCandida
 private fun WatchlistEditDialog(
     item: PersonalUniverseItemDto,
     onDismiss: () -> Unit,
-    onSave: (priority: String, note: String) -> Unit,
+    onSave: (enabled: Boolean, priority: String, note: String) -> Unit,
 ) {
+    var enabled by remember(item.symbol) { mutableStateOf(item.watchlist_enabled ?: true) }
     var priority by remember(item.symbol) { mutableStateOf(item.watchlist_priority ?: "NORMAL") }
     var note by remember(item.symbol) { mutableStateOf(item.watchlist_note.orEmpty()) }
     AlertDialog(
@@ -397,6 +400,17 @@ private fun WatchlistEditDialog(
         title = { Text("编辑 ${item.name}") },
         text = {
             Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Column(Modifier.weight(1f)) {
+                        Text("启用关注", style = MaterialTheme.typography.labelMedium, fontWeight = FontWeight.Bold)
+                        Text(
+                            if (enabled) "该标的会保留在日常关注范围。" else "已暂停关注；持仓事实不会受影响。",
+                            style = MaterialTheme.typography.labelSmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                    }
+                    Switch(checked = enabled, onCheckedChange = { enabled = it })
+                }
                 Text("关注优先级", style = MaterialTheme.typography.labelMedium, fontWeight = FontWeight.Bold)
                 Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
                     listOf("NORMAL" to "普通", "FOCUS" to "重点", "CORE" to "核心").forEach { (value, label) ->
@@ -415,7 +429,7 @@ private fun WatchlistEditDialog(
                 Text("优先级只影响关注顺序，不会改变交易动作。", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
             }
         },
-        confirmButton = { Button(onClick = { onSave(priority, note.trim()) }) { Text("保存") } },
+        confirmButton = { Button(onClick = { onSave(enabled, priority, note.trim()) }) { Text("保存") } },
         dismissButton = { TextButton(onClick = onDismiss) { Text("取消") } },
     )
 }

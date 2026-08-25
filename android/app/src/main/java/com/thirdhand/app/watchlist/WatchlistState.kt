@@ -63,12 +63,12 @@ class WatchlistController(private val repository: WatchlistRepository) {
         successMessage = "已加入自选：$symbol",
     )
 
-    suspend fun update(symbol: String, priority: String, note: String) {
+    suspend fun update(symbol: String, enabled: Boolean, priority: String, note: String) {
         val current = mutableState.value as? WatchlistUiState.Ready ?: return
         val item = current.response.items.firstOrNull { it.symbol == symbol } ?: return
         if (!item.isWatchlist) return
         mutate(
-            action = { repository.update(symbol, priority, note) },
+            action = { repository.update(symbol, enabled, priority, note) },
             successMessage = "已更新 ${item.name.ifBlank { symbol }}",
         )
     }

@@ -63,14 +63,35 @@ class WatchlistControllerTest {
         assertFalse(state.response.items.any { it.symbol == "00700" })
         assertTrue(state.message.orEmpty().contains("移出自选"))
     }
+
+    @Test
+    fun enabled_state_is_written_as_watchlist_attention_metadata() = runBlocking {
+        val repository = FakeWatchlistRepository(successSnapshot())
+        val controller = WatchlistController(repository)
+        controller.load()
+
+        controller.update("00700", enabled = false, priority = "FOCUS", note = "等待财报")
+
+        assertEquals(false, repository.lastUpdateEnabled)
+        assertEquals("FOCUS", repository.lastUpdatePriority)
+        assertEquals("等待财报", repository.lastUpdateNote)
+    }
 }
 
 private class FakeWatchlistRepository(initial: PersonalUniverseResponseDto) : WatchlistRepository {
     var next: WatchlistLoadResult = WatchlistLoadResult.Success(initial)
     var removeCalls = 0
+    var lastUpdateEnabled: Boolean? = null
+    var lastUpdatePriority: String? = null
+    var lastUpdateNote: String? = null
     override suspend fun load(): WatchlistLoadResult = next
     override suspend fun add(symbol: String, name: String): WatchlistLoadResult = next
-    override suspend fun update(symbol: String, priority: String, note: String): WatchlistLoadResult = next
+    override suspend fun update(symbol: String, enabled: Boolean, priority: String, note: String): WatchlistLoadResult {
+        lastUpdateEnabled = enabled
+        lastUpdatePriority = priority
+        lastUpdateNote = note
+        return next
+    }
     override suspend fun remove(symbol: String): WatchlistLoadResult {
         removeCalls += 1
         return next

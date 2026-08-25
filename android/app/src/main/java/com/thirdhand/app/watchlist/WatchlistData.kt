@@ -62,6 +62,7 @@ data class WatchlistCreateRequestDto(val symbol: String, val name: String = "")
 
 data class WatchlistUpdateRequestDto(
     val name: String? = null,
+    val enabled: Boolean? = null,
     val priority: String? = null,
     val note: String? = null,
 )
@@ -84,7 +85,7 @@ sealed interface WatchlistLoadResult {
 interface WatchlistRepository {
     suspend fun load(): WatchlistLoadResult
     suspend fun add(symbol: String, name: String): WatchlistLoadResult
-    suspend fun update(symbol: String, priority: String, note: String): WatchlistLoadResult
+    suspend fun update(symbol: String, enabled: Boolean, priority: String, note: String): WatchlistLoadResult
     suspend fun remove(symbol: String): WatchlistLoadResult
 }
 
@@ -122,10 +123,10 @@ class NetworkWatchlistRepository(
         service().personalUniverse()
     }
 
-    override suspend fun update(symbol: String, priority: String, note: String): WatchlistLoadResult = execute {
+    override suspend fun update(symbol: String, enabled: Boolean, priority: String, note: String): WatchlistLoadResult = execute {
         service().updateWatchlist(
             symbol,
-            WatchlistUpdateRequestDto(priority = priority, note = note),
+            WatchlistUpdateRequestDto(enabled = enabled, priority = priority, note = note),
         )
         service().personalUniverse()
     }
