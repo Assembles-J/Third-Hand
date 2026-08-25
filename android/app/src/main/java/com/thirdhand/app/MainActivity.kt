@@ -104,12 +104,14 @@ private fun ThirdHandApp(resumeSignal: Int) {
     var themeMode by remember { mutableStateOf(ThemeStore.load(context)) }
     var tab by remember { mutableIntStateOf(1) } // Default to Market for better first impression
     var detailStock by remember { mutableStateOf<ResearchTargetDto?>(null) }
+    var positionDetailTarget by remember { mutableStateOf<ResearchTargetDto?>(null) }
     var researchTarget by remember { mutableStateOf<ResearchTargetDto?>(null) }
     var profileOpen by remember { mutableStateOf(false) }
 
-    BackHandler(enabled = detailStock != null || researchTarget != null || profileOpen) {
+    BackHandler(enabled = detailStock != null || positionDetailTarget != null || researchTarget != null || profileOpen) {
         when {
             researchTarget != null -> researchTarget = null
+            positionDetailTarget != null -> positionDetailTarget = null
             detailStock != null -> detailStock = null
             profileOpen -> profileOpen = false
         }
@@ -118,7 +120,7 @@ private fun ThirdHandApp(resumeSignal: Int) {
     ThirdHandTheme(themeMode) {
         Scaffold(
             bottomBar = {
-                if (detailStock == null && researchTarget == null && !profileOpen) {
+                if (detailStock == null && positionDetailTarget == null && researchTarget == null && !profileOpen) {
                     NavigationBar(
                         containerColor = MaterialTheme.colorScheme.surface,
                         tonalElevation = 8.dp
@@ -160,6 +162,11 @@ private fun ThirdHandApp(resumeSignal: Int) {
                         target = researchTarget!!,
                         onClose = { researchTarget = null },
                     )
+                } else if (positionDetailTarget != null) {
+                    PositionDetailRoute(
+                        target = positionDetailTarget!!,
+                        onBack = { positionDetailTarget = null },
+                    )
                 } else if (detailStock != null) {
                     StockDetailDecisionRoute(
                         target = detailStock!!,
@@ -180,7 +187,9 @@ private fun ThirdHandApp(resumeSignal: Int) {
                         when (activeTab) {
                             0 -> NewsScreen()
                             1 -> MarketScreen(onOpenDetail = { detailStock = it })
-                            2 -> HoldingsScreen(onOpenDetail = { detailStock = ResearchTargetDto(it.symbol, it.name, "active_holding", it.created_at) })
+                            2 -> HoldingsScreen(onOpenDetail = {
+                                positionDetailTarget = ResearchTargetDto(it.symbol, it.name, "active_holding", it.created_at)
+                            })
                             3 -> PaperTradingScreen(onOpenDetail = { detailStock = it })
                             4 -> WatchlistScreen(
                                 onOpenDetail = { detailStock = it },
@@ -204,9 +213,11 @@ private fun HoldingsScreen(onOpenDetail: (HoldingDto) -> Unit) {
     var availableCash by remember { mutableStateOf<AvailableCashDto?>(null) }
     var quotes by remember { mutableStateOf<Map<String, MarketQuoteDto>>(emptyMap()) }
     var loading by remember { mutableStateOf(true) }
+    var error by remember { mutableStateOf<String?>(null) }
 
     fun refresh() = scope.launch {
         loading = true
+        error = null
         runCatching {
             val h = api.holdings()
             val c = api.availableCash()
@@ -214,6 +225,8 @@ private fun HoldingsScreen(onOpenDetail: (HoldingDto) -> Unit) {
             Triple(h, c, q)
         }.onSuccess { (h, c, q) ->
             holdings = h; availableCash = c; quotes = q
+        }.onFailure {
+            error = it.message ?: "持仓数据加载失败"
         }
         loading = false
     }
@@ -261,6 +274,34 @@ private fun HoldingsScreen(onOpenDetail: (HoldingDto) -> Unit) {
             TradingSection("持仓列表", "Real-time Portfolio")
         }
 
+        error?.let { message ->
+            item {
+                Card(
+                    modifier = Modifier.fillMaxWidth().padding(horizontal = AppSpacing.xxLarge, vertical = AppSpacing.small),
+                    colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.errorContainer),
+                ) {
+                    Row(Modifier.fillMaxWidth().padding(AppSpacing.large), verticalAlignment = Alignment.CenterVertically) {
+                        Icon(Icons.Default.ErrorOutline, contentDescription = null, tint = MaterialTheme.colorScheme.onErrorContainer)
+                        Spacer(Modifier.width(AppSpacing.medium))
+                        Text(message, Modifier.weight(1f), color = MaterialTheme.colorScheme.onErrorContainer, style = MaterialTheme.typography.bodySmall)
+                        TextButton(onClick = ::refresh) { Text("重试") }
+                    }
+                }
+            }
+        }
+
+        val missingQuoteCount = holdings.count { quotes[it.symbol]?.price == null }
+        if (!loading && holdings.isNotEmpty() && missingQuoteCount > 0) {
+            item {
+                Text(
+                    "$missingQuoteCount 只持仓暂缺最新行情，已保留成本与数量事实",
+                    modifier = Modifier.padding(horizontal = AppSpacing.xxLarge, vertical = AppSpacing.small),
+                    style = MaterialTheme.typography.labelSmall,
+                    color = MaterialTheme.colorScheme.tertiary,
+                )
+            }
+        }
+
         if (holdings.isEmpty() && !loading) {
             item {
                 Box(Modifier.fillMaxWidth().padding(AppSpacing.xxLarge), contentAlignment = Alignment.Center) {
@@ -270,18 +311,32 @@ private fun HoldingsScreen(onOpenDetail: (HoldingDto) -> Unit) {
         }
 
         items(holdings, key = { it.id }) { holding ->
-            HoldingCardNew(holding, quotes[holding.symbol], onClick = { onOpenDetail(holding) })
+            HoldingCardNew(
+                holding = holding,
+                quote = quotes[holding.symbol],
+                portfolioMarketValue = totalMarketValue,
+                onClick = { onOpenDetail(holding) },
+            )
         }
     }
 }
 
 @Composable
-private fun HoldingCardNew(holding: HoldingDto, quote: MarketQuoteDto?, onClick: () -> Unit) {
+private fun HoldingCardNew(
+    holding: HoldingDto,
+    quote: MarketQuoteDto?,
+    portfolioMarketValue: Double,
+    onClick: () -> Unit,
+) {
     val colors = MaterialTheme.marketColors
-    val currentPrice = quote?.price ?: holding.average_cost
-    val pnl = (currentPrice - holding.average_cost) * holding.quantity
-    val pnlPercent = if(holding.average_cost != 0.0) (currentPrice - holding.average_cost) / holding.average_cost * 100 else 0.0
-    val isPositive = pnl >= 0
+    val currentPrice = quote?.price
+    val pnl = currentPrice?.let { (it - holding.average_cost) * holding.quantity }
+    val pnlPercent = currentPrice?.takeIf { holding.average_cost != 0.0 }
+        ?.let { (it - holding.average_cost) / holding.average_cost * 100 }
+    val isPositive = (pnl ?: 0.0) >= 0
+    val marketValue = currentPrice?.let { it * holding.quantity }
+    val positionWeight = marketValue?.takeIf { portfolioMarketValue > 0 }
+        ?.let { it / portfolioMarketValue * 100 }
 
     Card(
         modifier = Modifier
@@ -293,38 +348,67 @@ private fun HoldingCardNew(holding: HoldingDto, quote: MarketQuoteDto?, onClick:
         elevation = CardDefaults.cardElevation(defaultElevation = 1.dp),
         border = BorderStroke(0.5.dp, MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f))
     ) {
-        Row(
-            modifier = Modifier.padding(AppSpacing.large),
-            verticalAlignment = Alignment.CenterVertically
-        ) {
-            Column(Modifier.weight(1f)) {
-                Text(holding.name, style = MaterialTheme.typography.bodyLarge, fontWeight = FontWeight.Bold)
-                Text(holding.symbol, style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+        Column(Modifier.padding(AppSpacing.large), verticalArrangement = Arrangement.spacedBy(AppSpacing.medium)) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Column(Modifier.weight(1f)) {
+                    Text(holding.name, style = MaterialTheme.typography.bodyLarge, fontWeight = FontWeight.Bold)
+                    Text(holding.symbol, style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                }
+                Column(horizontalAlignment = Alignment.End) {
+                    Text(marketValue?.let { "¥${"%.2f".format(it)}" } ?: "暂缺", style = MaterialTheme.typography.bodyLarge, fontWeight = FontWeight.Bold)
+                    Text("市值", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                }
+                Spacer(Modifier.width(AppSpacing.small))
+                Icon(Icons.Default.ChevronRight, contentDescription = "查看${holding.name}持仓详情", tint = MaterialTheme.colorScheme.outlineVariant, modifier = Modifier.size(20.dp))
             }
-
-            Column(horizontalAlignment = Alignment.End) {
-                Text(
-                    "¥${"%.2f".format(currentPrice * holding.quantity)}",
-                    style = MaterialTheme.typography.bodyLarge,
-                    fontWeight = FontWeight.Bold
-                )
-                Surface(
-                    color = (if (isPositive) colors.rise else colors.fall).copy(alpha = 0.1f),
-                    shape = RoundedCornerShape(4.dp)
-                ) {
+            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+                HoldingFact("现价", quote?.price?.let { "¥${"%.2f".format(it)}" } ?: "暂缺")
+                HoldingFact("数量", portfolioQuantity(holding.quantity))
+                HoldingFact("成本", "¥${"%.2f".format(holding.average_cost)}")
+                HoldingFact("持仓", "${portfolioHoldingDays(holding.created_at)}天")
+            }
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Surface(color = (if (isPositive) colors.rise else colors.fall).copy(alpha = 0.1f), shape = RoundedCornerShape(4.dp)) {
                     Text(
-                        "${if(isPositive)"+" else ""}${"%.2f".format(pnlPercent)}%",
+                        if (pnl != null && pnlPercent != null) {
+                            "${if(isPositive)"+" else ""}${"%.2f".format(pnl)}  (${if(isPositive)"+" else ""}${"%.2f".format(pnlPercent)}%)"
+                        } else {
+                            "盈亏暂不可用"
+                        },
                         modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp),
                         style = MaterialTheme.typography.labelSmall,
                         fontWeight = FontWeight.Bold,
-                        color = if (isPositive) colors.rise else colors.fall
+                        color = if (isPositive) colors.rise else colors.fall,
                     )
                 }
+                Spacer(Modifier.weight(1f))
+                Text(
+                    quote?.let { "${it.display_freshness} · ${it.source}" } ?: "行情不可用",
+                    style = MaterialTheme.typography.labelSmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+                positionWeight?.let { Text(" · 仓位 ${"%.1f".format(it)}%", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant) }
             }
-            Spacer(Modifier.width(AppSpacing.medium))
-            Icon(Icons.Default.ChevronRight, null, tint = MaterialTheme.colorScheme.outlineVariant, modifier = Modifier.size(20.dp))
         }
     }
+}
+
+@Composable
+private fun HoldingFact(label: String, value: String) {
+    Column {
+        Text(label, style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+        Text(value, style = MaterialTheme.typography.bodySmall, fontWeight = FontWeight.SemiBold)
+    }
+}
+
+internal fun portfolioQuantity(value: Double): String =
+    if (value % 1.0 == 0.0) "${value.toLong()}股" else "%.2f股".format(Locale.US, value)
+
+internal fun portfolioHoldingDays(value: String): Long {
+    val start = runCatching { OffsetDateTime.parse(value).withOffsetSameInstant(ZoneOffset.ofHours(8)).toLocalDate() }
+        .getOrElse { runCatching { LocalDate.parse(value.take(10)) }.getOrNull() }
+        ?: return 0
+    return java.time.temporal.ChronoUnit.DAYS.between(start, LocalDate.now(ZoneOffset.ofHours(8))).coerceAtLeast(0) + 1
 }
 
 // Additional helper functions for consistency...

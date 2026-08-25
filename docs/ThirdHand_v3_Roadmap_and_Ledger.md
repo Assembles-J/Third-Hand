@@ -891,3 +891,22 @@ acceptance chain. Backend-only or hidden/admin-only capability is not
 `PRODUCT_DONE`. This prioritization changes delivery order only; it does not
 change Formal Decision, StrategyProfile, Risk, sizing, ExecutionPrecheck,
 Paper Broker or Evaluation authority.
+
+## Delivery update — 2026-08-25 — S0.1 Portfolio Recovery
+
+- **Android entry:** Bottom navigation -> Portfolio -> Holding Detail now routes
+  to the fact-first `PositionDetailRoute`, rather than the research-heavy stock
+  decision surface.
+- **Portfolio facts:** each holding exposes symbol/name, current price, quantity,
+  average cost, market value, P/L amount and percentage, holding days, position
+  weight and quote freshness/source before navigation.
+- **Observable states:** full-load failure has an explicit retry surface; partial
+  quote failure preserves holdings/cost/quantity and identifies the missing quote
+  count instead of silently using cost as if it were a live price.
+- **Tests:** pure quantity and holding-duration formatting has JVM coverage. The
+  official Android CI remains the compile/unit/APK gate because the local
+  container cannot download the Gradle 9.0 distribution.
+- **Delivery state:** `ANDROID_READY / ACCEPTANCE_PENDING`. Physical-device
+  walkthrough and screenshot evidence remain required before `PRODUCT_DONE`.
+- **Authority impact:** none. Formal Decision, Risk, sizing, ExecutionPrecheck,
+  Paper Broker and Evaluation are unchanged.
