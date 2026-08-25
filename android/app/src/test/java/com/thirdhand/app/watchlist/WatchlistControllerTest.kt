@@ -1,5 +1,6 @@
 package com.thirdhand.app.watchlist
 
+import com.thirdhand.app.HoldingDto
 import kotlinx.coroutines.runBlocking
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
@@ -75,6 +76,36 @@ class WatchlistControllerTest {
         assertEquals(false, repository.lastUpdateEnabled)
         assertEquals("FOCUS", repository.lastUpdatePriority)
         assertEquals("等待财报", repository.lastUpdateNote)
+    }
+
+    @Test
+    fun legacy_404_fallback_merges_watchlist_and_positions_without_duplicates() {
+        val response = legacyPersonalUniverse(
+            watchlist = listOf(LegacyWatchlistItemDto("01810", "小米集团-W", priority = "CORE")),
+            holdings = listOf(
+                HoldingDto("h1", "01810", "小米集团-W", 200.0, 26.1, "2026-08-01"),
+                HoldingDto("h2", "600519", "贵州茅台", 100.0, 1400.0, "2026-08-01"),
+            ),
+        )
+
+        assertEquals(2, response.items.size)
+        assertEquals(1, response.counts.watchlist)
+        assertEquals(2, response.counts.positions)
+        assertTrue(response.items.first { it.symbol == "01810" }.isWatchlist)
+        assertTrue(response.items.first { it.symbol == "01810" }.isPosition)
+        assertEquals("legacy_fallback", response.data_state)
+    }
+
+    @Test
+    fun visible_watchlist_is_sorted_by_priority_then_name() = runBlocking {
+        val response = successSnapshot().copy(
+            items = successSnapshot().items.reversed(),
+        )
+        val controller = WatchlistController(FakeWatchlistRepository(response))
+        controller.load()
+
+        val ready = controller.state.value as WatchlistUiState.Ready
+        assertEquals(listOf("01810", "00700"), ready.visibleItems().map { it.symbol })
     }
 }
 

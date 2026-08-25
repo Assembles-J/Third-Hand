@@ -97,6 +97,16 @@ fun WatchlistScreen(
                         WatchlistSummaryCard(readyState)
                     }
 
+                    readyState.response.warnings.forEach { warning ->
+                        item { WatchlistNotice(warning, isError = false) }
+                    }
+                    readyState.transientError?.let { message ->
+                        item { WatchlistNotice(message, isError = true, onRetry = { scope.launch { controller.refresh() } }) }
+                    }
+                    readyState.message?.let { message ->
+                        item { WatchlistNotice(message, isError = false) }
+                    }
+
                     stickyHeader {
                         Surface(
                             modifier = Modifier.fillMaxWidth(),
@@ -145,13 +155,11 @@ fun WatchlistScreen(
                 }
                 is WatchlistUiState.Error -> {
                     item {
-                        Surface(
-                            color = MaterialTheme.colorScheme.errorContainer.copy(alpha = 0.2f),
-                            modifier = Modifier.fillMaxWidth().padding(AppSpacing.xxLarge),
-                            shape = MaterialTheme.shapes.medium
-                        ) {
-                            Text((state as WatchlistUiState.Error).message, Modifier.padding(AppSpacing.large), color = MaterialTheme.colorScheme.error)
-                        }
+                        WatchlistNotice(
+                            message = (state as WatchlistUiState.Error).message,
+                            isError = true,
+                            onRetry = { scope.launch { controller.load() } },
+                        )
                     }
                 }
             }
@@ -284,6 +292,25 @@ private fun WatchlistSummaryCard(state: WatchlistUiState.Ready) {
 }
 
 @Composable
+private fun WatchlistNotice(message: String, isError: Boolean, onRetry: (() -> Unit)? = null) {
+    Surface(
+        color = if (isError) MaterialTheme.colorScheme.errorContainer else MaterialTheme.colorScheme.secondaryContainer,
+        modifier = Modifier.fillMaxWidth().padding(horizontal = AppSpacing.xxLarge, vertical = AppSpacing.small),
+        shape = MaterialTheme.shapes.medium,
+    ) {
+        Row(Modifier.fillMaxWidth().padding(AppSpacing.medium), verticalAlignment = Alignment.CenterVertically) {
+            Text(
+                message,
+                Modifier.weight(1f),
+                style = MaterialTheme.typography.bodySmall,
+                color = if (isError) MaterialTheme.colorScheme.onErrorContainer else MaterialTheme.colorScheme.onSecondaryContainer,
+            )
+            onRetry?.let { TextButton(onClick = it) { Text("重试") } }
+        }
+    }
+}
+
+@Composable
 private fun WatchlistItemCard(
     item: PersonalUniverseItemDto,
     onClick: () -> Unit,
@@ -322,6 +349,16 @@ private fun WatchlistItemCard(
                 if (item.watchlist_priority == "CORE") {
                     Text("核心关注标的", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.primary.copy(alpha = 0.7f), fontWeight = FontWeight.Bold)
                 }
+                item.watchlist_note?.takeIf { it.isNotBlank() }?.let {
+                    Text(it, style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                }
+                Text(
+                    item.next_review_at?.let { "下次复盘 ${it.take(16).replace('T', ' ')}" }
+                        ?: item.review_mode?.let { "复盘状态 $it" }
+                        ?: "复盘状态待生成",
+                    style = MaterialTheme.typography.labelSmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
             }
 
             Column(horizontalAlignment = Alignment.End) {
@@ -346,8 +383,15 @@ private fun WatchlistItemCard(
 
             Spacer(Modifier.width(AppSpacing.medium))
 
-            IconButton(onClick = onEdit, modifier = Modifier.size(24.dp)) {
-                Icon(Icons.Default.Edit, null, modifier = Modifier.size(16.dp), tint = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.5f))
+            if (item.isWatchlist) {
+                Column {
+                    IconButton(onClick = onEdit, modifier = Modifier.size(32.dp)) {
+                        Icon(Icons.Default.Edit, "编辑${item.name}", modifier = Modifier.size(16.dp), tint = MaterialTheme.colorScheme.onSurfaceVariant)
+                    }
+                    IconButton(onClick = onDelete, modifier = Modifier.size(32.dp)) {
+                        Icon(Icons.Default.Delete, "移出自选${item.name}", modifier = Modifier.size(16.dp), tint = MaterialTheme.colorScheme.error)
+                    }
+                }
             }
         }
     }
