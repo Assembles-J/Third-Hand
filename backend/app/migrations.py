@@ -335,6 +335,22 @@ def _add_pux1_watchlist_metadata(connection: sqlite3.Connection) -> None:
         connection.execute("ALTER TABLE watchlist ADD COLUMN note TEXT NOT NULL DEFAULT ''")
 
 
+def _create_pux2_review_plans(connection: sqlite3.Connection) -> None:
+    """Persist append-only, versioned review permission decisions."""
+    connection.execute(
+        "CREATE TABLE IF NOT EXISTS review_plans ("
+        "plan_id TEXT PRIMARY KEY, policy_version TEXT NOT NULL, symbol TEXT NOT NULL, "
+        "evaluated_at TEXT NOT NULL, review_mode TEXT NOT NULL, analysis_depth TEXT NOT NULL, "
+        "reason_codes TEXT NOT NULL, last_review_at TEXT, next_review_at TEXT, "
+        "routine_full_research_available INTEGER NOT NULL, budget_override INTEGER NOT NULL, "
+        "created_at TEXT NOT NULL)"
+    )
+    connection.execute(
+        "CREATE INDEX IF NOT EXISTS idx_review_plans_symbol_time "
+        "ON review_plans(symbol, evaluated_at DESC)"
+    )
+
+
 MIGRATIONS = (
     Migration("0001_legacy_schema_baseline", _record_legacy_schema_baseline),
     Migration("0002_decision_contexts", _create_decision_contexts),
@@ -355,6 +371,7 @@ MIGRATIONS = (
     Migration("0017_paper_execution_safety_contract", _create_paper_execution_safety_contract),
     Migration("0018_paper_position_episodes", _create_paper_position_episodes),
     Migration("0019_pux1_watchlist_metadata", _add_pux1_watchlist_metadata),
+    Migration("0020_pux2_review_plans", _create_pux2_review_plans),
 )
 
 

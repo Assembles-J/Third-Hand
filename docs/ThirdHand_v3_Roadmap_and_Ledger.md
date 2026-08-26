@@ -153,7 +153,7 @@ Legend:
 | ExperimentDefinition / StrategyEvaluation | KEEP / N3 PRODUCT_DONE | N3.1-N3.8 are accepted end to end for Formal `SWING_V1`: immutable experiment/universe lineage -> point-in-time outcomes -> strategy/benchmark evaluation -> GET-only Lab API -> Android Lab. Evaluation remains read-only and cannot rewrite Formal Action or production policy. |
 | full-stack product observability | KEEP | Backend -> API -> Android -> observable reasons/errors required before `PRODUCT_DONE` |
 | PersonalUniversePolicy | KEEP / ANDROID_VISIBLE / #92 | Portfolio + Watchlist remain primary daily universe; PUX1 backend/API accepted in #86 and Android first-class Watchlist awaits CI/device acceptance |
-| ReviewPolicy / AnalysisBudget | KEEP / DESIGNED / #93 | scheduler wake-up is not analysis permission; NO_REVIEW/GUARD_ONLY/POSITION_REVIEW/FULL_RESEARCH |
+| ReviewPolicy / AnalysisBudget | KEEP / BACKEND_FOUNDATION / #93 | versioned deterministic modes + append-only ReviewPlan persistence implemented; scheduler/API/Android consumption pending |
 | Discovery / Candidate demotion | KEEP / DESIGNED / #94 | bounded optional Discovery is research-only and requires explicit Watchlist promotion |
 | Personal vs Experiment universe separation | KEEP / DESIGNED | mutable user Watchlist must never silently contaminate frozen Evaluation universe |
 | first-class Android Watchlist | KEEP / ANDROID_VISIBLE / #92 | user can manage Watchlist and positions without admin/log access; ReviewPolicy state remains PUX2 |
@@ -433,6 +433,27 @@ Acceptance:
 - hard invalidation/event/risk/T+1 guards still run;
 - material triggers deterministically upgrade the review mode;
 - Android shows the reason and next review time.
+
+#### Delivery update — 2026-08-26 — PUX2.1 governed review contracts
+
+- Added policy version `PUX2_REVIEW_V1` with explicit `NO_REVIEW`,
+  `GUARD_ONLY`, `POSITION_REVIEW` and `FULL_RESEARCH` modes and separately typed
+  permitted analysis depth.
+- Stable positions without MaterialChange remain `GUARD_ONLY`; a due position
+  review does not automatically grant full company/AI research.
+- Routine full research is limited to once per symbol per Beijing-local day.
+  MaterialChange and explicit user request are the only first-slice audited
+  budget overrides. Hard guard obligations remain active even when the routine
+  full-research budget is exhausted.
+- ReviewPlan decisions are append-only and content-addressed in the existing
+  SQLite owner. They persist policy version, mode/depth, reason codes,
+  last/next review, routine budget state and override state.
+- Deterministic tests cover stable/due positions, routine budget exhaustion,
+  material/user overrides, hard guards, timezone safety and persistence replay.
+- **Delivery state:** `BACKEND_FOUNDATION / API_ANDROID_PENDING`. Scheduler
+  consumption, explicit user-request lineage, API projection and Android reason
+  visibility remain required before #93 can close. No Formal Action, Risk,
+  sizing, ExecutionPrecheck or Paper Broker authority changes in this slice.
 
 ### PUX3 — Discovery demotion and controls — DESIGNED (#94)
 
