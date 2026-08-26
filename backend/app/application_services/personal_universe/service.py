@@ -38,6 +38,7 @@ class PersonalUniverseService:
         quotes = {str(item.get("symbol") or "").strip().upper(): item for item in quote_rows}
         markets = self.repository.instrument_markets(symbols)
         decisions = self.repository.latest_decisions(symbols)
+        review_plans = self.repository.latest_review_plans(symbols)
 
         rows: list[PersonalUniverseItem] = []
         for symbol in symbols:
@@ -46,6 +47,7 @@ class PersonalUniverseService:
             active_watch = active_watchlist.get(symbol)
             quote = quotes.get(symbol) or {}
             decision = decisions.get(symbol) or {}
+            review_plan = review_plans.get(symbol) or {}
             if position is not None and active_watch is not None:
                 membership = PersonalUniverseMembership.POSITION_AND_WATCHLIST
             elif position is not None:
@@ -96,6 +98,11 @@ class PersonalUniverseService:
                     formal_action=formal_action,
                     decision_id=decision_id,
                     decision_updated_at=decision_updated_at,
+                    review_mode=_optional_text(review_plan.get("review_mode")),
+                    review_analysis_depth=_optional_text(review_plan.get("analysis_depth")),
+                    review_reason_codes=tuple(str(code) for code in (review_plan.get("reason_codes") or [])),
+                    last_review_at=_optional_text(review_plan.get("last_review_at")),
+                    next_review_at=_optional_text(review_plan.get("next_review_at")),
                 )
             )
 

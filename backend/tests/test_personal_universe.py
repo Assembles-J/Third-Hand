@@ -13,10 +13,12 @@ class FakeRepository:
         *,
         markets: dict[str, str] | None = None,
         decisions: dict[str, dict[str, object]] | None = None,
+        review_plans: dict[str, dict[str, object]] | None = None,
     ) -> None:
         self.rows = rows
         self.markets = markets or {}
         self.decisions = decisions or {}
+        self.review_plans = review_plans or {}
 
     def list_watchlist(self, *, include_disabled: bool = False):
         if include_disabled:
@@ -28,6 +30,9 @@ class FakeRepository:
 
     def latest_decisions(self, symbols):
         return {symbol: self.decisions[symbol] for symbol in symbols if symbol in self.decisions}
+
+    def latest_review_plans(self, symbols):
+        return {symbol: self.review_plans[symbol] for symbol in symbols if symbol in self.review_plans}
 
 
 class FakeStore:
@@ -90,6 +95,15 @@ def test_positions_are_always_included_and_overlap_is_deduplicated() -> None:
                     "generated_at": "2026-08-20T10:00:00+08:00",
                 }
             },
+            review_plans={
+                "01810": {
+                    "review_mode": "GUARD_ONLY",
+                    "analysis_depth": "GUARDS",
+                    "reason_codes": ["position_guard_monitoring", "no_material_change"],
+                    "last_review_at": "2026-08-20T09:30:00+08:00",
+                    "next_review_at": "2026-08-21T09:30:00+08:00",
+                }
+            },
         ),
     )
 
@@ -106,6 +120,9 @@ def test_positions_are_always_included_and_overlap_is_deduplicated() -> None:
     assert by_symbol["01810"].market == "HK"
     assert by_symbol["01810"].formal_action == "HOLD"
     assert by_symbol["01810"].decision_id == "decision-xiaomi"
+    assert by_symbol["01810"].review_mode == "GUARD_ONLY"
+    assert by_symbol["01810"].review_reason_codes == ("position_guard_monitoring", "no_material_change")
+    assert by_symbol["01810"].next_review_at == "2026-08-21T09:30:00+08:00"
 
 
 def test_missing_quote_does_not_drop_watchlist_item() -> None:

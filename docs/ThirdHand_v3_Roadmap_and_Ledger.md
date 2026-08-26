@@ -455,6 +455,23 @@ Acceptance:
   visibility remain required before #93 can close. No Formal Action, Risk,
   sizing, ExecutionPrecheck or Paper Broker authority changes in this slice.
 
+#### Delivery update — 2026-08-26 — PUX2.2 ReviewPlan visibility
+
+- Personal Universe now projects the latest persisted ReviewPlan per symbol
+  without recomputing policy or triggering remote research inside the read API.
+- API fields include governed mode, permitted analysis depth, stable reason
+  codes, last review and next review. Missing plans remain explicitly absent;
+  the API does not fabricate a quiet-state reason.
+- Android Watchlist translates the server-owned mode and primary reason into
+  concise user-facing text, including the important distinction between
+  `GUARD_ONLY`, due position review, full research and an intentionally skipped
+  repeat full-research run. Android performs no review-authority calculation.
+- Backend projection coverage and Android label tests protect this handoff.
+- **Delivery state:** `API_ANDROID_VISIBLE / SCHEDULER_ACCEPTANCE_PENDING`.
+  Scheduler consumption/persistence and physical-device review-state acceptance
+  remain before #93 can close. Authority semantics remain those documented in
+  PUX2.1 and the canonical Architecture.
+
 ### PUX3 — Discovery demotion and controls — DESIGNED (#94)
 
 Backend/domain:

@@ -353,12 +353,23 @@ private fun WatchlistItemCard(
                     Text(it, style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 1, overflow = TextOverflow.Ellipsis)
                 }
                 Text(
-                    item.next_review_at?.let { "下次复盘 ${it.take(16).replace('T', ' ')}" }
-                        ?: item.review_mode?.let { "复盘状态 $it" }
+                    item.review_mode?.let { reviewModeLabel(it) }
                         ?: "复盘状态待生成",
                     style = MaterialTheme.typography.labelSmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
+                item.review_reason_codes.firstOrNull()?.let { reason ->
+                    Text(
+                        reviewReasonLabel(reason),
+                        style = MaterialTheme.typography.labelSmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                    )
+                }
+                item.next_review_at?.let {
+                    Text("下次复盘 ${it.take(16).replace('T', ' ')}", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                }
             }
 
             Column(horizontalAlignment = Alignment.End) {
@@ -395,6 +406,25 @@ private fun WatchlistItemCard(
             }
         }
     }
+}
+
+internal fun reviewModeLabel(mode: String): String = when (mode) {
+    "NO_REVIEW" -> "本轮无需复盘"
+    "GUARD_ONLY" -> "仅监控风险与事件"
+    "POSITION_REVIEW" -> "持仓复盘"
+    "FULL_RESEARCH" -> "完整研究"
+    else -> "复盘状态 $mode"
+}
+
+internal fun reviewReasonLabel(reason: String): String = when (reason) {
+    "position_guard_monitoring" -> "原因：持仓持续监控，无重大变化"
+    "no_material_change" -> "原因：没有重要变化"
+    "position_review_due" -> "原因：已到持仓复盘时间"
+    "routine_full_research_budget_exhausted" -> "原因：今日完整研究已执行"
+    "material_change" -> "原因：出现重要变化"
+    "explicit_user_request" -> "原因：用户主动请求"
+    "hard_guard_obligation" -> "原因：存在风险、事件或交易约束"
+    else -> "原因：$reason"
 }
 
 @Composable
