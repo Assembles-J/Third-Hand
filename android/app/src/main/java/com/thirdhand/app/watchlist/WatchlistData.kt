@@ -46,6 +46,9 @@ data class PersonalUniverseItemDto(
     val decision_id: String? = null,
     val decision_updated_at: String? = null,
     val review_mode: String? = null,
+    val review_analysis_depth: String? = null,
+    val review_reason_codes: List<String> = emptyList(),
+    val last_review_at: String? = null,
     val next_review_at: String? = null,
 ) {
     val isPosition: Boolean get() = membership.contains("POSITION")

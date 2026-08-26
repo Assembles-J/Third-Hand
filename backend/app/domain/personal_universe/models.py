@@ -76,4 +76,7 @@ class PersonalUniverseItem:
     decision_id: str | None = None
     decision_updated_at: str | None = None
     review_mode: str | None = None
+    review_analysis_depth: str | None = None
+    review_reason_codes: tuple[str, ...] = ()
+    last_review_at: str | None = None
     next_review_at: str | None = None

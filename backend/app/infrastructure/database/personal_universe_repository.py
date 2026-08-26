@@ -142,3 +142,33 @@ class PersonalUniverseRepository:
                 continue
             latest[symbol] = {**payload, "_persisted_created_at": str(row["created_at"])}
         return latest
+
+    def latest_review_plans(self, symbols: list[str]) -> dict[str, dict[str, object]]:
+        """Read latest persisted ReviewPlan per symbol without recomputing policy."""
+        canonical = [str(symbol).strip().upper() for symbol in symbols if str(symbol).strip()]
+        if not canonical:
+            return {}
+        placeholders = ",".join("?" for _ in canonical)
+        with self.store._connect() as connection:
+            rows = connection.execute(
+                f"SELECT * FROM review_plans WHERE symbol IN ({placeholders}) "
+                "ORDER BY symbol ASC, evaluated_at DESC, created_at DESC",
+                canonical,
+            ).fetchall()
+        latest: dict[str, dict[str, object]] = {}
+        for row in rows:
+            symbol = str(row["symbol"]).strip().upper()
+            if symbol in latest:
+                continue
+            try:
+                reason_codes = json.loads(str(row["reason_codes"]))
+            except (TypeError, ValueError, json.JSONDecodeError):
+                reason_codes = ["review_plan_reason_unavailable"]
+            latest[symbol] = {
+                "review_mode": str(row["review_mode"]),
+                "analysis_depth": str(row["analysis_depth"]),
+                "reason_codes": reason_codes if isinstance(reason_codes, list) else [],
+                "last_review_at": row["last_review_at"],
+                "next_review_at": row["next_review_at"],
+            }
+        return latest
