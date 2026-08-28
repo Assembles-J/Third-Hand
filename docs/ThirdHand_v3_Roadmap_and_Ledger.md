@@ -825,7 +825,7 @@ Also preserve:
 - PENDING DecisionOutcomes are still derived rather than persisted, so N3.6 does
   not invent a pending count. The API returns `pending_decision_count = null` with
   reason `pending_outcomes_are_derived_not_materialized_n3_6`. Likewise N3.4/5
-  unavailable account-level return/drawdown/benchmark-excess metrics remain null
+  unavailable account-level return/drawdown/turnover remain null
   with their existing reason codes rather than being presented as zero.
 - `/calibration` is intentionally absent; probability calibration remains N6.
 - N3.6 is now part of the accepted N3 product chain. The final N3.8 section below
@@ -1513,6 +1513,47 @@ Paper Broker or Evaluation authority.
   Debug/Release and `ci-gate` must pass on the final clean branch before merge;
   physical-device Stock Detail -> Decision -> AI Research -> Back plus partial/
   stale/T+1 readability remains the final product acceptance gate.
+- **Authority impact:** none. Formal Decision, StrategyProfile, ReviewPolicy,
+  Evidence, Risk, sizing, ExecutionPrecheck, Paper Broker and Evaluation authority
+  remain unchanged and server-owned.
+
+## Delivery update — 2026-08-28 — UIX7 Home existing-fact dashboard
+
+- **Reference reconciliation:** Home moves from the earlier News-only partial shell
+  toward the supplied red/white dashboard reference, but it composes only facts
+  already exposed by the current server contracts. It does not copy unsupported
+  AI-order or confidence semantics from the visual reference.
+- **组合总览:** the top summary is explicitly marked `模拟账户` and reads the
+  existing paper-account total equity, cash, market value, cumulative P/L and
+  return. The small equity trend uses only persisted paper-equity snapshots; no
+  synthetic performance history is generated on Android.
+- **最近策略执行:** the compact rows come from already executed paper-account logs
+  and remain labeled `模拟买入` / `模拟卖出`. They are execution facts, not a new
+  AI signal list, forecast, confidence score or target-price recommendation.
+- **待处理事项:** Home derives only immediately observable execution attention
+  from the existing paper runtime state and T+1 locked quantities: failed last
+  run, currently running, paused automation and locked inventory. Android does
+  not calculate ReviewPolicy or Formal Decision authority locally.
+- **最新资讯 / partial state:** the final section reuses cached News. Account and
+  News reads are independent, so a partial refresh failure can preserve the
+  other available/last-good content instead of blanking the page.
+- **Visual acceptance:** the 420x900 Home screenshot was reviewed against the
+  supplied target direction before locking SHA-256
+  `f8c89d57bfdd00c96d5b936806c300ad8084e4348dfd96a9e3bce12120771443`.
+  The accepted hierarchy uses a brand-red Third-Hand header, compact white
+  financial summary, restrained sparkline, dense rows and thin separators.
+- **Unsupported reference behavior remains out of scope:** the supplied `AI 下单确认`
+  price/quantity/order form and real-order-looking workflow are not treated as a
+  missing UI task under the current product authority. A manual broker/order
+  ticket or N5 AI-agent execution path requires separate domain/API/safety
+  acceptance before it may appear in the app.
+- **Backend/API:** unchanged. Existing `paperTradingDashboard()` and
+  `cachedNews(...)` contracts are reused; no DTO, provider, feed authority or
+  trading endpoint is introduced.
+- **Delivery status:** `ANDROID_RENDER_REVIEWED / FINAL_CI_DEVICE_ACCEPTANCE_PENDING`.
+  Final atomic-history governance, approved screenshot hash, Debug/Release and
+  repository `ci-gate` must pass before merge; physical-device Home density and
+  readability remain the product acceptance gate.
 - **Authority impact:** none. Formal Decision, StrategyProfile, ReviewPolicy,
   Evidence, Risk, sizing, ExecutionPrecheck, Paper Broker and Evaluation authority
   remain unchanged and server-owned.
