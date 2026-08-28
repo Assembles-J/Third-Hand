@@ -1323,3 +1323,26 @@ Paper Broker or Evaluation authority.
 - **Authority impact:** none. Formal Decision, StrategyProfile, ReviewPolicy,
   Evidence, Risk, sizing, ExecutionPrecheck, Paper Broker and Evaluation authority
   remain unchanged and server-owned.
+
+## Delivery update — 2026-08-28 — UIX0 brand-red Material theme correction
+
+- **Root cause corrected:** the approved shell and design system were red-first,
+  but the global Android `MaterialTheme` still used the legacy `#0052D9` blue
+  primary palette. Any screen that consumed `MaterialTheme.colorScheme.primary`
+  therefore continued to render blue controls even after the bottom navigation
+  itself was switched to brand red.
+- **Android theme:** light mode now uses Third-Hand brand red `#F52D3A`, pale-red
+  `#FFE0E3` containers, cool-light `#F7F8FA` canvas, white surfaces, neutral
+  `#1F2329` text and `#667085` secondary text. Dark mode is aligned to the same
+  red identity instead of the former blue palette.
+- **Market semantics:** rise/fall colors remain owned by the existing
+  `MarketColors` abstraction; changing generic Material primary roles does not
+  redefine quote direction or trading-state meaning.
+- **Scope:** presentation/theme only. Existing routes, DTOs, simulated-account
+  controls, Decision Workspace and Paper Broker safety behavior are unchanged.
+- **Delivery status:** `ANDROID_THEME_ALIGNED / CI_DEVICE_ACCEPTANCE_PENDING`.
+  Repository Android CI and physical-device reference comparison remain required
+  before UIX0 visual acceptance is complete.
+- **Authority impact:** none. Formal Decision, StrategyProfile, ReviewPolicy,
+  Evidence, Risk, sizing, ExecutionPrecheck, Paper Broker and Evaluation remain
+  unchanged and server-owned.
