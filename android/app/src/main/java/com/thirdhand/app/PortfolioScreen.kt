@@ -96,12 +96,16 @@ internal fun CompactPortfolioContent(
         contentPadding = PaddingValues(bottom = AppSpacing.xxLarge),
     ) {
         item {
-            TradingPageHeader("持仓", "资产、成本与盈亏事实") {
+            TradingPageHeader("组合", "资产、成本与盈亏") {
                 IconButton(onClick = onRefresh, enabled = !loading) {
                     if (loading) {
                         CircularProgressIndicator(Modifier.size(AppSpacing.xLarge), strokeWidth = 2.dp)
                     } else {
-                        Icon(Icons.Default.Refresh, contentDescription = "刷新持仓")
+                        Icon(
+                            Icons.Default.Refresh,
+                            contentDescription = "刷新组合",
+                            tint = MaterialTheme.colorScheme.primary,
+                        )
                     }
                 }
             }

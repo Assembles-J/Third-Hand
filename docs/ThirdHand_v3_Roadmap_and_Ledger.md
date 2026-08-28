@@ -1412,3 +1412,20 @@ Paper Broker or Evaluation authority.
 - **Authority impact:** none. Formal Decision, StrategyProfile, ReviewPolicy,
   Evidence, Risk, sizing, ExecutionPrecheck, Paper Broker and Evaluation authority
   remain unchanged and server-owned.
+
+## Delivery update — 2026-08-28 — UIX4 Portfolio shell-label reconciliation
+
+- **Target-reference review:** merged #139 passed final CI, but the rendered
+  Portfolio screenshot still exposed the historical page title `持仓` under the
+  approved primary `组合` destination.
+- **Android:** the page-level title is aligned to `组合`, the subtitle is shortened
+  to `资产、成本与盈亏`, and the refresh affordance uses the existing brand-primary
+  action role. Portfolio facts, routing and Holding Detail remain unchanged.
+- **Visual acceptance:** this correction intentionally changes the Portfolio
+  screenshot. The newly rendered artifact must be reviewed at normal phone scale
+  before its screenshot hash is accepted; hash update alone is not acceptance.
+- **Backend/API:** unchanged.
+- **Delivery status:** `ANDROID_VISUAL_RECONCILIATION / CI_DEVICE_ACCEPTANCE_PENDING`.
+- **Authority impact:** none. Formal Decision, StrategyProfile, ReviewPolicy,
+  Evidence, Risk, sizing, ExecutionPrecheck, Paper Broker and Evaluation remain
+  unchanged and server-owned.
