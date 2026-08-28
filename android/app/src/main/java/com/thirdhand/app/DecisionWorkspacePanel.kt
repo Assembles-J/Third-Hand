@@ -1,14 +1,9 @@
 package com.thirdhand.app
 
-import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.*
-import androidx.compose.foundation.shape.CircleShape
-import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowForward
-import androidx.compose.material.icons.filled.CheckCircle
 import androidx.compose.material.icons.filled.Refresh
-import androidx.compose.material.icons.filled.Warning
 import androidx.compose.material3.*
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
@@ -18,14 +13,15 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
-import androidx.compose.ui.unit.sp
+import com.thirdhand.app.ui.components.DenseRowDivider
+import com.thirdhand.app.ui.components.DenseStateTag
 import com.thirdhand.app.ui.theme.AppSpacing
+import com.thirdhand.app.ui.theme.CompactTypography
 import com.thirdhand.app.ui.theme.marketColors
 import kotlinx.coroutines.launch
 import java.time.OffsetDateTime
@@ -66,66 +62,91 @@ internal fun DecisionWorkspaceContent(
     val busy = state is DecisionWorkspaceUiState.Loading || refreshing
     val refreshEnabled = !busy && (state !is DecisionWorkspaceUiState.Error || state.recoverable)
 
-    Card(
-        modifier = modifier.fillMaxWidth().padding(horizontal = AppSpacing.xxLarge, vertical = AppSpacing.medium),
-        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
-        shape = MaterialTheme.shapes.large,
-        elevation = CardDefaults.cardElevation(defaultElevation = 2.dp)
+    Column(
+        modifier = modifier
+            .fillMaxWidth()
+            .padding(horizontal = AppSpacing.contentHorizontal),
     ) {
-        Column(
-            modifier = Modifier.padding(AppSpacing.large),
-            verticalArrangement = Arrangement.spacedBy(AppSpacing.medium)
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .heightIn(min = AppSpacing.touchTarget),
+            verticalAlignment = Alignment.CenterVertically,
         ) {
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.SpaceBetween
-            ) {
-                Column {
-                    Text("决策工作台", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.ExtraBold)
-                    Text("DECISION WORKSPACE", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.6f))
-                }
-                IconButton(
-                    onClick = onRefresh,
-                    enabled = refreshEnabled,
-                    colors = IconButtonDefaults.iconButtonColors(contentColor = MaterialTheme.colorScheme.primary)
-                ) {
-                    if (busy) CircularProgressIndicator(Modifier.size(18.dp), strokeWidth = 2.dp)
-                    else Icon(Icons.Filled.Refresh, "刷新")
-                }
+            Column(Modifier.weight(1f)) {
+                Text("正式决策", style = CompactTypography.sectionTitle)
+                Text(
+                    "服务端决策、变化与风险事实",
+                    style = CompactTypography.caption,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
             }
-
-            when (state) {
-                DecisionWorkspaceUiState.Loading -> {
-                    Box(Modifier.fillMaxWidth().padding(vertical = AppSpacing.xxLarge), contentAlignment = Alignment.Center) {
-                        CircularProgressIndicator(Modifier.size(24.dp))
-                    }
-                }
-                is DecisionWorkspaceUiState.Empty -> {
-                    Surface(
-                        color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.3f),
-                        shape = MaterialTheme.shapes.medium,
-                        modifier = Modifier.fillMaxWidth()
-                    ) {
-                        Text(state.message, Modifier.padding(AppSpacing.large), style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                    }
-                }
-                is DecisionWorkspaceUiState.Error -> {
-                    Surface(
-                        color = MaterialTheme.colorScheme.errorContainer.copy(alpha = 0.2f),
-                        shape = MaterialTheme.shapes.medium,
-                        modifier = Modifier.fillMaxWidth(),
-                        border = androidx.compose.foundation.BorderStroke(1.dp, MaterialTheme.colorScheme.error.copy(alpha = 0.2f))
-                    ) {
-                        Text(state.message, Modifier.padding(AppSpacing.large), style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.error)
-                    }
-                }
-                is DecisionWorkspaceUiState.Ready -> {
-                    DecisionWorkspaceSummaryBody(state.workspace)
+            IconButton(
+                onClick = onRefresh,
+                enabled = refreshEnabled,
+                modifier = Modifier.size(AppSpacing.touchTarget),
+            ) {
+                if (busy) {
+                    CircularProgressIndicator(Modifier.size(18.dp), strokeWidth = 2.dp)
+                } else {
+                    Icon(
+                        Icons.Filled.Refresh,
+                        contentDescription = "刷新正式决策",
+                        tint = MaterialTheme.colorScheme.primary,
+                    )
                 }
             }
         }
+        DenseRowDivider(inset = false)
+
+        when (state) {
+            DecisionWorkspaceUiState.Loading -> {
+                Box(
+                    Modifier
+                        .fillMaxWidth()
+                        .padding(vertical = AppSpacing.xLarge),
+                    contentAlignment = Alignment.Center,
+                ) {
+                    CircularProgressIndicator(Modifier.size(22.dp), strokeWidth = 2.dp)
+                }
+            }
+
+            is DecisionWorkspaceUiState.Empty -> {
+                DecisionWorkspaceMessage(
+                    text = state.message,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            }
+
+            is DecisionWorkspaceUiState.Error -> {
+                DecisionWorkspaceMessage(
+                    text = state.message,
+                    color = MaterialTheme.colorScheme.error,
+                )
+            }
+
+            is DecisionWorkspaceUiState.Ready -> {
+                state.refreshError?.let { message ->
+                    DecisionWorkspaceMessage(
+                        text = message,
+                        color = MaterialTheme.colorScheme.error,
+                    )
+                    DenseRowDivider(inset = false)
+                }
+                DecisionWorkspaceSummaryBody(state.workspace)
+            }
+        }
     }
+}
+
+@Composable
+private fun DecisionWorkspaceMessage(text: String, color: Color) {
+    Text(
+        text,
+        modifier = Modifier.padding(vertical = AppSpacing.rowVertical),
+        style = CompactTypography.secondary,
+        color = color,
+    )
 }
 
 @Composable
@@ -134,86 +155,156 @@ private fun DecisionWorkspaceSummaryBody(workspace: DecisionWorkspaceDto) {
     val risk = workspace.paper_risk
     val colors = MaterialTheme.marketColors
 
-    // Formal Action Section
-    Surface(
-        color = MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.3f),
-        shape = MaterialTheme.shapes.medium,
-        modifier = Modifier.fillMaxWidth()
+    Column(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(vertical = AppSpacing.rowVertical),
     ) {
-        Column(Modifier.padding(AppSpacing.medium)) {
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                Surface(
-                    color = MaterialTheme.colorScheme.primary,
-                    shape = RoundedCornerShape(4.dp)
-                ) {
-                    Text(
-                        workspaceActionLabel(workspace.formal_action),
-                        Modifier.padding(horizontal = 8.dp, vertical = 2.dp),
-                        style = MaterialTheme.typography.labelSmall,
-                        fontWeight = FontWeight.Bold,
-                        color = Color.White
-                    )
-                }
-                Spacer(Modifier.width(AppSpacing.medium))
-                Text(
-                    workspace.summary.ifBlank { "决策系统运行正常" },
-                    style = MaterialTheme.typography.bodySmall,
-                    fontWeight = FontWeight.Bold,
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis
-                )
-            }
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            DenseStateTag(
+                text = workspaceActionLabel(workspace.formal_action),
+                color = workspaceActionColor(workspace.formal_action),
+            )
+            Spacer(Modifier.width(AppSpacing.small))
+            Text(
+                workspace.generated_at
+                    ?.takeIf { it.isNotBlank() }
+                    ?.let(::workspaceTimestamp)
+                    ?: "时间未知",
+                style = CompactTypography.caption,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
         }
+        Text(
+            workspace.summary.ifBlank { "暂无决策摘要" },
+            modifier = Modifier.padding(top = AppSpacing.small),
+            style = CompactTypography.body,
+            color = MaterialTheme.colorScheme.onSurface,
+        )
     }
 
-    // Material Change Section
-    if (change.material_change) {
-        Column(Modifier.padding(vertical = AppSpacing.small)) {
-            Text("显著变化探测", style = MaterialTheme.typography.labelMedium, fontWeight = FontWeight.Bold, color = colors.rise)
-            Spacer(Modifier.height(AppSpacing.xs))
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                Text(workspaceActionLabel(change.prior_action), style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                Icon(Icons.AutoMirrored.Filled.ArrowForward, null, Modifier.size(12.dp).padding(horizontal = 4.dp), tint = MaterialTheme.colorScheme.onSurfaceVariant)
-                Text(workspaceActionLabel(change.current_action), style = MaterialTheme.typography.bodySmall, fontWeight = FontWeight.Bold, color = colors.rise)
+    DenseRowDivider(inset = false)
+
+    Column(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(vertical = AppSpacing.rowVertical),
+    ) {
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Text("变化与复核", style = CompactTypography.rowTitle)
+            Spacer(Modifier.weight(1f))
+            DenseStateTag(
+                text = if (change.material_change) "重要变化" else "无重要变化",
+                color = if (change.material_change) colors.warning else MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+        }
+
+        if (change.material_change) {
+            Row(
+                modifier = Modifier.padding(top = AppSpacing.small),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Text(
+                    workspaceActionLabel(change.prior_action),
+                    style = CompactTypography.secondary,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+                Icon(
+                    Icons.AutoMirrored.Filled.ArrowForward,
+                    contentDescription = null,
+                    modifier = Modifier
+                        .padding(horizontal = AppSpacing.xs)
+                        .size(14.dp),
+                    tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+                Text(
+                    workspaceActionLabel(change.current_action),
+                    style = CompactTypography.secondary,
+                    fontWeight = FontWeight.SemiBold,
+                )
             }
             if (change.material_change_components.isNotEmpty()) {
                 Text(
-                    "触发因子：${change.material_change_components.joinToString(" / ") { workspaceChangeComponentLabel(it) }}",
-                    style = MaterialTheme.typography.labelSmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                    change.material_change_components
+                        .joinToString(" · ") { workspaceChangeComponentLabel(it) },
+                    modifier = Modifier.padding(top = AppSpacing.xs),
+                    style = CompactTypography.caption,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    maxLines = 2,
+                    overflow = TextOverflow.Ellipsis,
                 )
             }
+        } else {
+            Text(
+                "正式动作延续，当前没有足够重要的新变化。",
+                modifier = Modifier.padding(top = AppSpacing.small),
+                style = CompactTypography.secondary,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+        }
+
+        change.review_after?.takeIf { it.isNotBlank() }?.let { reviewAfter ->
+            Text(
+                "下次复核 ${workspaceTimestamp(reviewAfter)}",
+                modifier = Modifier.padding(top = AppSpacing.xs),
+                style = CompactTypography.caption,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
         }
     }
 
-    HorizontalDivider(thickness = 0.5.dp, color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.4f))
+    DenseRowDivider(inset = false)
+    DecisionWorkspaceCompanyEventState(
+        financial = workspace.financial_currentness,
+        events = workspace.corporate_events,
+    )
 
-    // Events Section
-    DecisionWorkspaceCompanyEventState(workspace.financial_currentness, workspace.corporate_events)
-
-    // Position State Section
     if (risk.position_present) {
-        HorizontalDivider(thickness = 0.5.dp, color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.4f))
-        Column(verticalArrangement = Arrangement.spacedBy(AppSpacing.xs)) {
-            Text("账本实时状态", style = MaterialTheme.typography.labelMedium, fontWeight = FontWeight.Bold)
-            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
-                Column {
-                    Text("持仓数量", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                    Text(risk.quantity.workspaceQuantity(), style = MaterialTheme.typography.bodySmall, fontWeight = FontWeight.Bold)
-                }
-                Column(horizontalAlignment = Alignment.End) {
-                    Text("可卖数量", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                    Text(risk.sellable_quantity.workspaceQuantity(), style = MaterialTheme.typography.bodySmall, fontWeight = FontWeight.Bold)
+        DenseRowDivider(inset = false)
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(vertical = AppSpacing.rowVertical),
+        ) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Text("持仓风控", style = CompactTypography.rowTitle)
+                Spacer(Modifier.weight(1f))
+                if ((risk.locked_quantity ?: 0.0) > 0.0) {
+                    DenseStateTag("T+1 锁定", colors.warning)
+                } else {
+                    DenseStateTag("可用", colors.rise)
                 }
             }
-            if ((risk.locked_quantity ?: 0.0) > 0.0) {
-                Surface(color = colors.warning.copy(alpha = 0.1f), shape = RoundedCornerShape(4.dp)) {
-                    Row(Modifier.padding(horizontal = 6.dp, vertical = 2.dp), verticalAlignment = Alignment.CenterVertically) {
-                        Icon(Icons.Default.Warning, null, Modifier.size(10.dp), tint = colors.warning)
-                        Spacer(Modifier.width(4.dp))
-                        Text("T+1 锁定: ${risk.locked_quantity.workspaceQuantity()}", style = MaterialTheme.typography.labelSmall, color = colors.warning, fontWeight = FontWeight.Bold)
-                    }
-                }
+
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(top = AppSpacing.small),
+            ) {
+                WorkspaceMetric(
+                    label = "持仓数量",
+                    value = risk.quantity.workspaceQuantity(),
+                    modifier = Modifier.weight(1f),
+                )
+                WorkspaceMetric(
+                    label = "可卖数量",
+                    value = risk.sellable_quantity.workspaceQuantity(),
+                    modifier = Modifier.weight(1f),
+                    alignEnd = true,
+                )
+            }
+
+            val locked = risk.locked_quantity ?: 0.0
+            if (locked > 0.0) {
+                Text(
+                    "锁定 ${locked.workspaceQuantity()}${risk.next_eligible_sell_at?.let { " · 最早 ${workspaceTimestamp(it)}" } ?: ""}",
+                    modifier = Modifier.padding(top = AppSpacing.xs),
+                    style = CompactTypography.caption,
+                    color = colors.warning,
+                )
             }
         }
     }
@@ -224,67 +315,126 @@ private fun DecisionWorkspaceCompanyEventState(
     financial: DecisionWorkspaceFinancialCurrentnessDto?,
     events: DecisionWorkspaceCorporateEventsDto,
 ) {
-    Column(verticalArrangement = Arrangement.spacedBy(AppSpacing.small)) {
+    val colors = MaterialTheme.marketColors
+    Column(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(vertical = AppSpacing.rowVertical),
+    ) {
         Row(verticalAlignment = Alignment.CenterVertically) {
-            Text("公司事件时效", style = MaterialTheme.typography.labelMedium, fontWeight = FontWeight.Bold)
-            Spacer(Modifier.width(AppSpacing.small))
-            if (events.official_source_status == "ready") {
-                Icon(Icons.Default.CheckCircle, null, Modifier.size(12.dp), tint = MaterialTheme.marketColors.rise)
+            Text("公司与事件", style = CompactTypography.rowTitle)
+            Spacer(Modifier.weight(1f))
+            when {
+                events.status == "partial" || events.official_source_status == "stale_fallback" -> {
+                    DenseStateTag("事件不完整", colors.warning)
+                }
+                events.status == "unavailable" -> {
+                    DenseStateTag("事件不可用", MaterialTheme.colorScheme.onSurfaceVariant)
+                }
             }
         }
 
-        if (financial != null) {
-            val conflicted = financial.current_confirmation == "CONFLICTED"
-            Column(
+        if (financial == null && events.active_events.isEmpty()) {
+            Text(
+                if (events.status == "unavailable") "当前没有结构化公司/事件快照" else "暂无重要公司事件",
+                modifier = Modifier.padding(top = AppSpacing.small),
+                style = CompactTypography.secondary,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+            return@Column
+        }
+
+        financial?.let { currentness ->
+            Row(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .background(MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.2f), MaterialTheme.shapes.small)
-                    .padding(AppSpacing.medium)
+                    .padding(top = AppSpacing.small),
+                verticalAlignment = Alignment.CenterVertically,
             ) {
                 Text(
-                    workspaceFinancialCurrentnessLabel(financial),
-                    style = MaterialTheme.typography.labelSmall,
-                    fontWeight = FontWeight.Bold,
-                    color = if (conflicted) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.onSurface
+                    workspaceFinancialCurrentnessLabel(currentness),
+                    modifier = Modifier.weight(1f),
+                    style = CompactTypography.secondary,
+                    color = if (currentness.current_confirmation == "CONFLICTED") {
+                        MaterialTheme.colorScheme.error
+                    } else {
+                        MaterialTheme.colorScheme.onSurface
+                    },
                 )
                 Text(
-                    "最新季报：${financial.latest_observed_period ?: "---"}",
-                    style = MaterialTheme.typography.labelSmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                    currentness.latest_observed_period ?: "--",
+                    style = CompactTypography.caption,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
             }
         }
 
-        if (events.active_events.isNotEmpty()) {
-            events.active_events.take(1).forEach { event ->
-                Surface(
-                    color = MaterialTheme.colorScheme.tertiaryContainer.copy(alpha = 0.3f),
-                    shape = MaterialTheme.shapes.small,
-                    modifier = Modifier.fillMaxWidth()
-                ) {
-                    Column(Modifier.padding(AppSpacing.medium)) {
-                        Text(
-                            workspaceEventTitle(event),
-                            style = MaterialTheme.typography.labelSmall,
-                            fontWeight = FontWeight.Bold
-                        )
-                        Text(
-                            "预计披露：${event.scheduled_at ?: "---"} · ${workspaceEventLifecycle(event.lifecycle_status)}",
-                            style = MaterialTheme.typography.labelSmall,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant
-                        )
-                    }
+        events.active_events.firstOrNull()?.let { event ->
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(top = AppSpacing.small),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Column(Modifier.weight(1f)) {
+                    Text(
+                        workspaceEventTitle(event),
+                        style = CompactTypography.secondary,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                    )
+                    Text(
+                        event.scheduled_at ?: "时间待定",
+                        style = CompactTypography.caption,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
                 }
+                DenseStateTag(
+                    workspaceEventLifecycle(event.lifecycle_status),
+                    MaterialTheme.colorScheme.primary,
+                )
             }
         }
     }
 }
 
+@Composable
+private fun WorkspaceMetric(
+    label: String,
+    value: String,
+    modifier: Modifier,
+    alignEnd: Boolean = false,
+) {
+    Column(
+        modifier = modifier,
+        horizontalAlignment = if (alignEnd) Alignment.End else Alignment.Start,
+    ) {
+        Text(
+            label,
+            style = CompactTypography.caption,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+        )
+        Text(
+            value,
+            style = CompactTypography.rowValue,
+            fontWeight = FontWeight.SemiBold,
+        )
+    }
+}
+
+@Composable
+private fun workspaceActionColor(value: String?): Color = when (value?.uppercase(Locale.ROOT)) {
+    "BUY", "OPEN", "ADD" -> MaterialTheme.marketColors.rise
+    "REDUCE", "EXIT", "SELL" -> MaterialTheme.marketColors.fall
+    "BLOCKED" -> MaterialTheme.colorScheme.error
+    else -> MaterialTheme.colorScheme.primary
+}
+
 private fun workspaceFinancialCurrentnessLabel(value: DecisionWorkspaceFinancialCurrentnessDto): String = when {
-    value.current_confirmation == "CONFIRMED" && value.latest_period_status == "CURRENT" -> "财报状态：最新已同步"
-    value.current_confirmation == "PENDING" -> "财报状态：等待披露中"
-    value.current_confirmation == "CONFLICTED" -> "财报状态：存在来源冲突"
-    else -> "财报状态：已同步"
+    value.current_confirmation == "CONFIRMED" && value.latest_period_status == "CURRENT" -> "财报最新已同步"
+    value.current_confirmation == "PENDING" -> "财报等待披露"
+    value.current_confirmation == "CONFLICTED" -> "财报来源存在冲突"
+    else -> "财报状态已同步"
 }
 
 private fun workspaceEventTitle(event: DecisionWorkspaceCorporateEventDto): String =
@@ -293,7 +443,7 @@ private fun workspaceEventTitle(event: DecisionWorkspaceCorporateEventDto): Stri
 private fun workspaceEventLifecycle(value: String?): String = when (value?.uppercase(Locale.ROOT)) {
     "SCHEDULED" -> "已预约"
     "DUE" -> "今日披露"
-    "RELEASED_UNVERIFIED" -> "已发布待核验"
+    "RELEASED_UNVERIFIED" -> "待核验"
     "VERIFIED" -> "已验证"
     else -> "待定"
 }
@@ -325,7 +475,12 @@ private fun workspaceTimestamp(value: String): String = runCatching {
     OffsetDateTime.parse(value)
         .withOffsetSameInstant(ZoneOffset.ofHours(8))
         .format(DateTimeFormatter.ofPattern("MM-dd HH:mm"))
-}.getOrElse { value.take(10) }
+}.getOrElse {
+    value.replace('T', ' ')
+        .substringBefore('+')
+        .substringBefore('Z')
+        .take(16)
+}
 
 private fun Double?.workspaceQuantity(): String = when {
     this == null -> "--"

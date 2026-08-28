@@ -1474,3 +1474,45 @@ Paper Broker or Evaluation authority.
 - **Authority impact:** none. Formal Decision, StrategyProfile, ReviewPolicy,
   Evidence, Risk, sizing, ExecutionPrecheck, Paper Broker and Evaluation authority
   remain unchanged and server-owned.
+
+## Delivery update — 2026-08-28 — UIX6 Stock Detail + Decision Workspace hierarchy
+
+- **Issue / UIX0 reconciliation:** #134 completes the compact detail hierarchy
+  under the accepted `首页 | 行情 | 组合 | 策略 | 自选` shell. Stock Detail remains a
+  factual market surface; interpretation and research stay behind the explicit
+  secondary `决策与研究` entry rather than becoming a competing primary page.
+- **Stock Detail:** current price/change, quote freshness and timestamp, optional
+  factual `组合持仓` / `模拟持仓` context, reference cost/P&L, OHLC, volume/amount and
+  the existing K-line are rendered with the shared compact financial typography,
+  16dp insets, thin dividers and red-up/green-down market semantics. The previous
+  oversized display-price treatment and mixed long-form decision/company/paper-log
+  stack are removed.
+- **Decision Workspace:** the secondary route consumes the existing authoritative
+  `/v1/decisions/{symbol}/workspace` read model. It presents Formal Action,
+  material-change/review state, financial/event currentness and sellable/T+1 risk
+  as compact rows. Loading, empty, unavailable/partial data and refresh-error
+  behavior continue to preserve the controller's last-good semantics instead of
+  fabricating replacement facts.
+- **Research boundary:** `AI 深度研究` remains an explicit deeper route from the
+  Decision surface. Android does not calculate Formal Decision, ReviewPolicy,
+  financial currentness or event authority locally, and AI receives no execution
+  authority.
+- **Execution separation:** simulated-account execution history and decision-audit
+  drill-down remain owned by the `策略` UIX5 surface. Stock Detail does not regain
+  paper-order controls or duplicate the execution console.
+- **Screenshot acceptance:** the compact 420dp Stock-facts state plus Decision
+  Workspace ready, partial/stale, unavailable, T+1-deferred and refresh-error
+  states were visually reviewed before their hashes were locked. The corrected
+  stock timestamp renders as Beijing-local `MM-dd HH:mm`, and partial event
+  coverage is explicitly tagged `事件不完整`.
+- **Backend/API:** unchanged. Existing quote, holding, paper-account and Decision
+  Workspace contracts are reused; no DTO, provider, persistence path, confidence
+  score or global decision summary is introduced.
+- **Delivery status:** `ANDROID_IMPLEMENTED / CI_DEVICE_ACCEPTANCE_PENDING`.
+  Repository documentation-governance, Android unit/Kotlin, screenshot/hash,
+  Debug/Release and `ci-gate` must pass on the final clean branch before merge;
+  physical-device Stock Detail -> Decision -> AI Research -> Back plus partial/
+  stale/T+1 readability remains the final product acceptance gate.
+- **Authority impact:** none. Formal Decision, StrategyProfile, ReviewPolicy,
+  Evidence, Risk, sizing, ExecutionPrecheck, Paper Broker and Evaluation authority
+  remain unchanged and server-owned.
