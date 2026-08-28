@@ -6,6 +6,8 @@ PositionSizing and execution remain owned by their existing deterministic layers
 """
 from __future__ import annotations
 
+from contextlib import nullcontext
+
 from app.domain.trading.adaptive_schedule import adaptive_paper_schedule
 from app.paper_runtime import (
     candidate_pool_audit,
@@ -263,7 +265,17 @@ def install(m) -> None:
                     "last_status": "researching",
                     "last_message": "行情已同步；自动研究优先级按资金占用自适应，正式动作仍由确定性策略生成。",
                 })
-            m.refresh_paper_market_intelligence(list(symbols), names)
+
+            review_scope_factory = getattr(m, "review_scheduler_request_scope", None)
+            def review_scope():
+                return (
+                    review_scope_factory(explicit_user_request=bool(force))
+                    if callable(review_scope_factory)
+                    else nullcontext()
+                )
+
+            with review_scope():
+                m.refresh_paper_market_intelligence(list(symbols), names)
             m._record_simulation_stage(
                 run_id,
                 "news",
@@ -279,11 +291,12 @@ def install(m) -> None:
                 # Record the attempt before provider work so a failing endpoint
                 # cannot become a five-minute retry loop.
                 m.last_company_intelligence_focus_at = now_mono
-                refresh_company(
-                    list(plan.holding_symbols),
-                    research_priority=plan.holding_research_priority,
-                    run_id=run_id,
-                )
+                with review_scope():
+                    refresh_company(
+                        list(plan.holding_symbols),
+                        research_priority=plan.holding_research_priority,
+                        run_id=run_id,
+                    )
             elif plan.holding_symbols:
                 m._record_simulation_stage(
                     run_id,
@@ -301,12 +314,13 @@ def install(m) -> None:
             due_executed, due_skipped = m.execute_due_paper_decisions(list(due_symbols), names, run_id=run_id)
             executed += due_executed
             skipped += due_skipped
-            generated_reports = m.prepare_paper_decisions(
-                list(decision_symbols),
-                run_id=run_id,
-                names=names,
-                selection=selection,
-            )
+            with review_scope():
+                generated_reports = m.prepare_paper_decisions(
+                    list(decision_symbols),
+                    run_id=run_id,
+                    names=names,
+                    selection=selection,
+                )
             if not due_executed:
                 no_action_reasons.append("本交易时段没有到期且可执行的当前版本历史决策")
             if excluded:
