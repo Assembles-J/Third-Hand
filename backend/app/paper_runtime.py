@@ -10,6 +10,7 @@ from datetime import datetime, timedelta, timezone
 
 from app import decision_config as config
 from app.candidate_selection import CandidateSelection, select_candidates
+from app.decision_semantics import execution_side, formal_action_from_report
 
 
 BEIJING_TZ = timezone(timedelta(hours=8))
@@ -96,14 +97,15 @@ def pending_current_version_decision_symbols(
     policy_version: str,
     limit: int = 500,
 ) -> tuple[str, ...]:
-    """Return latest unexecuted formal decisions that remain an execution obligation.
+    """Return latest unexecuted formal decisions that remain execution obligations.
 
     A due historical DecisionReport must not disappear merely because a new day's
     deterministic rotation chose a different research cohort. Conversely, legacy
     reports from an older policy/candidate/execution regime must never leak into
     the frozen observation ledger. Newer manual/research DecisionReports without
     candidate lineage are ignored rather than masking the latest formal paper
-    report.
+    report. WAIT/HOLD/BLOCKED reports are review states, not execution obligations,
+    and therefore must not keep the execution queue permanently non-empty.
     """
     with store._connect() as connection:  # package-internal read-only adapter
         rows = connection.execute(
@@ -133,6 +135,8 @@ def pending_current_version_decision_symbols(
     pending: list[tuple[str, str]] = []
     for symbol, (decision_id, report) in latest_formal_by_symbol.items():
         if decision_id in executed:
+            continue
+        if execution_side(formal_action_from_report(report)) is None:
             continue
         generated_at = str(report.get("generated_at") or "")
         pending.append((generated_at, symbol))
