@@ -1178,3 +1178,32 @@ Paper Broker or Evaluation authority.
 - **Delivery status:** `ANDROID_READY / CI_DEVICE_ACCEPTANCE_PENDING`.
 - **Authority impact:** none. Formal Decision, Risk, sizing, ExecutionPrecheck,
   Paper Broker rules and Evaluation authority are unchanged.
+
+## Delivery update — 2026-08-28 — UIX1 compact Android UI foundation
+
+- **Issue / implementation:** #129 / draft PR #136 starts the approved compact
+  UI/UX rebuild after the design baseline in #135. This slice establishes shared
+  density primitives before any screen-specific rewrite.
+- **Typography / spacing:** existing Material typography and legacy spacing
+  remain compatible, while scan-heavy financial surfaces gain an explicit
+  10-18sp compact scale, 16dp content insets, 8dp row rhythm, thin separators
+  and a minimum 44dp interactive target.
+- **Shared Android primitives:** compact page/section headers, right-aligned value
+  rows, text-first state tags and dense dividers are available for the later
+  News/Market, Watchlist, Holdings, simulated-account Trading and detail slices.
+  Existing Trading page wrappers keep their call-site contracts while adopting
+  the dense presentation layer.
+- **Navigation:** the current `资讯 | 行情 | 持仓 | 交易 | 自选` information
+  architecture is unchanged. A low-chrome compact bottom-navigation component is
+  introduced for later shell wiring; no route or business action changes here.
+- **Design-system sync:** `.superdesign/design-system.md` now records the
+  light-first, high-density financial rules and explicitly preserves the current
+  simulated-account Trading boundary instead of inventing broker order-entry UI.
+- **Backend/API:** unchanged. No DTO, endpoint, persistence or provider contract
+  changes.
+- **Delivery status:** `ANDROID_FOUNDATION_IN_PROGRESS / CI_DEVICE_ACCEPTANCE_PENDING`.
+  Compile, screenshot impact, Debug/Release, repository governance/ci-gate and
+  physical-device readability remain acceptance gates before #129 can close.
+- **Authority impact:** none. Formal Decision, StrategyProfile, ReviewPolicy,
+  Risk, sizing, ExecutionPrecheck, Paper Broker and Evaluation authority are
+  unchanged.
