@@ -1429,3 +1429,45 @@ Paper Broker or Evaluation authority.
 - **Authority impact:** none. Formal Decision, StrategyProfile, ReviewPolicy,
   Evidence, Risk, sizing, ExecutionPrecheck, Paper Broker and Evaluation remain
   unchanged and server-owned.
+
+## Delivery update — 2026-08-28 — UIX5 Strategy dense simulated-account console
+
+- **Issue / shell:** #133 rebuilds the accepted `策略` destination as a dense
+  simulated-account console instead of leaving the historical `交易账户` page
+  unchanged behind the new bottom-navigation label.
+- **Hierarchy:** the page now starts with `AI交易`, latest `决策复核` and the real
+  read-only `SWING_V1` strategy-evaluation entry, followed by a restrained
+  simulated-account equity summary, simulated positions, auto-execution control,
+  execution-chain history and recent fills. The oversized solid-red equity hero
+  is removed in favor of a compact white/light financial surface with brand-red
+  accents and existing red-up/green-down market semantics.
+- **Decision audit repair:** tapping a fill's `分析记录` now actually loads the
+  existing `/v1/paper-trading/decision-audit/{decisionId}` payload and optional
+  decision lineage. Loading, failure and empty states are explicit instead of
+  opening a blank audit dialog.
+- **Strategy evaluation:** the existing N3 read-only Strategy Lab is reachable
+  directly from `策略`; it remains evaluation-only and cannot write Formal Action
+  or paper execution state.
+- **Observable operations:** dashboard sync failure and successful manual-run
+  messages are rendered on the page. The existing simulated-account switch and
+  guarded `立即运行决策轮换` behavior remain unchanged in authority.
+- **Research-plan boundary:** server-owned ReviewPlan remains visible through the
+  existing Portfolio/Watchlist attention surfaces. This slice does not invent a
+  new `研究计划` authority or fabricate a strategy route before a real read model
+  is available.
+- **Screenshot coverage:** a 390dp representative enabled-account Strategy console
+  state is added to Compose screenshot rendering. Its first generated artifact
+  must be visually reviewed against the approved red/white reference direction
+  before its new hash is accepted.
+- **Backend/API:** unchanged. Existing paper dashboard/config/run/audit/lineage and
+  Lab GET contracts are reused; no endpoint, DTO, persistence or provider change.
+- **Safety boundary:** no real-broker ticket, price/quantity order editor, cancel,
+  transfer or broker-account surface is introduced. This is the existing governed
+  simulated account, not N5 isolated AI-agent paper trading.
+- **Delivery status:** `ANDROID_IMPLEMENTED / CI_DEVICE_ACCEPTANCE_PENDING`.
+  Repository unit/compile/screenshot/Debug/Release/documentation-governance/
+  ci-gate and physical-device `策略 -> 决策复核 / 策略评估 / 自动执行` walkthrough
+  remain acceptance gates before #133 can be `PRODUCT_DONE`.
+- **Authority impact:** none. Formal Decision, StrategyProfile, ReviewPolicy,
+  Evidence, Risk, sizing, ExecutionPrecheck, Paper Broker and Evaluation authority
+  remain server-owned and unchanged.
