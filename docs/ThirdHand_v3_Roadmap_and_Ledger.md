@@ -1207,3 +1207,29 @@ Paper Broker or Evaluation authority.
 - **Authority impact:** none. Formal Decision, StrategyProfile, ReviewPolicy,
   Risk, sizing, ExecutionPrecheck, Paper Broker and Evaluation authority are
   unchanged.
+
+## Delivery update — 2026-08-28 — UIX2 News + Market scan density
+
+- **Issue / implementation:** #130 applies the accepted UIX1 compact primitives to
+  the existing News and Market Android surfaces. The slice is presentation-only;
+  it does not add providers, endpoints, statistics or navigation destinations.
+- **News:** headline rows now lead with 14sp compact titles, source/time metadata
+  and text-first announcement/flash tags; explanations are capped at two lines,
+  filter controls retain a 44dp touch target, and thin dividers replace excess
+  card chrome.
+- **Market:** the oversized colored session card is replaced by a compact status
+  strip; index, breadth, sector, ranking and quote rows use 16dp insets, 8dp row
+  rhythm, right-aligned values and project `MarketColors` for rise/fall semantics.
+  Search, tabs, ranking filters and drill-down rows retain at least 44dp targets.
+- **Routes / states:** stock-detail routing, loading, empty, error, cached/stale
+  display and existing refresh behavior remain intact. Android does not invent
+  new market facts or recompute server authority.
+- **Screenshot coverage:** dedicated News and Market dense-row preview tests are
+  included so CI can render/lock representative scan-heavy states before merge.
+- **Backend/API:** unchanged. Existing DTOs and routes are reused exactly.
+- **Delivery status:** `ANDROID_IMPLEMENTED / CI_DEVICE_ACCEPTANCE_PENDING`.
+  Repository compile/unit/screenshot/Debug/Release/ci-gate plus physical-device
+  density/readability remain required before #130 can be `PRODUCT_DONE`.
+- **Authority impact:** none. Formal Decision, StrategyProfile, ReviewPolicy,
+  Evidence authority, Risk, sizing, ExecutionPrecheck, Paper Broker and
+  Evaluation authority are unchanged.
