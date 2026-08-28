@@ -1,276 +1,322 @@
 # ThirdHand UI/UX Rebuild Implementation Plan
 
-> Companion document to `ThirdHand_UIUX_Rebuild_v1.md`.
+> Status: UIX0 TARGET-SHELL DELIVERY PLAN
 >
-> Scope: issue/PR decomposition for an incremental Android UI rebuild using existing ThirdHand capability only.
+> Companion to `ThirdHand_UIUX_Rebuild_v1.md`.
+>
+> Scope: incremental Android delivery against the approved target shell and reference direction, using existing ThirdHand capability only.
 
 ## 1. Delivery policy
 
-Each UI slice must follow:
+Every UI slice follows the same chain:
 
 ```text
-Issue
+Issue / accepted target
  -> existing backend/API contract check
  -> Android implementation
- -> screenshot/unit coverage
+ -> screenshot regression + target-reference comparison
  -> CI
- -> physical-device acceptance
+ -> physical-device comparison
  -> roadmap/ledger sync where required
 ```
 
-A UI slice must not silently create new backend semantics or new trading authority.
+Screenshot hashes protect regressions. They are not, by themselves, proof that the UI matches the approved target direction.
 
-## 2. Shared acceptance rules
+A UI slice must not silently create new backend semantics, local decision authority or real-broker trading capability.
 
-Every slice must satisfy:
+## 2. Approved target shell
 
-- no unsupported feature is introduced;
-- no real-broker trading UI is introduced;
-- current navigation/routing remains reachable;
-- existing loading/empty/error/stale states remain represented;
-- compact typography and high information density are used;
-- minimum touch target remains accessible;
-- red-up / green-down semantics reuse the project market-color abstraction;
-- representative screenshot baselines are updated intentionally;
-- Debug and Release builds remain green.
+The target primary Android navigation is:
 
-## 3. UIX1 — global density and shared primitives
+```text
+首页 | 行情 | 组合 | 策略 | 自选
+```
+
+The former `资讯 | 行情 | 持仓 | 交易 | 自选` shell is implementation history, not an immutable acceptance requirement.
+
+Product mapping:
+
+- `首页`: attention/change aggregation from current authoritative facts only;
+- `行情`: existing market/search/detail capability;
+- `组合`: current Holdings / Position Detail factual capability;
+- `策略`: current simulated-account execution, Decision Workspace and available review/research-plan capability;
+- `自选`: current Personal Universe / Watchlist capability.
+
+## 3. Shared visual acceptance
+
+Every target-shell slice must be reviewed for all of the following:
+
+- Third-Hand brand red is the primary shell/action color;
+- canvas is white / cool-light rather than dark or decorative;
+- Chinese securities-app density is compact and scan-first;
+- red-up / green-down market semantics use project market-color roles;
+- primary values align consistently across comparable rows;
+- cards are restrained and thin dividers/flat rows are preferred;
+- top and bottom navigation remain compact;
+- 44dp minimum interaction targets are preserved;
+- loading, empty, partial/stale and error states remain explicit;
+- no wording or control implies unsupported real-broker authority.
+
+Target-reference review must compare hierarchy, whitespace, density, typography, alignment, color role and card restraint against the approved screenshots at normal phone scale.
+
+## 4. UIX0 — target-shell reset (#140)
+
+### 4.1 Documentation baseline
+
+Land before additional screen-specific work:
+
+- rewrite `ThirdHand_UIUX_Rebuild_v1.md` around the approved shell;
+- rewrite this implementation plan;
+- synchronize `.superdesign/design-system.md`;
+- synchronize the canonical roadmap/ledger;
+- explicitly mark old-shell language as historical where it remains in delivery logs.
+
+Acceptance:
+
+- canonical UI docs name `首页 | 行情 | 组合 | 策略 | 自选` as the target shell;
+- brand-red shell/action tokens are explicit;
+- reference-driven acceptance is explicit;
+- simulated-account / no-real-broker boundary is preserved;
+- documentation governance and CI pass.
+
+### 4.2 Android shell implementation
+
+After the documentation baseline merges, implement the smallest runtime shell change:
+
+- replace user-visible bottom-nav destinations with `首页 | 行情 | 组合 | 策略 | 自选`;
+- wire each destination to existing capability or an explicit honest placeholder/partial state when a composed Home section is not yet implemented;
+- reuse current routes rather than inventing server behavior;
+- move current Holdings entry under `组合`;
+- organize current simulated-account/Decision capability under `策略`;
+- keep `自选` on the current Personal Universe path;
+- keep `行情` on the current Market path.
+
+Home should be composed incrementally from existing facts. Do not build a fake dashboard simply to fill the new tab.
+
+## 5. Reconciliation of UIX1-UIX6
+
+Previously completed or in-flight work remains useful, but it must converge on the new shell.
+
+| Track | New target responsibility | Reconciliation |
+| --- | --- | --- |
+| #129 UIX1 | shared brand/density foundation | keep compact primitives; wire brand-red target shell and remove old-shell acceptance assumptions |
+| #130 UIX2 | 首页 + 行情 | reuse News/Market density work; News becomes Home content where appropriate rather than a mandatory primary tab |
+| #131 UIX3 | 自选 | preserve Personal Universe density and management; align shell/header/reference visuals |
+| #132 UIX4 | 组合 | preserve fact-first Holdings/Position Detail work; rename/re-route target destination from `持仓` to `组合` |
+| #133 UIX5 | 策略 | place simulated-account execution console under Strategy and align Decision/review entry hierarchy |
+| #134 UIX6 | detail + Decision | align factual detail and Decision Workspace to the target visual language without merging authority |
+
+PR #139 stays draft until the UIX0 baseline lands. Its factual portfolio implementation should then be rebased/rebuilt on current `main` and reconciled for `组合`, brand-red shell/theme and target-reference acceptance.
+
+## 6. 首页 delivery
 
 ### Goal
 
-Create the compact visual foundation before rewriting individual screens.
+Create a low-effort attention surface using only existing facts.
 
-### Scope
+### Allowed sources
 
-- typography scale cleanup;
-- spacing density cleanup;
-- compact top bar/bottom navigation treatment;
-- dense section header;
-- dense quote/value row;
-- table/list divider primitives;
-- compact state/tag treatment;
-- consistent numeric alignment.
+Where existing contracts already provide them, Home may show:
+
+- portfolio/account summary;
+- material review/attention state;
+- important decision/research status;
+- data/currentness notices;
+- selected current news/market context;
+- quick links to `组合`, `策略` and `自选`.
 
 ### Non-goals
 
-- no navigation change;
-- no API change;
-- no business behavior change;
-- no new dashboard content.
+Do not invent:
+
+- a new AI daily brief;
+- a new recommendation model;
+- a new portfolio-performance metric;
+- a new market breadth statistic;
+- a hidden local aggregation with trading authority.
 
 ### Acceptance
 
-- existing five primary tabs remain unchanged;
-- common text does not use oversized dashboard typography;
-- list surfaces use separators instead of unnecessary nested cards;
-- screenshot fixtures show the new global density.
+- independent sections have loading/empty/partial/error behavior;
+- one failed section does not blank Home;
+- Home answers what needs attention rather than duplicating full Market/Portfolio/Strategy screens.
 
-## 4. UIX2 — 资讯 + 行情 visual rebuild
+## 7. 行情 delivery
 
-### Goal
+Reuse the current Market/search/detail capability.
 
-Make the two scan-heavy surfaces faster to read.
+Scope:
 
-### 资讯 scope
+- compact market/session header;
+- index/breadth/sector/ranking facts already available;
+- dense quote rows with aligned prices/change values;
+- existing stock-detail routing;
+- current News/market context where it materially helps scanning.
 
-- compact headline rows;
-- smaller metadata/time/source text;
-- reduced card chrome;
-- section grouping using dividers and whitespace rather than large rounded cards.
+Non-goals:
 
-### 行情 scope
+- no new provider;
+- no decorative unsupported market metric;
+- no local decision calculation.
 
-- compact market tabs;
-- dense index overview;
-- right-aligned prices/change values;
-- tighter market list rows;
-- preserve existing stock-detail route.
+## 8. 组合 delivery (#132)
 
-### Non-goals
+Goal: make current Holdings / Position Detail a compact fact-first portfolio path.
 
-- no new market provider;
-- no new AI summary;
-- no invented breadth/statistics endpoint.
+Scope:
 
-## 5. UIX3 — 自选 / Personal Universe visual rebuild
+- compact account/portfolio summary;
+- table-like holdings rows;
+- current price/freshness, quantity, cost, market value, P/L, holding days and weight when supplied;
+- preserve Position Detail routing;
+- preserve K-line and transaction history;
+- preserve secondary Decision entry;
+- preserve loading/empty/partial/stale/error states.
 
-### Goal
+Non-goals:
 
-Make Watchlist a high-density monitoring surface.
-
-### Scope
-
-- retain existing Watchlist/Positions sibling relationship;
-- dense row anatomy for name, symbol, latest price, change and compact review metadata where already available;
-- preserve add/edit/remove/priority/note/enabled flows already implemented;
-- preserve routing to stock/holding detail;
-- reduce oversized cards.
-
-### Non-goals
-
-- no broker order actions;
-- no automatic promotion of Discovery into Watchlist;
-- no new review calculation on Android.
-
-## 6. UIX4 — 持仓 + factual detail cleanup
-
-### Goal
-
-Turn portfolio reading into a compact table-first experience.
-
-### Scope
-
-- compact portfolio summary;
-- table-like holdings header/row layout;
-- name/symbol, market value, P/L, quantity/available, cost/current price;
-- keep quote freshness, holding days and weight where existing data supports them;
-- preserve holding-detail route;
-- visually separate factual holding information from Decision Workspace research.
-
-### Non-goals
-
-- no AI reasoning embedded in basic holding rows;
+- no AI narrative in every holding row;
 - no new portfolio analytics endpoint;
-- no manual trade actions.
+- no manual broker trade controls.
 
-## 7. UIX5 — 交易 / simulated-account execution console
+Acceptance includes visual comparison against the approved `组合` direction, not only screenshot hash updates.
 
-### Goal
+## 9. 策略 delivery (#133)
 
-Redesign the existing `PaperTradingScreen` around what it actually is: a simulated-account execution and audit surface driven by the existing decision chain.
+Goal: organize current strategy/decision and simulated-account functionality under one authority-accurate primary destination.
 
-### Current authoritative UI capability
+### Existing capability to preserve
 
-The implementation already exposes:
-
-- account equity;
-- available cash;
-- market value;
-- cumulative P/L;
+- simulated-account total equity, cash, market value and cumulative P/L;
 - paper positions;
-- simulated-account automatic execution enabled/paused state;
-- manual decision-cycle run trigger;
+- persisted simulated-account automatic-execution enabled/paused state;
+- manual `立即运行决策轮换` action;
 - execution-chain history;
-- execution/fill log rows;
-- decision/audit drill-down.
+- executed records and decision/audit drill-down;
+- Decision Workspace;
+- available server-owned ReviewPlan/research-plan facts;
+- current Strategy Lab/evaluation entry where already implemented.
 
 ### Target hierarchy
 
 ```text
-交易账户 / 模拟账套
+策略
 
-总权益 + 收益率
-现金 | 持仓市值 | 累计盈亏
-
-持仓明细
-
-模拟账户自动执行    [switch]
+决策 / 复核入口
+模拟账套摘要
+模拟账户持仓
+模拟账户自动执行 [switch]
 状态说明
 [立即运行决策轮换]
-
 执行链路记录 >
-
 最近成交记录
+其他现有策略/评估入口
 ```
-
-### Visual rules
-
-- reduce the height of the existing primary-color equity card;
-- use compact financial typography;
-- align paper-position rows like a securities holding table;
-- make enabled/paused/running state textual and explicit;
-- keep the real-broker boundary visible;
-- execution rows emphasize B/S, symbol/name, price, quantity and time;
-- retain the `分析记录` drill-down.
 
 ### Explicit non-goals
 
 Do not add:
 
-- manual order ticket;
-- BUY/SELL form;
+- manual BUY/SELL broker ticket;
 - limit-price field;
 - quantity stepper;
 - order cancellation;
-- broker selection;
-- real money transfer;
+- broker account switching;
+- real-money transfer;
+- real-broker execution;
 - N5 isolated AI-agent paper account behavior unless separately implemented and accepted.
 
-## 8. UIX6 — stock detail + Decision Workspace visual alignment
+Acceptance:
 
-### Goal
+- `paper_trading_enabled` behavior unchanged;
+- manual run behavior unchanged;
+- execution-chain and decision-audit routes reachable;
+- enabled/paused/running states explicit in text;
+- real-broker safety boundary visible;
+- target-reference comparison passes.
 
-Give factual quote data and structured research one coherent visual system without merging their responsibilities.
+## 10. 自选 delivery (#131)
 
-### Scope
+Keep existing Personal Universe / Watchlist behavior.
 
-Stock/position detail:
+Scope:
 
-- compact quote header;
-- K-line area;
-- factual position fields where applicable;
-- existing financial/currentness/event information.
+- dense name/symbol + quote/change rows;
+- priority/note/enabled/paused metadata where already available;
+- server-owned review status/reason where already available;
+- add/edit/remove flows;
+- correct held-symbol vs watchlist-only routing.
+
+No Android ReviewPolicy calculation and no automatic Discovery promotion.
+
+## 11. Detail + Decision delivery (#134)
+
+This slice aligns two responsibilities visually while keeping them separate.
+
+Factual detail:
+
+- quote/freshness;
+- K-line;
+- position facts when applicable;
+- existing financial/event/currentness facts that belong to factual detail.
 
 Decision Workspace/research:
 
-- Formal action/conclusion;
+- Formal Decision/action;
 - evidence/support;
 - risk;
 - what changed;
-- review/lineage information where currently available.
+- review/lineage;
+- deeper AI Research route.
 
-### Non-goals
+Android remains a renderer of authoritative state, not a local arbiter.
 
-- no new forecast output;
-- no new AI authority;
-- no hidden local decision calculation.
+## 12. Implementation order
 
-## 9. PR strategy
-
-Prefer one PR per implementation slice after the documentation PR merges.
-
-Recommended branch/PR order:
+Preferred sequence:
 
 ```text
-ui/uiux-density-foundation
-ui/news-market-density
-ui/watchlist-density
-ui/holdings-density
-ui/paper-trading-console
-ui/detail-decision-alignment
+1. docs/uix0-target-shell-reset
+2. ui/uix0-target-shell
+3. ui/uix1-brand-density reconciliation
+4. ui/uix2-home-market reconciliation
+5. ui/uix3-watchlist reconciliation
+6. ui/uix4-portfolio reconciliation
+7. ui/uix5-strategy-console reconciliation
+8. ui/uix6-detail-decision reconciliation
 ```
 
-Do not combine all Android surfaces into one mega-PR.
+#131-#133 may proceed with controlled file overlap once the runtime shell is stable, but no branch should reintroduce the old shell as an acceptance requirement.
 
-## 10. Dependency notes
+## 13. PR strategy
 
-- UIX1 should merge first because the later screens should consume shared tokens/primitives.
-- UIX2-UIX4 can follow independently after UIX1 if file overlap is controlled.
-- UIX5 should explicitly account for the current simulated-account terminology work and must preserve `paper_trading_enabled` semantics.
-- UIX6 should be last among the visual slices because it touches the largest cross-surface information hierarchy.
+Prefer one focused PR per slice.
 
-## 11. Product wording
-
-Preferred wording for the existing transaction surface:
+Recommended branches:
 
 ```text
-交易
-模拟账套
-模拟账户自动执行
-立即运行决策轮换
-执行链路记录
-最近成交记录
-分析记录
+docs/uix0-target-shell-reset
+ui/uix0-target-shell
+ui/uix1-brand-density
+ui/uix2-home-market
+ui/uix3-watchlist
+ui/uix4-portfolio
+ui/uix5-strategy-console
+ui/uix6-detail-decision
 ```
 
-Avoid wording that overstates authority:
+Do not combine the entire Android redesign into one mega-PR.
 
-```text
-AI 下单
-确认下单
-真实交易
-自动实盘
-券商下单
-```
+## 14. Governance and delivery state
 
-unless a future, separately approved product capability actually implements those semantics.
+UI presentation-only changes still state:
+
+- Authority Impact;
+- Strategy Impact;
+- API / Android Visibility Impact;
+- Backward Compatibility;
+- Evaluation Impact;
+- Acceptance Tests;
+- Delivery State.
+
+No user-facing slice is `PRODUCT_DONE` before repository CI, reference-driven screenshot review and physical-device acceptance are complete.
