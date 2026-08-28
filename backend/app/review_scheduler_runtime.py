@@ -6,11 +6,27 @@ scheduler-owned Personal Universe symbol may enter expensive research work.
 """
 from __future__ import annotations
 
+from contextlib import contextmanager
+from contextvars import ContextVar
+
 from app.api.v1.review.router import create_review_router
 from app.application_services.personal_universe.review_service import PersonalUniverseReviewService
 from app.domain.personal_universe import ReviewMode
 from app.infrastructure.database.personal_universe_repository import PersonalUniverseRepository
 from app.infrastructure.database.review_plan_repository import ReviewPlanRepository
+
+
+_explicit_review_request: ContextVar[bool] = ContextVar("pux2_explicit_review_request", default=False)
+
+
+@contextmanager
+def review_request_scope(*, explicit_user_request: bool):
+    """Propagate manual-review intent without replacing the scheduler entrypoint."""
+    token = _explicit_review_request.set(bool(explicit_user_request))
+    try:
+        yield
+    finally:
+        _explicit_review_request.reset(token)
 
 
 def install(m) -> None:
@@ -41,6 +57,7 @@ def install(m) -> None:
         return service.scheduler_plan(
             symbol,
             evaluated_at=m.beijing_now(),
+            explicit_user_request=_explicit_review_request.get(),
         )
 
     def refresh_paper_market_intelligence(symbols: list[str], names: dict[str, str]) -> None:
@@ -139,6 +156,7 @@ def install(m) -> None:
             return 0
         return int(original_prepare_decisions(permitted, *args, **kwargs) or 0)
 
+    m.review_scheduler_request_scope = review_request_scope
     m.refresh_paper_market_intelligence = refresh_paper_market_intelligence
     if callable(original_refresh_company):
         m.refresh_company_intelligence_focus = refresh_company_intelligence_focus
