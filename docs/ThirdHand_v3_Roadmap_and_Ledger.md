@@ -1233,3 +1233,33 @@ Paper Broker or Evaluation authority.
 - **Authority impact:** none. Formal Decision, StrategyProfile, ReviewPolicy,
   Evidence authority, Risk, sizing, ExecutionPrecheck, Paper Broker and
   Evaluation authority are unchanged.
+
+## Delivery update — 2026-08-28 — UIX3 Watchlist / Personal Universe density
+
+- **Issue / implementation:** #131 applies the compact UIX1 language to the
+  existing first-class Watchlist / Personal Universe surface without changing
+  its membership, review or trading contracts.
+- **Scan hierarchy:** the oversized coverage card is replaced by a compact summary
+  strip; `自选股 | 持仓股` remain sibling filters; each security row aligns latest
+  price and change into fixed right-side columns while keeping symbol, market,
+  quote freshness and server-owned review state visible below the name.
+- **Attention metadata:** position, CORE/FOCUS priority and paused states use
+  text-first compact tags. Review mode, next-review time, first governed reason
+  and user note remain visible but are collapsed into one-line scan metadata
+  rather than stacked card paragraphs. Android still performs no ReviewPolicy
+  calculation.
+- **Management:** add remains in the page header. Existing edit/remove flows are
+  preserved behind one 44dp row overflow target so dense numeric columns stay
+  aligned; position-only rows never gain Watchlist mutation actions.
+- **Routes / states:** held symbols still route to Holding Detail and Watchlist-only
+  symbols to Stock Detail. Loading, empty, compatibility-warning, transient error
+  and retry states remain explicit.
+- **Backend/API:** unchanged. `GET /v1/personal-universe` and existing Watchlist
+  mutation contracts remain authoritative; no decorative DTO field was added.
+- **Delivery status:** `ANDROID_IMPLEMENTED / CI_DEVICE_ACCEPTANCE_PENDING`.
+  Repository compile/unit/screenshot/Debug/Release/ci-gate and physical-device
+  density/readability plus add/edit/remove routing remain required before #131
+  can be `PRODUCT_DONE`.
+- **Authority impact:** none. Personal Universe remains an attention/read surface;
+  Formal Decision, StrategyProfile, ReviewPolicy authority, Evidence, Risk,
+  sizing, ExecutionPrecheck, Paper Broker and Evaluation are unchanged.
