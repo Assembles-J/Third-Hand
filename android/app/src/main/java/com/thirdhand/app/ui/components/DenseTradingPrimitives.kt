@@ -2,6 +2,7 @@ package com.thirdhand.app.ui.components
 
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
@@ -24,7 +25,7 @@ import androidx.compose.ui.unit.dp
 import com.thirdhand.app.ui.theme.AppSpacing
 import com.thirdhand.app.ui.theme.CompactTypography
 
-/** Compact page header for scan-heavy financial screens. */
+/** Compact brand header for scan-heavy financial screens. */
 @Composable
 fun DensePageHeader(
     title: String,
@@ -32,38 +33,66 @@ fun DensePageHeader(
     modifier: Modifier = Modifier,
     action: @Composable (() -> Unit)? = null,
 ) {
-    Column(
-        modifier = modifier
-            .fillMaxWidth()
-            .padding(horizontal = AppSpacing.contentHorizontal, vertical = AppSpacing.sectionVertical),
+    val colors = MaterialTheme.colorScheme
+    val typography = MaterialTheme.typography
+    val shapes = MaterialTheme.shapes
+
+    Surface(
+        modifier = modifier.fillMaxWidth(),
+        color = colors.primary,
+        contentColor = colors.onPrimary,
+        tonalElevation = 0.dp,
     ) {
-        Row(
-            modifier = Modifier.fillMaxWidth(),
-            verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.SpaceBetween,
+        Box(
+            modifier = Modifier
+                .fillMaxWidth()
+                .heightIn(min = if (subtitle.isNullOrBlank()) 52.dp else 58.dp)
+                .padding(horizontal = AppSpacing.small),
         ) {
-            Text(
-                text = title,
-                style = CompactTypography.pageTitle,
-                color = MaterialTheme.colorScheme.onSurface,
-                maxLines = 1,
-                overflow = TextOverflow.Ellipsis,
-                modifier = Modifier.weight(1f),
-            )
-            action?.let {
-                Spacer(Modifier.width(AppSpacing.small))
-                it()
+            Column(
+                modifier = Modifier
+                    .align(Alignment.Center)
+                    .padding(horizontal = 48.dp),
+                horizontalAlignment = Alignment.CenterHorizontally,
+            ) {
+                Text(
+                    text = title,
+                    style = CompactTypography.pageTitle,
+                    color = colors.onPrimary,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                    textAlign = TextAlign.Center,
+                )
+                if (!subtitle.isNullOrBlank()) {
+                    Text(
+                        text = subtitle,
+                        style = CompactTypography.caption,
+                        color = colors.onPrimary.copy(alpha = 0.78f),
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                        textAlign = TextAlign.Center,
+                        modifier = Modifier.padding(top = AppSpacing.xxs),
+                    )
+                }
             }
-        }
-        if (!subtitle.isNullOrBlank()) {
-            Text(
-                text = subtitle,
-                style = CompactTypography.secondary,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                maxLines = 2,
-                overflow = TextOverflow.Ellipsis,
-                modifier = Modifier.padding(top = AppSpacing.xs),
-            )
+
+            action?.let {
+                Box(
+                    modifier = Modifier.align(Alignment.CenterEnd),
+                    contentAlignment = Alignment.Center,
+                ) {
+                    // Some legacy callers explicitly tint their action with
+                    // MaterialTheme.primary. Remap that role locally so those
+                    // actions remain visible on the brand-red header.
+                    MaterialTheme(
+                        colorScheme = colors.copy(primary = colors.onPrimary),
+                        typography = typography,
+                        shapes = shapes,
+                    ) {
+                        it()
+                    }
+                }
+            }
         }
     }
 }

@@ -1557,3 +1557,38 @@ Paper Broker or Evaluation authority.
 - **Authority impact:** none. Formal Decision, StrategyProfile, ReviewPolicy,
   Evidence, Risk, sizing, ExecutionPrecheck, Paper Broker and Evaluation authority
   remain unchanged and server-owned.
+
+## Delivery update — 2026-08-29 — UIX8 primary securities chrome fidelity
+
+- **Reference reconciliation:** the supplied device screenshots still showed a
+  visible product-level gap even after the UIX0-UIX7 functional hierarchy landed.
+  UIX8 therefore tightens the shared Android shell rather than adding another
+  feature surface.
+- **Global financial chrome:** compact page headers now use a solid Third-Hand
+  brand-red bar with centered white title/subtitle and high-contrast actions. The
+  system status bar follows the same brand surface in light mode so top-level and
+  secondary securities pages no longer begin with a detached pale header region.
+- **Bottom navigation:** the canonical `首页 | 行情 | 组合 | 策略 | 自选` routes are
+  unchanged. Selection is reduced to compact red icon/text emphasis with no large
+  pale-red Material pill, preserving 44dp+ interaction targets while reducing
+  visual bulk.
+- **Portfolio / scan surfaces:** `组合` uses a white compact factual account summary
+  and aligned white holding rows over the cool-light canvas. Shared dense header
+  wiring also brings Strategy, Watchlist, Lab/Profile and compatible detail pages
+  into the same red/white product family without changing their data contracts.
+- **Visual acceptance:** representative 420x900 merge-ref renders were manually
+  reviewed before locking the updated screenshot manifest. Key SHA-256 values are
+  Strategy `0d2fefcc58eacda7745a75de6d9fc28e8257220cf3c27b4fef8cbfe2ef87dcea`,
+  Portfolio `41535655763b5500c4252771559a289303629f742b1d1b50650227a7cc5c8568`,
+  Watchlist `4b440e5a5bac5b354955bfcfdff3973e8584a605ffab92e7c21a1cc153c40120`,
+  while the accepted Home remains
+  `f8c89d57bfdd00c96d5b936806c300ad8084e4348dfd96a9e3bce12120771443`.
+- **Backend/API:** unchanged. No endpoint, DTO, provider, portfolio analytic,
+  review authority or execution contract is added in this visual pass.
+- **Delivery status:** `ANDROID_RENDER_REVIEWED / FINAL_ATOMIC_CI_DEVICE_ACCEPTANCE_PENDING`.
+  Final documentation-governance, unit/Kotlin, screenshot/hash, Debug/Release and
+  repository `ci-gate` must pass on the clean atomic head before merge; physical
+  device comparison remains the final visual acceptance gate.
+- **Authority impact:** none. Formal Decision, StrategyProfile, ReviewPolicy,
+  Evidence, Risk, sizing, ExecutionPrecheck, Paper Broker and Evaluation authority
+  remain unchanged and server-owned.

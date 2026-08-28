@@ -12,6 +12,7 @@ import com.thirdhand.app.ui.theme.DarkMarketColors
 import com.thirdhand.app.ui.theme.LightMarketColors
 import com.thirdhand.app.ui.theme.LocalMarketColors
 import com.thirdhand.app.ui.theme.ThirdHandShapes
+import com.thirdhand.app.ui.theme.ThirdHandSystemBars
 import com.thirdhand.app.ui.theme.ThirdHandTypography
 
 enum class ThemeMode(val label: String) {
@@ -94,6 +95,7 @@ fun ThirdHandTheme(mode: ThemeMode, content: @Composable () -> Unit) {
         ThemeMode.LIGHT -> false
         ThemeMode.DARK -> true
     }
+    ThirdHandSystemBars(dark)
     MaterialTheme(
         colorScheme = if (dark) DarkColors else LightColors,
         typography = ThirdHandTypography,
