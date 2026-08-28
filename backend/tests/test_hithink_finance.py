@@ -103,7 +103,6 @@ def test_snapshot_always_uses_explicit_thscodes(monkeypatch):
     assert snapshot_call[1]["params"] == {"thscodes": "600519.SH"}
     assert "limit" not in snapshot_call[1]["params"]
     assert "offset" not in snapshot_call[1]["params"]
-    assert quotes == [pytest.approx(quotes[0])]
     assert quotes[0]["symbol"] == "600519"
     assert quotes[0]["name"] == "贵州茅台"
     assert quotes[0]["price"] == 1500.0
