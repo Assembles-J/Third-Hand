@@ -1380,3 +1380,35 @@ Paper Broker or Evaluation authority.
 - **Delivery status:** `BACKEND_READY / CI_ACCEPTANCE_PENDING`. Repository CI is
   the acceptance gate; deployment/live behavior should be verified after merge
   without changing the Formal Decision/risk contract.
+
+## Delivery update — 2026-08-28 — UIX4 / 组合 reconciliation after UIX0
+
+- **Target-shell reconciliation:** UIX4 is wired under the accepted `组合`
+  destination in `首页 | 行情 | 组合 | 策略 | 自选`; it does not restore the former
+  `持仓` primary-shell baseline.
+- **Portfolio hierarchy:** `组合` uses the dedicated compact fact-first portfolio
+  surface with total assets, position market value, available cash and P/L summary,
+  followed by aligned holding rows for current price/freshness, quantity, cost,
+  market value, P/L, holding duration and portfolio weight where authoritative data
+  already exists.
+- **Holding Detail:** factual position value/P&L, quantity/cost/weight,
+  sellable/locked T+1 state, K-line and transaction history remain on the factual
+  route. Decision/AI stays behind the existing secondary Decision entry.
+- **Visual alignment:** this slice inherits the UIX0 red-first Material theme,
+  compact financial typography, restrained cards, thin dividers and aligned
+  numeric columns. It does not reintroduce the previous blue shell treatment.
+- **Routes / states:** `组合` -> Holding Detail remains the canonical held-symbol
+  route. Loading, empty, partial/stale and recoverable error states stay explicit;
+  missing market facts are not fabricated for layout.
+- **Screenshot coverage:** the representative brand-red Portfolio and Holding-fact
+  states are visually reviewed and hash-locked in the screenshot manifest.
+- **Backend/API:** unchanged. Existing holdings, available-cash, quote,
+  paper-account and sale-record contracts remain authoritative; no new portfolio
+  analytics endpoint or decorative DTO is introduced.
+- **Delivery status:** `ANDROID_RECONCILED / CI_DEVICE_ACCEPTANCE_PENDING`.
+  Repository unit/compile/screenshot/Debug/Release/documentation-governance/
+  ci-gate plus a physical-device `组合` -> Holding Detail readability walkthrough
+  remain required before #132 can be `PRODUCT_DONE`.
+- **Authority impact:** none. Formal Decision, StrategyProfile, ReviewPolicy,
+  Evidence, Risk, sizing, ExecutionPrecheck, Paper Broker and Evaluation authority
+  remain unchanged and server-owned.
