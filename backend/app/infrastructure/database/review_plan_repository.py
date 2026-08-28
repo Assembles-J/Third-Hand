@@ -1,6 +1,7 @@
 """Append-only SQLite persistence for governed ReviewPlan decisions."""
 from __future__ import annotations
 
+from datetime import datetime
 import hashlib
 import json
 
@@ -52,8 +53,6 @@ class ReviewPlanRepository:
             ).fetchone()
         if row is None:
             return None
-        from datetime import datetime
-
         return ReviewPlan(
             policy_version=str(row["policy_version"]),
             symbol=str(row["symbol"]),
@@ -66,3 +65,22 @@ class ReviewPlanRepository:
             routine_full_research_available=bool(row["routine_full_research_available"]),
             budget_override=bool(row["budget_override"]),
         )
+
+    def latest_mode_evaluated_at(self, symbol: str, mode: ReviewMode) -> datetime | None:
+        """Return the newest persisted permission time for one review mode.
+
+        A FULL_RESEARCH permission is conservatively counted against the same-day
+        routine budget even if later provider/model work fails. This prevents a
+        failed external dependency from becoming an automatic retry storm; a
+        material change or explicit user request remains an audited override.
+        """
+        with self.store._connect() as connection:
+            row = connection.execute(
+                "SELECT evaluated_at FROM review_plans "
+                "WHERE symbol=? AND review_mode=? "
+                "ORDER BY evaluated_at DESC, created_at DESC LIMIT 1",
+                (symbol.strip().upper(), mode.value),
+            ).fetchone()
+        if row is None or not row["evaluated_at"]:
+            return None
+        return datetime.fromisoformat(str(row["evaluated_at"]))
