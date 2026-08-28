@@ -120,7 +120,7 @@ Legend:
 | TH-TEST-001 stability ignored failed-run coverage | KEEP | benchmark harness coverage + stability |
 | TH-BENCH-002 frozen/hash/action exclusion | KEEP | existing DecisionPackage hashing is the base |
 | TH-BENCH-003 semantic/aggregation stability metrics | KEEP | Evaluation System foundation |
-| TH-METHOD-001 event neutral before disclosure | KEEP | EventRiskPolicy + DecisionArbiter |
+| TH-METHOD-001 event neutral before disclosure | KEEP | EventRiskPolicy |
 | TH-EVIDENCE-003 availability deterministic | KEEP | EvidenceSnapshot.availability |
 | TH-EVIDENCE-004 source mixes positive/negative facts | KEEP | AtomicFactRecord |
 | TH-EVIDENCE-005 polarity at fact level | KEEP | fact-level polarity |
@@ -825,13 +825,11 @@ Also preserve:
 - PENDING DecisionOutcomes are still derived rather than persisted, so N3.6 does
   not invent a pending count. The API returns `pending_decision_count = null` with
   reason `pending_outcomes_are_derived_not_materialized_n3_6`. Likewise N3.4/5
-  unavailable account-level return/drawdown/turnover, and N3.5 unavailable
-  account-level benchmark/excess remain null with their reason codes rather than
-  being rendered as zero. `/calibration` remains intentionally absent for N6.
-- **Delivery state:** `BACKEND_READY / API_VISIBLE`; Android Lab still pending.
-- **Authority impact:** none. Lab is read-only evaluation state and cannot write
-  Formal Action, StrategyProfile, Personal Watchlist/positions, Risk, sizing,
-  ExecutionPrecheck or Paper Broker.
+  unavailable account-level return/drawdown/benchmark-excess metrics remain null
+  with their existing reason codes rather than being presented as zero.
+- `/calibration` is intentionally absent; probability calibration remains N6.
+- N3.6 is now part of the accepted N3 product chain. The final N3.8 section below
+  records the main-base end-to-end acceptance evidence.
 
 ## Delivery update — 2026-08-20 — N3.7 Android Lab
 
@@ -884,7 +882,7 @@ Also preserve:
   closed episode keeps realized PnL, fees and slippage as separate facts.
 - **Metric integrity:** action/regime/horizon/execution breakdowns are reproducible;
   sample quality is explicit; benchmark identity and frozen constituent lineage are
-  visible. Account-level total return/max drawdown/turnover and portfolio benchmark
+  visible. Account-level total return/max_drawdown/turnover and portfolio benchmark
   excess remain unavailable with reason codes until real aligned equity curves
   exist; N3.8 does not fabricate them. `/v1/lab/calibration` remains absent for N6.
 - **Android evidence:** merged #89 already accepted Loading/Empty/Ready/Error,
