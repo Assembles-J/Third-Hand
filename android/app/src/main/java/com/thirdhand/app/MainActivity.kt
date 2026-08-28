@@ -140,32 +140,17 @@ private fun ThirdHandApp(resumeSignal: Int) {
         Scaffold(
             bottomBar = {
                 if (detailStock == null && holdingDetail == null && researchTarget == null && !profileOpen) {
-                    NavigationBar(
-                        containerColor = MaterialTheme.colorScheme.surface,
-                        tonalElevation = 0.dp,
-                    ) {
-                        listOf(
-                            Triple("首页", Icons.Filled.Home, 0),
-                            Triple("行情", Icons.Filled.AutoGraph, 1),
-                            Triple("组合", Icons.Filled.Wallet, 2),
-                            Triple("策略", Icons.Filled.AccountBalanceWallet, 3),
-                            Triple("自选", Icons.Filled.Bookmark, 4),
-                        ).forEach { (label, icon, targetTab) ->
-                            NavigationBarItem(
-                                selected = tab == targetTab,
-                                onClick = { tab = targetTab },
-                                icon = { Icon(icon, contentDescription = label) },
-                                label = { Text(label, style = MaterialTheme.typography.labelSmall) },
-                                colors = NavigationBarItemDefaults.colors(
-                                    selectedIconColor = Color(0xFFF52D3A),
-                                    selectedTextColor = Color(0xFFF52D3A),
-                                    indicatorColor = Color(0xFFFFE0E3),
-                                    unselectedIconColor = Color(0xFF667085),
-                                    unselectedTextColor = Color(0xFF667085),
-                                ),
-                            )
-                        }
-                    }
+                    CompactBottomNavigation(
+                        selectedTab = tab,
+                        items = listOf(
+                            CompactNavigationItem("首页", Icons.Filled.Home, 0),
+                            CompactNavigationItem("行情", Icons.Filled.AutoGraph, 1),
+                            CompactNavigationItem("组合", Icons.Filled.Wallet, 2),
+                            CompactNavigationItem("策略", Icons.Filled.AccountBalanceWallet, 3),
+                            CompactNavigationItem("自选", Icons.Filled.Bookmark, 4),
+                        ),
+                        onTabSelected = { tab = it },
+                    )
                 }
             },
         ) { padding ->

@@ -1,7 +1,10 @@
 package com.thirdhand.app.ui.components
 
+import androidx.compose.foundation.BorderStroke
+import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.ChevronRight
 import androidx.compose.material3.*
@@ -12,6 +15,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
 import com.thirdhand.app.HoldingDto
 import com.thirdhand.app.MarketQuoteDto
 import com.thirdhand.app.ui.theme.AppSpacing
@@ -19,7 +23,7 @@ import com.thirdhand.app.ui.theme.CompactTypography
 import com.thirdhand.app.ui.theme.marketColors
 import java.util.Locale
 
-/** Compact, fact-first portfolio summary for UIX4. */
+/** Compact, fact-first portfolio summary for UIX4/UIX8. */
 @Composable
 fun CompactPortfolioSummary(
     availableCash: Double,
@@ -36,48 +40,63 @@ fun CompactPortfolioSummary(
         else -> colors.neutral
     }
 
-    Column(
+    Surface(
         modifier = modifier
             .fillMaxWidth()
-            .padding(horizontal = AppSpacing.contentHorizontal, vertical = AppSpacing.rowVertical),
+            .padding(horizontal = AppSpacing.small, vertical = AppSpacing.small),
+        color = MaterialTheme.colorScheme.surface,
+        shape = RoundedCornerShape(8.dp),
+        border = BorderStroke(0.5.dp, MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.65f)),
+        tonalElevation = 0.dp,
     ) {
-        Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.Bottom) {
-            Column(Modifier.weight(1f)) {
-                Text(
-                    "总资产",
-                    style = CompactTypography.caption,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                )
-                Text(
-                    "¥${portfolioMoney(totalAssets)}",
-                    style = CompactTypography.pageTitle,
-                    fontWeight = FontWeight.SemiBold,
-                    color = MaterialTheme.colorScheme.onSurface,
-                )
+        Column(
+            modifier = Modifier.padding(
+                horizontal = AppSpacing.contentHorizontal,
+                vertical = AppSpacing.medium,
+            ),
+        ) {
+            Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.Bottom) {
+                Column(Modifier.weight(1f)) {
+                    Text(
+                        "总资产",
+                        style = CompactTypography.caption,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                    Text(
+                        "¥${portfolioMoney(totalAssets)}",
+                        style = CompactTypography.pageTitle.copy(fontSize = 21.sp, lineHeight = 26.sp),
+                        fontWeight = FontWeight.SemiBold,
+                        color = MaterialTheme.colorScheme.onSurface,
+                    )
+                }
+                Column(horizontalAlignment = Alignment.End) {
+                    Text(
+                        "总盈亏",
+                        style = CompactTypography.caption,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                    Text(
+                        "${if (totalPnl > 0) "+" else ""}¥${portfolioMoney(totalPnl)}",
+                        style = CompactTypography.rowValue,
+                        fontWeight = FontWeight.SemiBold,
+                        color = pnlColor,
+                    )
+                }
             }
-            Column(horizontalAlignment = Alignment.End) {
-                Text(
-                    "总盈亏",
-                    style = CompactTypography.caption,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                )
-                Text(
-                    "${if (totalPnl > 0) "+" else ""}¥${portfolioMoney(totalPnl)}",
-                    style = CompactTypography.rowValue,
-                    color = pnlColor,
-                )
+
+            HorizontalDivider(
+                modifier = Modifier.padding(vertical = AppSpacing.small),
+                thickness = 0.5.dp,
+                color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.55f),
+            )
+
+            Row(Modifier.fillMaxWidth()) {
+                SummaryFact("持仓市值", "¥${portfolioMoney(marketValue)}", Modifier.weight(1f))
+                SummaryFact("可用现金", "¥${portfolioMoney(availableCash)}", Modifier.weight(1f))
+                SummaryFact("持仓", "$holdingCount 只", Modifier.weight(0.72f), alignEnd = true)
             }
-        }
-
-        Spacer(Modifier.height(AppSpacing.small))
-
-        Row(Modifier.fillMaxWidth()) {
-            SummaryFact("持仓市值", "¥${portfolioMoney(marketValue)}", Modifier.weight(1f))
-            SummaryFact("可用现金", "¥${portfolioMoney(availableCash)}", Modifier.weight(1f))
-            SummaryFact("持仓", "$holdingCount 只", Modifier.weight(0.72f), alignEnd = true)
         }
     }
-    DenseRowDivider(inset = false)
 }
 
 @Composable
@@ -94,6 +113,8 @@ fun CompactHoldingsHeader(modifier: Modifier = Modifier) {
     Row(
         modifier = modifier
             .fillMaxWidth()
+            .padding(horizontal = AppSpacing.small)
+            .background(MaterialTheme.colorScheme.surface)
             .padding(horizontal = AppSpacing.rowHorizontal, vertical = AppSpacing.small),
         verticalAlignment = Alignment.CenterVertically,
     ) {
@@ -119,7 +140,7 @@ fun CompactHoldingsHeader(modifier: Modifier = Modifier) {
         )
         Spacer(Modifier.width(AppSpacing.xLarge))
     }
-    DenseRowDivider(inset = false)
+    DenseRowDivider(modifier = Modifier.padding(horizontal = AppSpacing.small), inset = false)
 }
 
 /**
@@ -154,6 +175,8 @@ fun CompactHoldingRow(
     Column(
         modifier = modifier
             .fillMaxWidth()
+            .padding(horizontal = AppSpacing.small)
+            .background(MaterialTheme.colorScheme.surface)
             .heightIn(min = AppSpacing.touchTarget)
             .clickable(onClick = onClick)
             .padding(horizontal = AppSpacing.rowHorizontal, vertical = AppSpacing.rowVertical),
@@ -220,7 +243,7 @@ fun CompactHoldingRow(
             modifier = Modifier.padding(end = AppSpacing.xLarge),
         )
     }
-    DenseRowDivider()
+    DenseRowDivider(modifier = Modifier.padding(horizontal = AppSpacing.small), inset = true)
 }
 
 private fun quoteStateLabel(state: String?): String = when (state) {

@@ -1,13 +1,11 @@
 package com.thirdhand.app
 
+import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
-import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
-import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.style.TextAlign
@@ -15,7 +13,7 @@ import androidx.compose.ui.unit.dp
 import com.thirdhand.app.ui.components.CompactHoldingRow
 import com.thirdhand.app.ui.components.CompactHoldingsHeader
 import com.thirdhand.app.ui.components.CompactPortfolioSummary
-import com.thirdhand.app.ui.components.TradingPageHeader
+import com.thirdhand.app.ui.components.SecuritiesPrimaryHeader
 import com.thirdhand.app.ui.theme.AppSpacing
 import com.thirdhand.app.ui.theme.CompactTypography
 import kotlinx.coroutines.launch
@@ -92,23 +90,17 @@ internal fun CompactPortfolioContent(
     onOpenDetail: (HoldingDto) -> Unit,
 ) {
     LazyColumn(
-        modifier = Modifier.fillMaxSize(),
+        modifier = Modifier
+            .fillMaxSize()
+            .background(MaterialTheme.colorScheme.background),
         contentPadding = PaddingValues(bottom = AppSpacing.xxLarge),
     ) {
         item {
-            TradingPageHeader("组合", "资产、成本与盈亏") {
-                IconButton(onClick = onRefresh, enabled = !loading) {
-                    if (loading) {
-                        CircularProgressIndicator(Modifier.size(AppSpacing.xLarge), strokeWidth = 2.dp)
-                    } else {
-                        Icon(
-                            Icons.Default.Refresh,
-                            contentDescription = "刷新组合",
-                            tint = MaterialTheme.colorScheme.primary,
-                        )
-                    }
-                }
-            }
+            SecuritiesPrimaryHeader(
+                title = "组合",
+                refreshing = loading,
+                onRefresh = onRefresh,
+            )
         }
 
         item {
@@ -128,6 +120,20 @@ internal fun CompactPortfolioContent(
             } else if (holdings.isNotEmpty() && quotes.values.any { it.display_freshness !in setOf("live", "session_close") }) {
                 item { CompactPortfolioStatus("部分行情正在刷新或存在延迟，请结合行内状态查看。", isError = false) }
             }
+        }
+
+        item {
+            Text(
+                text = "持仓明细",
+                modifier = Modifier.padding(
+                    start = AppSpacing.contentHorizontal,
+                    end = AppSpacing.contentHorizontal,
+                    top = AppSpacing.small,
+                    bottom = AppSpacing.xs,
+                ),
+                style = CompactTypography.sectionTitle,
+                color = MaterialTheme.colorScheme.onSurface,
+            )
         }
 
         item { CompactHoldingsHeader() }
