@@ -882,7 +882,7 @@ Also preserve:
   closed episode keeps realized PnL, fees and slippage as separate facts.
 - **Metric integrity:** action/regime/horizon/execution breakdowns are reproducible;
   sample quality is explicit; benchmark identity and frozen constituent lineage are
-  visible. Account-level total return/max_drawdown/turnover and portfolio benchmark
+  visible. Account-level total return/max drawdown/turnover and portfolio benchmark
   excess remain unavailable with reason codes until real aligned equity curves
   exist; N3.8 does not fabricate them. `/v1/lab/calibration` remains absent for N6.
 - **Android evidence:** merged #89 already accepted Loading/Empty/Ready/Error,
