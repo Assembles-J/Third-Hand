@@ -208,7 +208,7 @@ private fun ThirdHandApp(resumeSignal: Int) {
                         when (activeTab) {
                             0 -> HomeScreen()
                             1 -> MarketScreen(onOpenDetail = { detailStock = it })
-                            2 -> HoldingsScreen(onOpenDetail = {
+                            2 -> CompactHoldingsScreen(onOpenDetail = {
                                 holdingDetail = ResearchTargetDto(it.symbol, it.name, "active_holding", it.created_at)
                             })
                             3 -> PaperTradingScreen(onOpenDetail = { detailStock = it })
