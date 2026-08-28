@@ -1346,3 +1346,37 @@ Paper Broker or Evaluation authority.
 - **Authority impact:** none. Formal Decision, StrategyProfile, ReviewPolicy,
   Evidence, Risk, sizing, ExecutionPrecheck, Paper Broker and Evaluation remain
   unchanged and server-owned.
+
+## Delivery update — 2026-08-28 — frozen-decision execution polling
+
+- **Root cause / behavior:** market quotes already refresh about once per minute,
+  while adaptive full research/decision cycles run at 5–10 minute review
+  intervals. Because historical execution was nested inside the full cycle, a
+  valid frozen BUY/ADD/REDUCE/EXIT could wait several minutes after a strictly
+  later eligible quote existed.
+- **Pending queue:** current-version WAIT/HOLD/BLOCKED reports no longer count as
+  execution obligations. Only formal actions with a BUY/SELL execution side
+  remain pending.
+- **Execution cadence:** a 30–60 second execution-only poll checks those frozen
+  obligations between full reviews, using only the local quote cache already
+  refreshed by the market worker. It does not invoke providers, Company
+  Intelligence, DeepSeek/LLM, candidate selection or new decision generation,
+  and it does not advance the full analysis clock.
+- **Safety / authority:** every fill still runs through existing
+  session/calendar, quote freshness, strictly-later-quote, cooldown, action gate,
+  sizing, lot/T+1, sellability and idempotency checks. `paper_trading_enabled`
+  still gates automatic simulated fills. No ActionPolicy threshold, candidate
+  policy, AI authority or real-broker boundary changes.
+- **Deployment configuration:** Compose now forwards
+  `HITHINK_FINANCE_ENABLED` and `HITHINK_FINANCE_API_KEY` into the API container
+  so an operator-enabled optional acquisition provider is actually visible at
+  runtime; provider availability does not grant execution authority.
+- **Tests:** pending filtering and execution-only cadence are covered, including
+  the invariant that a due full analysis review wins over the shortcut and the
+  execution poll leaves `last_paper_trading_run_at` unchanged.
+- **Android:** unchanged. Existing simulated-account auto-execution controls
+  remain the user-facing switch; no broker UI or new execution action is
+  introduced.
+- **Delivery status:** `BACKEND_READY / CI_ACCEPTANCE_PENDING`. Repository CI is
+  the acceptance gate; deployment/live behavior should be verified after merge
+  without changing the Formal Decision/risk contract.

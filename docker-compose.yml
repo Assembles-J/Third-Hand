@@ -3,8 +3,8 @@ services:
     build:
       context: ./backend
       args:
-        PIP_INDEX_URL: "${PIP_INDEX_URL:-https://pypi.tuna.tsinghua.edu.cn/simple}"
-        PIP_TRUSTED_HOST: "${PIP_TRUSTED_HOST:-pypi.tuna.tsinghua.edu.cn}"
+        PIP_INDEX_URL: "${PIP_INDEX_URL:-https://pypi.org/simple}"
+        PIP_TRUSTED_HOST: "${PIP_TRUSTED_HOST:-pypi.org}"
     image: third-hand-api:latest
     restart: unless-stopped
     environment:
@@ -18,6 +18,8 @@ services:
       MARKET_REFRESH_INTERVAL_SECONDS: ${MARKET_REFRESH_INTERVAL_SECONDS:-60}
       THIRD_HAND_LOG_LEVEL: ${THIRD_HAND_LOG_LEVEL:-INFO}
       TUSHARE_TOKEN: ${TUSHARE_TOKEN:-}
+      HITHINK_FINANCE_ENABLED: ${HITHINK_FINANCE_ENABLED:-false}
+      HITHINK_FINANCE_API_KEY: ${HITHINK_FINANCE_API_KEY:-}
       DEEPSEEK_API_KEY: ${DEEPSEEK_API_KEY:-}
       # 决策报告链：仅研究和纸面复核；无论开关如何均不会自动下单。
       DECISION_SHADOW_MODE: ${DECISION_SHADOW_MODE:-true}

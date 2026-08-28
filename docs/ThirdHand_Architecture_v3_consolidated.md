@@ -965,3 +965,43 @@ also be user-configurable when the Discovery slice ships.
 The detailed API, Android information architecture and dense trading-utility UI
 contract are defined in
 `ThirdHand_v3_Personal_Universe_Review_Watchlist_UX_Design.md`.
+
+## 17. Frozen-decision execution polling
+
+Analysis cadence and paper-fill cadence are separate responsibilities. The
+adaptive review scheduler may continue to run full research and formal decision
+generation on its existing multi-minute cadence, but an already-frozen executable
+formal decision must not wait for another research cycle once a strictly later
+eligible quote is already present in the governed local cache.
+
+The runtime contract is:
+
+1. Only current-version formal decisions with an actual execution side remain in
+   the pending execution queue: `BUY`/`ADD` map to BUY and `REDUCE`/`EXIT` map to
+   SELL. `WAIT`, `HOLD` and `BLOCKED` are decision states, not execution
+   obligations.
+2. Between full adaptive reviews, an execution-only poll may run at the market
+   refresh cadence bounded to 30-60 seconds. It consumes only cached quotes that
+   the market worker has already refreshed; it performs no provider research,
+   Company Intelligence, LLM call, candidate selection or new decision
+   generation.
+3. The poll delegates every fill attempt to the existing governed execution path.
+   Market session/calendar, quote freshness, quote strictly later than the
+   decision input, cooldown, action gate, sizing, lot/T+1, sellability and
+   idempotency checks remain mandatory and unchanged.
+4. An execution-only poll must not advance `last_paper_trading_run_at` or otherwise
+   make a later full analysis review appear satisfied. Its simulation run is
+   explicitly execution-scoped and remains auditable.
+5. `paper_trading_enabled` continues to gate automatic simulated-account fills.
+   This polling contract does not connect a broker, submit a real order or give an
+   LLM direct ledger/fill authority.
+
+Deployment configuration must pass optional acquisition-provider enablement and
+credentials into the API container when the operator has configured them. This
+wiring may improve data redundancy, but it does not alter the authority contract
+above or make provider availability a substitute for execution prechecks.
+
+Acceptance requires deterministic coverage that non-executable formal states do
+not keep the pending queue alive, a pending frozen decision can be checked between
+full reviews without advancing the analysis clock, and a due full review always
+retains precedence over the execution-only shortcut.

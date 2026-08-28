@@ -6,6 +6,7 @@ from app.candidate_selection import select_candidates
 from app.paper_runtime import (
     due_current_version_review_symbols,
     latest_current_version_decision_report,
+    pending_current_version_decision_symbols,
     report_matches_current_selection,
     runtime_scope,
 )
@@ -104,6 +105,34 @@ def test_due_review_queue_uses_only_latest_current_formal_report(tmp_path):
         policy_version="policy-v2",
         now=datetime.fromisoformat("2026-08-18T10:00:00+08:00"),
     ) == ("600002",)
+
+
+def test_pending_queue_contains_only_actions_with_execution_side(tmp_path):
+    from app.storage import PortfolioStore
+
+    store = PortfolioStore(tmp_path / "runtime-pending.db")
+    base = {
+        "policy_version": "policy-v2",
+        "candidate_selection_version": config.CANDIDATE_SELECTION_VERSION,
+        "audit_versions": _execution_audit(),
+        "evidence": [], "action_candidates": [], "operation_items": [],
+    }
+    reports = [
+        ("buy", "600001", {**base, "formal_action": "BUY", "generated_at": "2026-08-18T09:30:00+08:00"}),
+        ("add", "600002", {**base, "formal_action": "ADD", "generated_at": "2026-08-18T09:31:00+08:00"}),
+        ("hold", "600003", {**base, "formal_action": "HOLD", "generated_at": "2026-08-18T09:32:00+08:00"}),
+        ("blocked", "600004", {**base, "formal_action": "BLOCKED", "generated_at": "2026-08-18T09:33:00+08:00"}),
+    ]
+    with store._connect() as connection:
+        connection.executemany(
+            "INSERT INTO decision_reports VALUES (?,?,?,?,?,?)",
+            [
+                (decision_id, "ctx", symbol, "hash", json.dumps(payload), payload["generated_at"])
+                for decision_id, symbol, payload in reports
+            ],
+        )
+
+    assert pending_current_version_decision_symbols(store, policy_version="policy-v2") == ("600001", "600002")
 
 
 def test_report_reuse_requires_same_candidate_policy_and_execution_lineage():

@@ -20,7 +20,9 @@ def load_legacy_application() -> ModuleType:
     and daily-history providers before the legacy singletons are constructed, so
     disabled/unconfigured deployments preserve the existing provider behavior.
     Paper runtime governance then patches that exact module object. Adaptive
-    scheduling narrows cadence/scope without changing policy authority.
+    scheduling narrows cadence/scope without changing policy authority. A bounded
+    execution-only poll may consume a later eligible cached quote between full
+    reviews without regenerating decisions or invoking research providers.
     Session-aware data scheduling narrows when provider-backed refreshes may run.
     Corporate-event policy wraps the already-local-first derived refresh; the
     HKEX Tier-1 fetcher is then registered on that bounded acquisition service.
@@ -49,6 +51,7 @@ def load_legacy_application() -> ModuleType:
     from app.legacy import application_legacy as application
     from app.paper_runtime_integration import install as install_paper_runtime_governance
     from app.adaptive_paper_runtime import install as install_adaptive_paper_runtime
+    from app.paper_execution_poll_runtime import install as install_paper_execution_poll_runtime
     from app.data_scheduling_policy import install as install_data_scheduling_policy
     from app.corporate_events import install as install_corporate_event_policy
     from app.hkex_corporate_event_runtime import install as install_hkex_corporate_event_runtime
@@ -60,6 +63,7 @@ def load_legacy_application() -> ModuleType:
 
     install_paper_runtime_governance(application)
     install_adaptive_paper_runtime(application)
+    install_paper_execution_poll_runtime(application)
     install_data_scheduling_policy(application)
     install_corporate_event_policy(application)
     install_hkex_corporate_event_runtime(application)
