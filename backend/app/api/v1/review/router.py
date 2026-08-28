@@ -45,5 +45,5 @@ def _response(plan: ReviewPlan) -> ReviewPlanResponse:
         next_review_at=plan.next_review_at,
         routine_full_research_available=plan.routine_full_research_available,
         budget_override=plan.budget_override,
-        ai_call_allowed=plan.mode is ReviewMode.FULL_RESEARCH,
+        ai_call_allowed=plan.mode in {ReviewMode.POSITION_REVIEW, ReviewMode.FULL_RESEARCH},
     )
