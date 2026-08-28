@@ -222,6 +222,7 @@ jobs:
           host: ${{ secrets.SERVER_IP }}
           username: ${{ secrets.SERVER_USER }}
           key: ${{ secrets.SERVER_SSH_KEY }}
+          command_timeout: 20m
           envs: TUSHARE_TOKEN,DEEPSEEK_API_KEY,HITHINK_FINANCE_API_KEY,APP_PUBLIC_BASE_URL,APP_UPDATE_PUBLIC_BASE_URL,VERSION_CODE,VERSION_NAME,APK_FILE,BACKEND_CHANGED,RELEASE_ANDROID,DEPLOY_SHA,CHANGELOG
           script: |
             set -eu
