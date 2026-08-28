@@ -1380,3 +1380,37 @@ Paper Broker or Evaluation authority.
 - **Delivery status:** `BACKEND_READY / CI_ACCEPTANCE_PENDING`. Repository CI is
   the acceptance gate; deployment/live behavior should be verified after merge
   without changing the Formal Decision/risk contract.
+
+## Delivery update — 2026-08-28 — UIX4 Portfolio rebased onto UIX0 shell
+
+- **Issue / implementation:** #132 resumes on the accepted UIX0 shell after
+  #143/#144. Draft PR #139 remains historical source material only; this slice
+  rebases the compact portfolio surface onto current `main` without restoring the
+  obsolete pre-UIX0 shell or legacy-blue Material palette.
+- **Portfolio hierarchy:** the primary `组合` destination now routes to a dedicated
+  fact-first portfolio surface. One compact summary keeps existing account/holding
+  facts above aligned security rows instead of the older stacked cash/summary/card
+  presentation.
+- **Row facts:** each holding preserves existing name/symbol, quote freshness,
+  holding days, current price, average cost, quantity, market value, P/L amount
+  and percentage, and position weight where the existing data path supplies it.
+- **Routes / states:** `组合 -> Holding Detail` remains the canonical held-symbol
+  route. Loading, empty, missing-quote, stale/refreshing and recoverable-error
+  states remain explicit; no Decision/AI authority is moved onto the portfolio
+  list.
+- **Currency boundary:** this slice introduces no FX conversion or new valuation
+  authority. Per-holding values continue to use their quote currency and the
+  existing account/portfolio display semantics are preserved for compatibility;
+  multi-currency normalization remains outside this UI-only rebase.
+- **Backend/API:** unchanged. Existing holdings, available-cash and market-quote
+  contracts remain authoritative.
+- **Scope:** Holding Detail densification from stale #139 is intentionally left for
+  a separate follow-up after this list-level rebase passes current-shell CI. This
+  keeps conflict resolution small and prevents a stale branch from reverting the
+  accepted UIX0 shell/theme.
+- **Delivery status:** `ANDROID_PORTFOLIO_REBASED / CI_DEVICE_ACCEPTANCE_PENDING`.
+  Repository compile/unit/screenshot/Debug/Release/ci-gate and physical-device
+  comparison remain required before #132 can be `PRODUCT_DONE`.
+- **Authority impact:** none. Formal Decision, StrategyProfile, ReviewPolicy,
+  Evidence, Risk, sizing, ExecutionPrecheck, Paper Broker and Evaluation remain
+  unchanged and server-owned.
