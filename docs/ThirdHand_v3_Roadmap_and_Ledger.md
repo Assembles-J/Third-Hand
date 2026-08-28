@@ -1079,3 +1079,50 @@ Paper Broker or Evaluation authority.
 - **Authority impact:** none. This changes acquisition redundancy only and does
   not modify Formal Action, StrategyProfile, Evidence authority, Risk, sizing,
   ExecutionPrecheck, Paper Broker or Evaluation authority.
+
+## Delivery update — 2026-08-28 — PUX2.3 scheduler research governance
+
+- **Scheduler consumption:** the existing adaptive paper scheduler now consults
+  the server-owned `PUX2_REVIEW_V1` ReviewPlan before expensive Personal Universe
+  research. A scheduler wake-up alone no longer grants a new research run.
+- **Stable-position behavior:** `NO_REVIEW` and `GUARD_ONLY` symbols remain in
+  the existing quote/daily/risk acquisition and paper-execution obligation path,
+  but routine news research, Company Intelligence and fresh Decision/AI report
+  generation are skipped. This keeps cheap safety/currentness work alive without
+  repeating DeepSeek work simply because the scheduler is awake.
+- **Bounded review depth:** `POSITION_REVIEW` may enter the existing bounded
+  Decision/AI path against cached/governed evidence but does not rebuild slow
+  Company Intelligence. `FULL_RESEARCH` permits both the existing Decision/AI
+  path and Company Intelligence. PUX2 does not change candidate membership or
+  any Formal Action/Risk/Sizing/Execution authority.
+- **Budget/persistence:** routine `FULL_RESEARCH` permission remains at most once
+  per symbol per Beijing-local day. ReviewPlan persistence now deduplicates
+  semantically unchanged scheduler ticks, and a persisted full-research
+  permission is conservatively counted even when a downstream provider/model
+  fails so dependency failure cannot create an automatic retry storm.
+- **Explicit user request:** added local-only `GET /v1/review-plan/{symbol}` and
+  `POST /v1/review-plan/{symbol}/request`. The POST persists an audited
+  `explicit_user_request` override for an active Portfolio/Watchlist symbol; it
+  does not inject formal candidate membership, call the model synchronously or
+  execute a paper trade. Existing manual `force=true` cycles are treated as an
+  explicit review permission while retaining all old scope/execution gates.
+- **Material change handoff:** a newly persisted formal Decision whose
+  `DecisionMemory.material_change` is newer than the last ReviewPlan upgrades the
+  next scheduler review deterministically. Once a newer review/decision consumes
+  it, ordinary stable-position behavior returns to the governed cadence.
+- **Compatibility:** ReviewPolicy applies only to active Personal Universe
+  symbols. Non-Personal formal candidate behavior is intentionally unchanged;
+  PUX3/#94 still owns Discovery/candidate demotion rather than receiving a hidden
+  behavior change in this slice.
+- **Tests:** deterministic coverage protects stable-position GUARD_ONLY
+  deduplication, once-per-day Watchlist full-research budget, persisted explicit
+  request lineage, one-shot MaterialChange upgrade, scheduler filtering of
+  news/Company/Decision research and force-cycle explicit permission.
+- **Delivery state:** `SCHEDULER_GOVERNED / CI_DEVICE_ACCEPTANCE_PENDING` for
+  #93. Existing Android Watchlist ReviewPlan labels remain the visible surface;
+  repository CI and physical-device validation remain required. A dedicated
+  typed hard-guard transition adapter/metric can be added separately without
+  reopening routine full-research permission.
+- **Authority impact:** none. Formal candidate selection, Decision authority,
+  StrategyProfile, Evidence authority, Risk, sizing, ExecutionPrecheck, Paper
+  Broker and Evaluation remain unchanged.
