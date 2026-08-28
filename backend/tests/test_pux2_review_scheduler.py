@@ -172,9 +172,10 @@ class FakeReviewService:
     def __init__(self, plans):
         self.plans = plans
         self.recorded = []
+        self.explicit_flags = []
 
     def scheduler_plan(self, symbol, *, evaluated_at, explicit_user_request=False):
-        assert explicit_user_request is False
+        self.explicit_flags.append(bool(explicit_user_request))
         return self.plans.get(symbol)
 
     def record(self, plan):
@@ -254,10 +255,11 @@ def test_runtime_filters_guard_only_from_news_company_and_decision_research():
         {"run_id": "run-1", "names": {}, "selection": "opaque-selection"},
     )]
     assert service.recorded == ["600519", "000001", "000002"]
+    assert service.explicit_flags and not any(service.explicit_flags)
 
 
-def test_install_preserves_public_run_cycle_owner_and_contract():
-    service = FakeReviewService({})
+def test_explicit_review_scope_propagates_without_replacing_public_run_cycle():
+    service = FakeReviewService({"600519": _plan("600519", ReviewMode.FULL_RESEARCH)})
     original_cycle = lambda requested_symbols, force=False, allow_when_disabled=False: {
         "requested": list(requested_symbols),
         "force": force,
@@ -271,13 +273,16 @@ def test_install_preserves_public_run_cycle_owner_and_contract():
         _record_simulation_stage=lambda *args, **kwargs: None,
         refresh_paper_market_intelligence=lambda _symbols, _names: None,
         refresh_company_intelligence_focus=lambda _symbols, *, research_priority, run_id=None: 0,
-        prepare_paper_decisions=lambda _symbols, *args, **kwargs: 0,
+        prepare_paper_decisions=lambda _symbols, *args, **kwargs: 1,
         run_paper_trading_cycle=original_cycle,
     )
 
     install(module)
 
     assert module.run_paper_trading_cycle is original_cycle
+    with module.review_scheduler_request_scope(explicit_user_request=True):
+        assert module.prepare_paper_decisions(["600519"], run_id="run-force", names={}) == 1
+    assert service.explicit_flags[-1] is True
     assert module.run_paper_trading_cycle(["600519"], force=True, allow_when_disabled=True) == {
         "requested": ["600519"],
         "force": True,
