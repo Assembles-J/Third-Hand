@@ -1263,3 +1263,38 @@ Paper Broker or Evaluation authority.
 - **Authority impact:** none. Personal Universe remains an attention/read surface;
   Formal Decision, StrategyProfile, ReviewPolicy authority, Evidence, Risk,
   sizing, ExecutionPrecheck, Paper Broker and Evaluation are unchanged.
+
+## Product UI baseline reset — 2026-08-28 — UIX0 target shell (#140)
+
+- **Approved target shell:** `首页 | 行情 | 组合 | 策略 | 自选` is now the canonical
+  Android navigation target. Earlier UIX1-UIX6 delivery notes that preserved
+  `资讯 | 行情 | 持仓 | 交易 | 自选` remain implementation history only and no longer
+  define visual or information-architecture acceptance.
+- **Capability mapping:** Home composes only existing attention/portfolio/review/
+  research facts with explicit partial states; Market retains current market/search/
+  detail capability; `组合` owns current Holdings/Position Detail facts; `策略`
+  organizes current simulated-account execution plus Decision/review/research
+  surfaces; `自选` retains Personal Universe/Watchlist capability.
+- **Visual contract:** Third-Hand brand red is the primary shell/action role over a
+  white/cool-light canvas. Compact Chinese securities density, restrained cards,
+  thin dividers, aligned financial values and red-up/green-down market semantics
+  are acceptance requirements. Screenshot hashes remain regression protection;
+  visual acceptance additionally compares the rendered app against the approved
+  reference direction at normal phone scale.
+- **Reconciliation:** #129-#134 remain useful implementation history but must be
+  reconciled against UIX0. In particular, #132 targets `组合`, #133 targets the
+  `策略` simulated-execution/decision surface, and PR #139 remains draft until
+  this baseline lands and its factual portfolio work is rebuilt/rebased on the
+  new target shell.
+- **Safety boundary:** target-reference AI trade/order concepts do not create
+  broker authority. No real-broker ticket, transfer, cancel-order or execution
+  control is authorized; current automated/manual controls remain simulated-account
+  operations governed by existing Paper Broker safety contracts.
+- **Backend/API:** unchanged. This baseline changes product-shell and visual
+  governance only and does not introduce a new DTO, provider or persistence path.
+- **Delivery status:** `DESIGN_BASELINE_READY / IMPLEMENTATION_RECONCILIATION_PENDING`.
+  Documentation governance/CI must pass before runtime shell implementation and
+  screen reconciliation resume.
+- **Authority impact:** none. Formal Decision, StrategyProfile, ReviewPolicy,
+  Evidence, Risk, sizing, ExecutionPrecheck, Paper Broker and Evaluation authority
+  remain unchanged and server-owned.
