@@ -208,6 +208,7 @@ jobs:
         env:
           TUSHARE_TOKEN: ${{ secrets.TUSHARE_TOKEN }}
           DEEPSEEK_API_KEY: ${{ secrets.DEEPSEEK_API_KEY }}
+          HITHINK_FINANCE_API_KEY: ${{ secrets.HITHINK_FINANCE_API_KEY }}
           APP_PUBLIC_BASE_URL: ${{ env.APP_PUBLIC_BASE_URL }}
           APP_UPDATE_PUBLIC_BASE_URL: ${{ env.APP_UPDATE_PUBLIC_BASE_URL }}
           VERSION_CODE: ${{ env.VERSION_CODE }}
@@ -221,7 +222,7 @@ jobs:
           host: ${{ secrets.SERVER_IP }}
           username: ${{ secrets.SERVER_USER }}
           key: ${{ secrets.SERVER_SSH_KEY }}
-          envs: TUSHARE_TOKEN,DEEPSEEK_API_KEY,APP_PUBLIC_BASE_URL,APP_UPDATE_PUBLIC_BASE_URL,VERSION_CODE,VERSION_NAME,APK_FILE,BACKEND_CHANGED,RELEASE_ANDROID,DEPLOY_SHA,CHANGELOG
+          envs: TUSHARE_TOKEN,DEEPSEEK_API_KEY,HITHINK_FINANCE_API_KEY,APP_PUBLIC_BASE_URL,APP_UPDATE_PUBLIC_BASE_URL,VERSION_CODE,VERSION_NAME,APK_FILE,BACKEND_CHANGED,RELEASE_ANDROID,DEPLOY_SHA,CHANGELOG
           script: |
             set -eu
             cd /opt/third-hand
@@ -240,6 +241,14 @@ jobs:
             update_env THIRD_HAND_MARKET_PROVIDER auto
             update_env TUSHARE_TOKEN "$TUSHARE_TOKEN"
             update_env DEEPSEEK_API_KEY "$DEEPSEEK_API_KEY"
+            update_env HITHINK_FINANCE_API_KEY "$HITHINK_FINANCE_API_KEY"
+            if [ -n "$HITHINK_FINANCE_API_KEY" ]; then
+              update_env HITHINK_FINANCE_ENABLED true
+              echo "HiThink Financial API: enabled (key configured)."
+            else
+              update_env HITHINK_FINANCE_ENABLED false
+              echo "HiThink Financial API: disabled (HITHINK_FINANCE_API_KEY secret is empty)."
+            fi
             # 阶段 1–7 已上线：保留 shadow 研究模式，启用确定性仓位测算和受约束的 AI 证据权衡。
             # 三者均不连接券商，也不会自动下单。
             update_env DECISION_SHADOW_MODE true
@@ -313,6 +322,7 @@ jobs:
               exit 1
             fi
             $compose_cmd exec -T api python -c 'import os; print("runtime_config decision_ai=%s research_chat=%s research_sse=%s tool_calling=%s key_configured=%s model=%s reasoning_model=%s" % (os.getenv("DECISION_AI_ENABLED"), os.getenv("RESEARCH_CHAT_ENABLED"), os.getenv("RESEARCH_CHAT_SSE_ENABLED"), os.getenv("RESEARCH_CHAT_TOOL_CALLING_ENABLED"), bool(os.getenv("DEEPSEEK_API_KEY", "").strip()), os.getenv("DEEPSEEK_MODEL"), os.getenv("DEEPSEEK_REASONING_MODEL")))'
+            $compose_cmd exec -T api python -c 'import os; print("hithink_config enabled=%s key_configured=%s" % (os.getenv("HITHINK_FINANCE_ENABLED"), bool(os.getenv("HITHINK_FINANCE_API_KEY", "").strip())))'
             curl -fsS "http://127.0.0.1:${API_PORT:-8000}/v1/system/ai-capabilities"
             curl -fsS "http://127.0.0.1:${API_PORT:-8000}/v1/app-update"
             curl -fsS "http://127.0.0.1:${API_PORT:-8000}/v1/research-chat/sessions" >/dev/null
