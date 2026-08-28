@@ -1152,9 +1152,9 @@ Paper Broker or Evaluation authority.
   StrategyProfile, Evidence authority, Risk, sizing, ExecutionPrecheck, Paper
   Broker and Evaluation remain unchanged.
 
-## Delivery update — 2026-08-28 — AI simulation trading control recovery
+## Delivery update — 2026-08-28 — simulated-account auto-execution control recovery
 
-- **Android entry:** Bottom navigation -> Trading now keeps an `AI 模拟交易`
+- **Android entry:** Bottom navigation -> Trading now keeps a `模拟账户自动执行`
   switch visible inside the execution-control panel even when automatic paper
   trading is paused. The user can explicitly resume or pause the existing
   simulated-account scheduler instead of reaching a dead-end `已暂停` state.
@@ -1171,8 +1171,8 @@ Paper Broker or Evaluation authority.
   it does not give an LLM direct ledger or fill authority. The UI explicitly
   states that no real broker order is submitted.
 - **Backend:** unchanged. The persisted paper-trading setting and Paper Broker
-  safety contracts already exist; this slice restores their missing Android
-  control surface only.
+  safety contracts already exist; this slice restores their Android control
+  surface and gives it an authority-accurate product label.
 - **Accepted:** repository CI and a physical-device off -> on -> manual run -> off
   walkthrough remain required before this recovery is device-accepted.
 - **Delivery status:** `ANDROID_READY / CI_DEVICE_ACCEPTANCE_PENDING`.

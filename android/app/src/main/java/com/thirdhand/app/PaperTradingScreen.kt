@@ -166,11 +166,11 @@ fun PaperTradingScreen(onOpenDetail: (ResearchTargetDto) -> Unit) {
                                 }
                                 if (result.isSuccess) {
                                     snackbarHostState.showSnackbar(
-                                        if (enabled) "AI 模拟交易已开启" else "AI 模拟交易已暂停"
+                                        if (enabled) "模拟账户自动执行已开启" else "模拟账户自动执行已暂停"
                                     )
                                     refresh()
                                 } else {
-                                    snackbarHostState.showSnackbar("切换 AI 模拟交易失败，请稍后重试")
+                                    snackbarHostState.showSnackbar("切换模拟账户自动执行失败，请稍后重试")
                                 }
                                 changingTradingEnabled = false
                             }
@@ -312,7 +312,7 @@ private fun ExecutionControlPanel(
                 Icon(Icons.Default.Terminal, null, modifier = Modifier.size(20.dp), tint = MaterialTheme.colorScheme.primary)
                 Spacer(Modifier.width(AppSpacing.medium))
                 Column(Modifier.weight(1f)) {
-                    Text("AI 模拟交易", style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.Bold)
+                    Text("模拟账户自动执行", style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.Bold)
                     Text(
                         when {
                             status == null -> "正在读取自动交易状态…"
@@ -354,7 +354,7 @@ private fun ExecutionControlPanel(
                 Text(
                     when {
                         running || status?.running == true -> "正在运行模拟决策..."
-                        !enabled -> "请先开启 AI 模拟交易"
+                        !enabled -> "请先开启模拟账户自动执行"
                         else -> "立即运行决策轮换"
                     }
                 )
