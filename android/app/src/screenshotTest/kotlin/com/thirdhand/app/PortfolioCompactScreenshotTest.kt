@@ -9,6 +9,7 @@ import com.android.tools.screenshot.PreviewTest
 @Preview(name = "Portfolio compact - ready", showBackground = true, widthDp = 390)
 @Composable
 fun PortfolioCompactReadyScreenshotTest() {
+    // Future fixture dates keep date-derived holding-day labels deterministic.
     val holdings = listOf(
         HoldingDto(
             id = "h1",
@@ -16,7 +17,7 @@ fun PortfolioCompactReadyScreenshotTest() {
             name = "长江电力",
             quantity = 1200.0,
             average_cost = 26.18,
-            created_at = "2026-08-01T09:30:00+08:00",
+            created_at = "2099-08-01T09:30:00+08:00",
         ),
         HoldingDto(
             id = "h2",
@@ -24,7 +25,7 @@ fun PortfolioCompactReadyScreenshotTest() {
             name = "比亚迪",
             quantity = 300.0,
             average_cost = 110.20,
-            created_at = "2026-08-18T10:00:00+08:00",
+            created_at = "2099-08-18T10:00:00+08:00",
         ),
     )
     val quotes = mapOf(
@@ -71,13 +72,14 @@ fun PortfolioCompactReadyScreenshotTest() {
 @Preview(name = "Position facts - compact", showBackground = true, widthDp = 390)
 @Composable
 fun PositionFactsCompactScreenshotTest() {
+    // Same future fixture keeps this screenshot stable across Beijing-local midnight.
     val holding = HoldingDto(
         id = "h1",
         symbol = "600900.SH",
         name = "长江电力",
         quantity = 1200.0,
         average_cost = 26.18,
-        created_at = "2026-08-01T09:30:00+08:00",
+        created_at = "2099-08-01T09:30:00+08:00",
     )
     val quote = MarketQuoteDto(
         symbol = "600900.SH",
