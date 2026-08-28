@@ -1429,3 +1429,48 @@ Paper Broker or Evaluation authority.
 - **Authority impact:** none. Formal Decision, StrategyProfile, ReviewPolicy,
   Evidence, Risk, sizing, ExecutionPrecheck, Paper Broker and Evaluation remain
   unchanged and server-owned.
+
+## Delivery update — 2026-08-28 — UIX5 / 策略 simulated-account execution density
+
+- **Issue / implementation:** #133 reconciles the existing Paper Trading surface
+  under the accepted `策略` destination. The screen is explicitly a governed
+  simulated-account execution console, not an AI-agent account and not a real
+  broker order ticket.
+- **Hierarchy:** the former oversized solid-red equity hero is replaced by a
+  compact white factual summary. Total equity stays the page-critical number at
+  20sp, while available cash, market value, cumulative P/L and return remain
+  aligned scan values using existing A-share rise/fall semantics.
+- **Positions:** simulated positions keep name/symbol, current P/L, held/sellable
+  quantity, cost/current price, market value and locked quantity in the existing
+  horizontally scrollable table, with tighter 16dp page insets and 44dp minimum
+  row targets.
+- **Execution control:** `模拟账户自动执行`, its enabled/running/paused state, the
+  existing switch, the existing `立即运行决策轮换` action and the explicit
+  no-real-broker boundary remain visible without a separate oversized card.
+- **Audit / observability:** `执行链路记录`, recent executed fills and per-fill
+  `分析记录` stay first-class. The Android click path loads the existing paper
+  decision-audit DTO and optional decision lineage before opening the audit
+  dialog; no new authority path is introduced.
+- **Language cleanup:** the page title is `策略执行` with
+  `模拟账套 · 决策驱动 · 风控执行`; legacy English section subtitles and the ambiguous
+  `影子交易` label are removed. Empty-state wording no longer claims the app will
+  “寻找机会”.
+- **Backend/API:** unchanged. Existing paper dashboard/config/run/run-detail/
+  decision-audit/decision-lineage contracts are reused exactly; no new DTO,
+  endpoint, provider, performance statistic or manual order-entry action is
+  introduced.
+- **Safety boundary:** this remains the existing Formal-decision simulated-account
+  scheduler. It does not implement N5/#96 isolated AI-agent paper trading, does
+  not give an LLM direct fill authority and does not add real-broker execution.
+- **Screenshot / CI acceptance:** the 420dp compact `策略执行` ready state and the
+  dense paper-position table were visually reviewed before their hashes were
+  locked. CI #453 passed Android unit/Kotlin checks, Compose screenshot render and
+  approved-hash verification, Debug APK/device artifact, optimized Release APK,
+  documentation governance and repository `ci-gate`.
+- **Delivery status:** `ANDROID_CI_GREEN / DEVICE_ACCEPTANCE_PENDING`. Repository
+  acceptance is complete; a physical-device `策略` walkthrough for enabled,
+  paused, manual-run, execution-history and decision-audit states remains required
+  before #133 can be `PRODUCT_DONE`.
+- **Authority impact:** none. Formal Decision, StrategyProfile, ReviewPolicy,
+  Evidence, Risk, sizing, ExecutionPrecheck, Paper Broker and Evaluation authority
+  remain unchanged and server-owned.

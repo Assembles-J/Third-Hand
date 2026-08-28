@@ -1,5 +1,6 @@
 package com.thirdhand.app
 
+import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.horizontalScroll
@@ -15,10 +16,11 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontWeight
-import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import com.thirdhand.app.ui.theme.AppSpacing
+import com.thirdhand.app.ui.theme.CompactTypography
 import com.thirdhand.app.ui.theme.marketColors
 import java.util.Locale
 
@@ -58,23 +60,37 @@ internal fun PaperPositionsTable(
     val horizontal = rememberScrollState()
 
     Surface(
-        modifier = modifier.fillMaxWidth().padding(horizontal = AppSpacing.xxLarge),
+        modifier = modifier
+            .fillMaxWidth()
+            .padding(horizontal = AppSpacing.contentHorizontal),
         color = MaterialTheme.colorScheme.surface,
-        shape = MaterialTheme.shapes.medium,
-        border = androidx.compose.foundation.BorderStroke(0.5.dp, MaterialTheme.colorScheme.outlineVariant)
+        shape = RoundedCornerShape(6.dp),
+        border = BorderStroke(0.5.dp, MaterialTheme.colorScheme.outlineVariant),
     ) {
         Column {
-            Row(Modifier.fillMaxWidth().background(MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.3f))) {
-                // Fixed column header
-                Box(Modifier.width(130.dp).padding(AppSpacing.medium)) {
-                    Text("证券名称", style = MaterialTheme.typography.labelSmall, fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            Row(
+                Modifier
+                    .fillMaxWidth()
+                    .background(MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.28f)),
+            ) {
+                Box(
+                    Modifier
+                        .width(116.dp)
+                        .padding(horizontal = AppSpacing.small, vertical = AppSpacing.denseGap),
+                    contentAlignment = Alignment.CenterStart,
+                ) {
+                    Text(
+                        "证券",
+                        style = CompactTypography.caption,
+                        fontWeight = FontWeight.SemiBold,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
                 }
-                // Scrollable headers
                 Row(Modifier.weight(1f).horizontalScroll(horizontal)) {
-                    TableHeaderCell("当前盈亏", 100.dp)
-                    TableHeaderCell("持仓/可卖", 100.dp)
-                    TableHeaderCell("成本/现价", 100.dp)
-                    TableHeaderCell("市值", 100.dp)
+                    TableHeaderCell("当前盈亏", 92.dp)
+                    TableHeaderCell("持仓/可卖", 92.dp)
+                    TableHeaderCell("成本/现价", 92.dp)
+                    TableHeaderCell("市值", 92.dp)
                 }
             }
 
@@ -84,10 +100,13 @@ internal fun PaperPositionsTable(
                     position = position,
                     name = name,
                     horizontalScrollState = horizontal,
-                    onClick = { onOpenDetail(position, name) }
+                    onClick = { onOpenDetail(position, name) },
                 )
                 if (index < positions.lastIndex) {
-                    HorizontalDivider(thickness = 0.5.dp, color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f))
+                    HorizontalDivider(
+                        thickness = 0.5.dp,
+                        color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.55f),
+                    )
                 }
             }
         }
@@ -95,9 +114,19 @@ internal fun PaperPositionsTable(
 }
 
 @Composable
-private fun TableHeaderCell(text: String, width: androidx.compose.ui.unit.Dp) {
-    Box(Modifier.width(width).padding(AppSpacing.medium), contentAlignment = Alignment.CenterEnd) {
-        Text(text, style = MaterialTheme.typography.labelSmall, fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.onSurfaceVariant)
+private fun TableHeaderCell(text: String, width: Dp) {
+    Box(
+        Modifier
+            .width(width)
+            .padding(horizontal = AppSpacing.small, vertical = AppSpacing.denseGap),
+        contentAlignment = Alignment.CenterEnd,
+    ) {
+        Text(
+            text,
+            style = CompactTypography.caption,
+            fontWeight = FontWeight.SemiBold,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+        )
     }
 }
 
@@ -106,40 +135,58 @@ private fun PositionRow(
     position: PaperTradingPositionDto,
     name: String,
     horizontalScrollState: androidx.compose.foundation.ScrollState,
-    onClick: () -> Unit
+    onClick: () -> Unit,
 ) {
     val colors = MaterialTheme.marketColors
     val pnlColor = if (position.unrealized_pnl >= 0) colors.rise else colors.fall
 
-    Row(Modifier.fillMaxWidth().clickable(onClick = onClick).padding(vertical = AppSpacing.small)) {
-        // Fixed Column
-        Column(Modifier.width(130.dp).padding(horizontal = AppSpacing.medium, vertical = AppSpacing.xs)) {
-            Text(name, style = MaterialTheme.typography.bodySmall, fontWeight = FontWeight.Bold, maxLines = 1, overflow = TextOverflow.Ellipsis)
-            Text(position.symbol, style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+    Row(
+        Modifier
+            .fillMaxWidth()
+            .clickable(onClick = onClick)
+            .heightIn(min = AppSpacing.touchTarget)
+            .padding(vertical = AppSpacing.xs),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Column(
+            Modifier
+                .width(116.dp)
+                .padding(horizontal = AppSpacing.small),
+        ) {
+            Text(
+                name,
+                style = CompactTypography.rowTitle,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+            )
+            Text(
+                position.symbol,
+                style = CompactTypography.caption,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
         }
 
-        // Scrollable Columns
         Row(Modifier.weight(1f).horizontalScroll(horizontalScrollState)) {
             TableCell(
                 main = position.unrealized_pnl.paperSignedMoney(),
                 sub = position.unrealized_return_percent.paperSignedPercent(),
                 color = pnlColor,
-                width = 100.dp
+                width = 92.dp,
             )
             TableCell(
                 main = position.quantity.paperQuantity(),
                 sub = "可卖 ${position.sellable_quantity?.paperQuantity() ?: "--"}",
-                width = 100.dp
+                width = 92.dp,
             )
             TableCell(
                 main = position.average_cost.paperMoney(),
                 sub = "现价 ${position.last_price.paperMoney()}",
-                width = 100.dp
+                width = 92.dp,
             )
             TableCell(
                 main = "¥${position.market_value.paperMoney()}",
-                sub = "--",
-                width = 100.dp
+                sub = position.locked_quantity?.takeIf { it > 0 }?.let { "锁定 ${it.paperQuantity()}" } ?: "--",
+                width = 92.dp,
             )
         }
     }
@@ -149,15 +196,32 @@ private fun PositionRow(
 private fun TableCell(
     main: String,
     sub: String,
-    width: androidx.compose.ui.unit.Dp,
-    color: Color = MaterialTheme.colorScheme.onSurface
+    width: Dp,
+    color: Color = MaterialTheme.colorScheme.onSurface,
 ) {
     Column(
-        Modifier.width(width).padding(horizontal = AppSpacing.medium, vertical = AppSpacing.xs),
-        horizontalAlignment = Alignment.End
+        Modifier
+            .width(width)
+            .padding(horizontal = AppSpacing.small),
+        horizontalAlignment = Alignment.End,
     ) {
-        Text(main, style = MaterialTheme.typography.bodySmall, fontWeight = FontWeight.Bold, color = color)
-        Text(sub, style = MaterialTheme.typography.labelSmall, color = if(color == MaterialTheme.colorScheme.onSurface) MaterialTheme.colorScheme.onSurfaceVariant else color.copy(alpha = 0.8f))
+        Text(
+            main,
+            style = CompactTypography.secondary,
+            fontWeight = FontWeight.SemiBold,
+            color = color,
+            maxLines = 1,
+        )
+        Text(
+            sub,
+            style = CompactTypography.caption,
+            color = if (color == MaterialTheme.colorScheme.onSurface) {
+                MaterialTheme.colorScheme.onSurfaceVariant
+            } else {
+                color.copy(alpha = 0.82f)
+            },
+            maxLines = 1,
+        )
     }
 }
 
