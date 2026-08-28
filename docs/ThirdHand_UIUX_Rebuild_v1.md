@@ -1,353 +1,305 @@
 # ThirdHand UI/UX Rebuild v1
 
-> Status: DESIGN CONTRACT
+> Status: APPROVED TARGET DESIGN CONTRACT
 >
-> Goal: rebuild the Android visual system and information density around the product that already exists today. This document does **not** authorize new trading capability, new AI authority, new backend behavior, or a broker-style manual order flow.
+> Reset owner: UIX0 / #140
+>
+> Goal: align the Android product shell and visual hierarchy with the approved target screenshots while reusing current authoritative product capability. This document does **not** authorize new trading capability, new AI authority, new backend behavior, or a real-broker order flow.
 
-## 1. Design direction
+## 1. Approved product shell
 
-ThirdHand should look and behave like a dense Chinese-market research utility rather than a decorative AI dashboard.
+The previous five-tab shell is no longer the acceptance baseline.
 
-Reference principles may be taken from mature securities apps such as Tonghuashun:
-
-- compact typography;
-- high information density;
-- aligned numeric columns;
-- white/light canvas with restrained separators;
-- clear red-up / green-down market semantics;
-- tab-first navigation and compact list rows;
-- fast scanning before decoration.
-
-Do not copy third-party logos, illustrations, proprietary graphics, branded assets, or exact trade dress.
-
-## 2. Non-negotiable product boundary
-
-The redesign must follow current repository capability.
-
-Current primary Android navigation remains:
+The approved primary Android navigation is:
 
 ```text
-资讯 | 行情 | 持仓 | 交易 | 自选
+首页 | 行情 | 组合 | 策略 | 自选
 ```
 
-The `交易` entry is the existing **simulated-account / paper-trading execution surface**. It is not a real broker order page and must not be redesigned as user-driven Buy / Sell / Cancel order entry.
+This is an information-architecture and presentation reset only. Existing routes and capabilities are to be reorganized under this shell rather than replaced with speculative backend behavior.
 
-The current Paper Trading surface already owns:
+### 1.1 Product mapping
 
-- simulated account total equity;
-- available cash;
-- position market value;
-- cumulative P/L;
-- simulated-account positions;
-- automatic execution enable/pause control;
-- manual `run now` decision-cycle trigger;
-- execution-chain history;
-- executed trade records;
-- decision/audit drill-down from execution records.
+- `首页`: aggregate existing attention, portfolio, decision/review, research and currentness facts where current APIs already provide them. Unsupported sections must be absent or explicitly empty/partial; Android must not invent a server summary.
+- `行情`: existing market overview, quote search and stock-detail entry.
+- `组合`: current Holdings / Position Detail factual path.
+- `策略`: organize the existing simulated-account execution console, Decision Workspace and available review/research-plan surfaces. This remains simulated-account / research functionality, not a real brokerage screen.
+- `自选`: current Personal Universe / Watchlist management and monitoring path.
 
-The visual redesign must expose those existing facts more clearly. It must not add unsupported controls such as:
+The old `资讯 | 行情 | 持仓 | 交易 | 自选` shell remains implementation history only and must not be used as a reason to reject the approved target shell.
 
-- manual limit-order entry;
-- manual BUY / SELL buttons;
-- broker account switching;
-- real order cancellation;
-- settlement transfer;
-- real-broker execution.
+## 2. Visual direction
 
-## 3. Visual language
+ThirdHand should read like a compact Chinese securities product, not a decorative AI dashboard.
 
-### 3.1 Density
+The approved reference direction requires:
 
-Target a high-density mobile layout.
+- Third-Hand brand red as the primary shell/action color;
+- white / cool-light canvas;
+- dense Chinese financial typography;
+- red-up / green-down A-share market semantics;
+- compact top bars and bottom navigation;
+- restrained cards, low elevation and thin dividers;
+- aligned financial values and scan-first row anatomy;
+- screenshot and physical-device comparison against the approved reference direction, not merely self-generated screenshot hashes.
 
-Recommended Android typography hierarchy:
+Do not copy third-party logos, proprietary illustrations or branded trade dress. The target references define hierarchy, density and product character, not a license to clone another app.
+
+## 3. Brand and market color roles
+
+Target role mapping:
 
 ```text
-10-11sp  auxiliary / metadata
+Brand / primary shell:  #F52D3A class Third-Hand red
+Brand container:        pale red / pink only for selected or grouped emphasis
+Canvas:                 cool light neutral
+Surface:                white
+Primary text:           near-black neutral
+Secondary text:         medium cool gray
+Rise:                    red
+Fall:                    green
+Flat / neutral:          gray
+Error:                   Material error role, separate from market fall green
+```
+
+The selected primary-navigation item, key actions and shell accents use brand red. Market rise/fall colors remain semantic and must not be repurposed to indicate navigation state.
+
+Color is never the only state carrier. BUY/SELL, enabled/paused/running, stale/current, review mode and failures retain explicit text.
+
+## 4. Density and typography
+
+Recommended compact Android roles:
+
+```text
+10-11sp  auxiliary / metadata / navigation label
 12sp     secondary information
-13-14sp  body / list values
-15-16sp  section title / primary row name
-18-20sp  page-critical number only
+13-14sp  body / financial value / list row
+15-16sp  section title / primary security name
+18-20sp  page title or one truly primary financial number
 ```
 
-Avoid 28-40sp dashboard headings except for a truly primary financial number.
+Avoid 28-40sp dashboard typography except where a reference-critical single financial figure genuinely needs dominance.
 
-### 3.2 Surfaces
+Spacing rules:
 
-Prefer:
+- 16dp class horizontal content inset on dense screens;
+- 6-8dp row vertical rhythm where touch targets still reach 44dp;
+- 8-12dp section rhythm;
+- thin separators between comparable rows;
+- 6-10dp radii for controls/small groups;
+- 10-14dp radius only for meaningful summary surfaces.
 
-- white or very light neutral canvas;
-- compact section headers;
-- thin neutral dividers;
-- low/no elevation for list rows;
-- 6-10dp radius for small controls;
-- 10-14dp radius only for major summary panels.
+## 5. Global shell behavior
 
-Avoid:
-
-- every row inside a large rounded card;
-- excessive whitespace;
-- marketing-style hero blocks;
-- oversized AI labels;
-- decorative gradients as the main visual language.
-
-### 3.3 Color
-
-Reuse the existing ThirdHand red-up / green-down market semantics.
-
-Suggested visual role mapping:
+Primary navigation:
 
 ```text
-Brand / primary action: existing project primary red
-Rise: existing market rise red
-Fall: existing market fall green
-Primary text: near-black neutral
-Secondary text: medium neutral gray
-Canvas: light neutral
-Surface: white
-Separator: low-contrast neutral gray
+首页 | 行情 | 组合 | 策略 | 自选
 ```
 
-Color must never be the only carrier of state. BUY/SELL, enabled/paused, execution state, review state and error state must retain text labels.
+Shell rules:
 
-## 4. Global navigation and shell
+- bottom navigation is compact, low-chrome and visually anchored by the selected brand-red item;
+- unselected items use neutral icon/text treatment;
+- top bars stay compact and screen-specific;
+- primary shell actions use brand red, while destructive actions keep their explicit destructive role;
+- existing feature routes may be reused internally during migration, but user-visible labels and destinations must converge on the target shell;
+- the old `资讯`, `持仓` and `交易` primary labels are not immutable compatibility requirements.
 
-Keep the current five-tab product shell during this rebuild:
+## 6. 首页
 
-```text
-资讯 | 行情 | 持仓 | 交易 | 自选
-```
+`首页` is an attention and change surface built only from currently available facts.
 
-This UI/UX slice is not the place to replace the information architecture with a speculative future navigation model.
-
-Global shell rules:
-
-- bottom navigation height should remain compact;
-- selected tab uses primary red + label;
-- unselected tabs use neutral text/icons;
-- top bars remain 44-52dp class, not oversized;
-- action icons are limited to functions that already exist on the screen.
-
-## 5. 资讯 screen
-
-The existing `NewsScreen` remains the entry.
-
-Design objective:
-
-- compact headline scanning;
-- clear timestamps and source/context where already available;
-- reduce card chrome;
-- use section headers and separators;
-- preserve existing data and actions only.
-
-Do not invent a new AI daily brief unless current API/runtime already provides it.
-
-## 6. 行情 screen
-
-The existing `MarketScreen` remains the market entry.
-
-Target structure:
+Target hierarchy may include, when backed by existing data:
 
 ```text
-Top market tabs / search
-Market overview
-Index strip
-Breadth / market statistics already available
-Dense stock / market lists
-Existing news or market context sections
+Account / portfolio snapshot
+Material attention or review items
+Important decision / research state
+Market or currentness notices
+Quick routes to 组合 / 策略 / 自选
 ```
 
 Rules:
 
-- numeric columns right-aligned;
+- do not fabricate a market brief, AI daily summary, performance statistic or recommendation that is not supplied by current APIs;
+- explicit loading/empty/partial/error states are required for independently loaded sections;
+- one failed section must not blank the rest of Home;
+- Home should answer “what needs my attention?” rather than duplicate full Market, Portfolio or Strategy screens.
+
+The current News capability may be reused as one Home content source, but `资讯` is no longer required as a primary bottom-navigation destination.
+
+## 7. 行情
+
+Use the existing `MarketScreen`, search and stock-detail routes as the market capability foundation.
+
+Target structure:
+
+```text
+Compact market header / search
+Index and session summary
+Existing breadth / ranking / sector facts
+Dense quote or ranking lists
+Relevant existing market/news context
+```
+
+Rules:
+
+- aligned right-side prices/change columns;
 - rise/fall values visually strong but compact;
-- spark lines remain secondary to the quote value;
-- scrolling density should be closer to a professional quote app than a dashboard.
+- no decorative statistic is added without an authoritative DTO;
+- stock-detail routing remains reachable.
 
-## 7. 自选 screen
+## 8. 组合
 
-Use the already implemented Watchlist / Personal Universe data only.
+`组合` is the destination for current Holdings / Position Detail factual capability.
 
-Primary sibling relationship:
-
-```text
-自选股 | 持仓股
-```
-
-Where current implementation exposes review status, priority, note, enabled/paused or Personal Universe metadata, show those as compact secondary lines or tags.
-
-Target row anatomy:
-
-```text
-股票名称          最新价     涨跌幅
-代码 / 市场       小型走势   状态/复核信息
-```
-
-Do not add broker actions to Watchlist rows.
-
-## 8. 持仓 screen
-
-The current Holdings surface owns factual portfolio data.
-
-Keep the high-value fields already defined by the product:
+High-value fields already supported should remain visible where available:
 
 - name / symbol;
-- current price and quote freshness;
+- quote and freshness;
 - quantity;
 - cost;
 - market value;
-- P/L amount;
-- P/L percentage;
+- P/L amount and percentage;
 - holding days;
 - position weight;
-- available cash / portfolio summary where currently supplied.
+- available cash / portfolio summary;
+- sellable / T+1 facts where the relevant authoritative paper/position contract supplies them.
 
-Design target:
+Target list form is table-like and scan-first, not a stack of large stock cards.
+
+Holding Detail remains fact-first: quote, position facts, K-line and transaction history. Decision/research stays behind the existing secondary Decision path.
+
+## 9. 策略
+
+`策略` is the new primary destination for currently implemented decision/research and simulated-account execution capability.
+
+It may organize these existing surfaces:
+
+- simulated-account equity, cash, market value and cumulative P/L;
+- simulated-account positions;
+- persisted `paper_trading_enabled` control;
+- manual `立即运行决策轮换` trigger;
+- execution-chain history and trade logs;
+- decision/audit drill-down;
+- Decision Workspace;
+- available server-owned ReviewPlan / research-plan visibility;
+- existing Strategy Lab / evaluation entry where already implemented.
+
+### 9.1 Safety boundary
+
+The target screenshots may visually suggest AI order/trade concepts, but ThirdHand currently has no accepted real-broker authority.
+
+Do not add or imply:
+
+- manual BUY/SELL broker tickets;
+- limit-price or quantity order entry;
+- order cancellation;
+- broker account switching;
+- real-money transfer;
+- real-broker execution;
+- N5 isolated AI-agent paper-account semantics before that capability is separately implemented and accepted.
+
+Preferred wording remains authority-accurate:
 
 ```text
-账户/组合摘要
---------------------------------
-名称/市值 | 盈亏 | 持仓/可用 | 成本/现价
---------------------------------
-持仓 row
-持仓 row
-...
-```
-
-Use table-like alignment, not large stock cards.
-
-Basic holdings list must remain fact-first. AI reasoning does not belong in every holding row.
-
-## 9. 交易 screen: existing simulated-account AI execution
-
-This is the most important correction to the previous concept.
-
-The current screen is **not a manual broker ticket**. Redesign it as a dense simulated-account execution console.
-
-Recommended information order:
-
-```text
-交易账户 / 模拟账套
-
-总权益        总收益率
-可用现金      持仓市值      累计盈亏
-
-持仓明细
-
+模拟账套
 模拟账户自动执行
-[启用/暂停开关]
-状态说明
-[立即运行决策轮换]
-
-执行链路记录 >
-
-最近成交记录
-B/S | 股票 | 价格 | 数量 | 时间 | 分析记录
-```
-
-### 9.1 Account summary
-
-The current full-width primary-red hero card should be reduced in height.
-
-Keep total equity dominant but not oversized. Secondary metrics should fit in one compact row.
-
-### 9.2 Position table
-
-Reuse existing paper positions. Prefer table/list alignment similar to the Holdings screen so the user can compare live holdings and simulated holdings quickly.
-
-### 9.3 Automatic execution control
-
-Preserve existing authority boundary:
-
-```text
-模拟账户自动执行
-已开启 / 已暂停 / 正在运行
-```
-
-The screen must retain the explicit statement that it controls only the simulated account and does not submit orders to a real broker.
-
-The existing manual trigger remains:
-
-```text
 立即运行决策轮换
+执行链路记录
+最近成交记录
+分析记录
+决策与 AI
 ```
 
-Do not rename this into `确认下单`, `AI 下单`, or other language suggesting a discretionary manual broker order.
+Avoid `AI 下单`, `确认下单`, `自动实盘` or equivalent wording.
 
-### 9.4 Execution history
+## 10. 自选
 
-Current execution-chain history remains a drill-down surface.
+Use the existing Personal Universe / Watchlist contracts.
 
-Current executed trade rows should emphasize:
+Core scan model:
 
 ```text
-B 买入 / S 卖出
-股票名称 / symbol
-成交价格
-数量
-成交时间
-分析记录 >
+股票名称          最新价      涨跌幅
+代码 / 市场       行情状态    复核/注意信息
 ```
 
-Keep the route into decision/audit details.
+Where already available, compactly expose priority, note, enabled/paused, position overlap and server-owned review state.
 
-## 10. Stock / position detail
+Add/edit/remove flows remain accessible; position-only rows must not gain Watchlist mutation authority.
 
-Existing Stock Detail, Position Detail and Decision Workspace remain separate responsibilities.
+## 11. Stock / position detail and Decision Workspace
 
-Stock/position factual areas should use compact quote-app presentation:
+The approved design aligns these surfaces visually without merging responsibilities.
 
-- name/symbol;
-- price/change;
+Factual detail owns:
+
+- name / symbol;
+- quote/change/freshness;
 - K-line;
-- holding facts when applicable;
-- existing events/financial/currentness facts where already present.
+- holding facts where applicable;
+- existing financial/event/currentness facts that belong to the factual surface.
 
-Decision Workspace / research views should retain the existing structured research model:
+Decision Workspace / research owns:
 
-- conclusion/action;
-- supporting evidence;
+- formal conclusion/action;
+- evidence/support;
 - risks;
 - what changed;
-- decision lineage / review information where already implemented.
+- review / lineage information;
+- deeper AI Research entry.
 
-Do not collapse factual position data and long AI reasoning into one mixed card stack.
+Android must not recompute server-owned decision or review authority.
 
-## 11. Interaction rules
+## 12. Interaction and accessibility
 
-- 44dp minimum touch targets even when visual density is high.
-- swipe/hidden gestures are not required for primary functions.
-- destructive actions require explicit labels/confirmation where they already exist.
-- loading, empty, stale/partial and error states must remain visible.
-- a section failure must not make unrelated data disappear.
-- no new business calculation should move into Composables.
+- 44dp minimum interactive target even when visual rows are denser;
+- primary functions cannot depend on undiscoverable gestures;
+- destructive actions remain explicit;
+- loading, empty, stale/partial and error states remain visible;
+- independent section failures stay isolated;
+- long labels truncate predictably;
+- every icon action has a content description or visible label.
 
-## 12. Implementation constraints
+## 13. Reference-driven acceptance
 
-This is an incremental UI rebuild, not a frontend rewrite.
+Screenshot hashes remain useful regression machinery, but they are not sufficient visual acceptance by themselves.
 
-Required:
+Every rebuilt surface must be checked against the approved target direction for:
 
-- reuse existing APIs and DTOs;
-- reuse existing feature routes;
-- preserve current authority model;
-- reuse `MarketColors`, typography and spacing tokens after token cleanup;
-- add/update Compose screenshot baselines for each rebuilt screen;
-- keep feature code out of an even larger `MainActivity.kt` where practical.
+- shell labels and destination hierarchy;
+- brand-red shell/action treatment;
+- density and whitespace;
+- card restraint;
+- financial-value alignment;
+- typography scale;
+- market rise/fall semantics;
+- real-broker safety wording.
 
-Do not claim `PRODUCT_DONE` before repository CI and physical-device acceptance.
+Physical-device acceptance must explicitly compare the rendered app against the target references at normal phone scale.
 
-## 13. Delivery order
+## 14. Migration and implementation history
 
-Recommended sequence:
+UIX1-UIX6 work already completed or in flight remains useful implementation history, especially shared density primitives and factual screen cleanup. It must now be reconciled to the UIX0 target shell rather than treated as the final acceptance baseline.
+
+Current re-scope:
 
 ```text
-UIX1  Global density / typography / shared list primitives
-UIX2  资讯 + 行情
-UIX3  自选
-UIX4  持仓 + factual detail visual cleanup
-UIX5  交易 / simulated-account execution console
-UIX6  stock detail + Decision Workspace visual alignment
+UIX0 / #140  approved shell + design baseline reset
+#129          shared density primitives -> reconcile to brand-red target shell
+#130          News/Market density -> Home/Market reconciliation
+#131          Watchlist density -> 自选 target destination
+#132          Holdings density -> 组合 target destination
+#133          Paper Trading console -> 策略 simulated-execution section
+#134          detail/Decision alignment -> target detail hierarchy
 ```
 
-Each slice must preserve existing capability and include screenshot regression coverage.
+PR #139 remains draft until this baseline lands, then its useful factual `组合` work must be rebuilt/reconciled on the new base.
+
+## 15. Authority impact
+
+None.
+
+This contract changes navigation, hierarchy and presentation acceptance only. Formal Decision, StrategyProfile, ReviewPolicy, Evidence, Risk, sizing, ExecutionPrecheck, Paper Broker and Evaluation authority remain unchanged and server-owned.
