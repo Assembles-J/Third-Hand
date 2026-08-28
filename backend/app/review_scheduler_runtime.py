@@ -23,14 +23,16 @@ def install(m) -> None:
         return
     m._pux2_review_scheduler_installed = True
 
-    personal_repository = getattr(m, "personal_universe_repository_v2", None)
-    if personal_repository is None:
-        personal_repository = PersonalUniverseRepository(m.store)
-        m.personal_universe_repository_v2 = personal_repository
-    review_repository = ReviewPlanRepository(m.store)
-    service = PersonalUniverseReviewService(m.store, personal_repository, review_repository)
-    m.review_plan_repository_v2 = review_repository
-    m.personal_universe_review_service_v2 = service
+    service = getattr(m, "personal_universe_review_service_v2", None)
+    if service is None:
+        personal_repository = getattr(m, "personal_universe_repository_v2", None)
+        if personal_repository is None:
+            personal_repository = PersonalUniverseRepository(m.store)
+            m.personal_universe_repository_v2 = personal_repository
+        review_repository = ReviewPlanRepository(m.store)
+        service = PersonalUniverseReviewService(m.store, personal_repository, review_repository)
+        m.review_plan_repository_v2 = review_repository
+        m.personal_universe_review_service_v2 = service
 
     existing_paths = {getattr(route, "path", None) for route in m.app.routes}
     if "/v1/review-plan/{symbol}" not in existing_paths:
