@@ -172,10 +172,9 @@ class FakeReviewService:
     def __init__(self, plans):
         self.plans = plans
         self.recorded = []
-        self.explicit_flags = []
 
     def scheduler_plan(self, symbol, *, evaluated_at, explicit_user_request=False):
-        self.explicit_flags.append(explicit_user_request)
+        assert explicit_user_request is False
         return self.plans.get(symbol)
 
     def record(self, plan):
@@ -228,31 +227,42 @@ def test_runtime_filters_guard_only_from_news_company_and_decision_research():
         lambda symbols, *, research_priority, run_id=None: calls["company"].append(list(symbols)) or len(symbols)
     )
     module.prepare_paper_decisions = (
-        lambda symbols, run_id=None, names=None: calls["decision"].append(list(symbols)) or len(symbols)
+        lambda symbols, *args, **kwargs: calls["decision"].append((list(symbols), args, kwargs)) or len(symbols)
     )
-
-    def original_cycle(requested_symbols, force=False, allow_when_disabled=False):
-        symbols = ["600519", "000001", "000002", "999999"]
-        module.refresh_paper_market_intelligence(symbols, {})
-        module.refresh_company_intelligence_focus(symbols, research_priority="L4", run_id="run-1")
-        generated = module.prepare_paper_decisions(symbols, run_id="run-1", names={})
-        return {"executed": 0, "skipped": 0, "run_id": "run-1", "generated": generated}
-
-    module.run_paper_trading_cycle = original_cycle
+    module.run_paper_trading_cycle = lambda *args, **kwargs: {"executed": 0, "skipped": 0}
     install(module)
 
-    result = module.run_paper_trading_cycle(["600519"])
+    module.refresh_paper_market_intelligence(["600519", "000001", "000002", "999999"], {})
+    module.refresh_company_intelligence_focus(
+        ["600519", "000001", "000002", "999999"],
+        research_priority="L4",
+        run_id="run-1",
+    )
+    generated = module.prepare_paper_decisions(
+        ["600519", "000001", "000002", "999999"],
+        run_id="run-1",
+        names={},
+        selection="opaque-selection",
+    )
 
-    assert result["generated"] == 3
+    assert generated == 3
     assert calls["news"] == [["000001", "000002", "999999"]]
     assert calls["company"] == [["000002", "999999"]]
-    assert calls["decision"] == [["000001", "000002", "999999"]]
+    assert calls["decision"] == [(
+        ["000001", "000002", "999999"],
+        (),
+        {"run_id": "run-1", "names": {}, "selection": "opaque-selection"},
+    )]
     assert service.recorded == ["600519", "000001", "000002"]
-    assert not any(service.explicit_flags)
 
 
-def test_force_cycle_is_seen_as_explicit_review_permission():
-    service = FakeReviewService({"600519": _plan("600519", ReviewMode.FULL_RESEARCH)})
+def test_install_preserves_public_run_cycle_owner_and_contract():
+    service = FakeReviewService({})
+    original_cycle = lambda requested_symbols, force=False, allow_when_disabled=False: {
+        "requested": list(requested_symbols),
+        "force": force,
+        "allow_when_disabled": allow_when_disabled,
+    }
     module = SimpleNamespace(
         store=object(),
         beijing_now=lambda: NOW,
@@ -261,15 +271,15 @@ def test_force_cycle_is_seen_as_explicit_review_permission():
         _record_simulation_stage=lambda *args, **kwargs: None,
         refresh_paper_market_intelligence=lambda _symbols, _names: None,
         refresh_company_intelligence_focus=lambda _symbols, *, research_priority, run_id=None: 0,
-        prepare_paper_decisions=lambda _symbols, run_id=None, names=None: 1,
+        prepare_paper_decisions=lambda _symbols, *args, **kwargs: 0,
+        run_paper_trading_cycle=original_cycle,
     )
 
-    def original_cycle(requested_symbols, force=False, allow_when_disabled=False):
-        module.prepare_paper_decisions(["600519"], run_id="run-force", names={})
-        return {"executed": 0, "skipped": 0, "run_id": "run-force"}
-
-    module.run_paper_trading_cycle = original_cycle
     install(module)
-    module.run_paper_trading_cycle(["600519"], force=True)
 
-    assert any(service.explicit_flags)
+    assert module.run_paper_trading_cycle is original_cycle
+    assert module.run_paper_trading_cycle(["600519"], force=True, allow_when_disabled=True) == {
+        "requested": ["600519"],
+        "force": True,
+        "allow_when_disabled": True,
+    }
