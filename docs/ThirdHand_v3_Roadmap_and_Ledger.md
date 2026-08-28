@@ -404,7 +404,9 @@ Android:
 - promote Watchlist to a first-class bottom-navigation destination;
 - implement Watchlist/Positions sibling tabs;
 - manage add/edit/delete/priority/note from the normal user surface;
-- use dense scan-first list layout aligned with the project red-first market tokens.
+- use dense scan-first rows with price/change/freshness and explicit unavailable/degraded states;
+- preserve held positions even when Watchlist membership is removed;
+- keep shared `MainActivity` edits minimal and put feature state under the PUX feature boundary.
 
 Acceptance:
 - no admin/log screen is required to manage Watchlist;
@@ -741,7 +743,7 @@ Also preserve:
   infrastructure for the Watchlist Add flow and introduces no trading authority.
 - **PUX1 Personal Universe / Watchlist:** `BACKEND_READY / API_VISIBLE` via #86;
   `ANDROID_VISIBLE / ACCEPTANCE_PENDING` via #92.
-  The accepted backend/API slice adds typed Personal Universe contracts,
+  The accepted backend/API slice adds typed Watchlist/Personal Universe contracts,
   additive `0019_pux1_watchlist_metadata`, local-only Portfolio + Watchlist
   composition, explicit `GET /v1/personal-universe` and
   `PUT /v1/watchlist/{symbol}`, v2 route registration and regression tests.
