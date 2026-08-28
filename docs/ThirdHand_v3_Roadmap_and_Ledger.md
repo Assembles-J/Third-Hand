@@ -1044,3 +1044,38 @@ Paper Broker or Evaluation authority.
   remain required before `PRODUCT_DONE`.
 - **Authority impact:** none. AI remains explanation/research only and cannot
   override Formal Decision or execution gates.
+
+## Delivery update — 2026-08-28 — HiThink official A-share provider PoC
+
+- **Scope:** added an optional official HiThink acquisition layer for three
+  bounded A-share capabilities only: `/api/meta/tickers/search`, explicit
+  `/api/a-share/prices/snapshot?thscodes=...`, and single-symbol daily
+  `/api/a-share/prices/historical` with forward adjustment. Search results are
+  capped at five and quote batches are capped by `HITHINK_FINANCE_MAX_BATCH`
+  (default 20). The PoC never omits `thscodes`, so it cannot silently switch the
+  snapshot endpoint into full-market pagination.
+- **Configuration/security:** `HITHINK_FINANCE_ENABLED=false` by default. The
+  API key is read only from server environment configuration and is sent only in
+  the `X-api-key` header; it is not stored in Android, Git, request URLs or logs.
+- **Fallback/currentness:** when disabled, unconfigured, ambiguous, empty,
+  unauthorized, capability-denied, rate-limited beyond bounded retries, or
+  otherwise unavailable, acquisition falls back to the existing governed
+  AKShare/Tencent/Tushare chain. HiThink explicit snapshot mode does not provide
+  a unified quote timestamp, so Third-Hand does not invent one; existing
+  freshness/quality policy remains authoritative.
+- **History lineage:** successful HiThink daily history writes the existing
+  normalized daily-price store with `qfq` semantics and provider lineage;
+  provider attempt audit records request id/error code without logging secrets.
+  Existing missing-range collection, circuit-breaker behavior and closing-bar
+  repair remain in force.
+- **Tests:** mocked contract coverage verifies default-off/key gating, max-five
+  search, header-only credential transport, explicit `thscodes`, `2003`
+  fail-fast behavior, bounded `4001` retry, daily/forward historical parameters,
+  and fallback to the existing provider chain. Live black-box acceptance is not
+  claimed until an operator configures a real server-side API key.
+- **Delivery state:** `BACKEND_POC / LIVE_KEY_ACCEPTANCE_PENDING`. No new Android
+  surface is required for this provider-only slice; existing user-visible quote,
+  symbol-search and K-line surfaces continue to consume the same contracts.
+- **Authority impact:** none. This changes acquisition redundancy only and does
+  not modify Formal Action, StrategyProfile, Evidence authority, Risk, sizing,
+  ExecutionPrecheck, Paper Broker or Evaluation authority.
