@@ -1298,3 +1298,28 @@ Paper Broker or Evaluation authority.
 - **Authority impact:** none. Formal Decision, StrategyProfile, ReviewPolicy,
   Evidence, Risk, sizing, ExecutionPrecheck, Paper Broker and Evaluation authority
   remain unchanged and server-owned.
+
+## Delivery update — 2026-08-28 — UIX0 runtime shell wiring
+
+- **Android shell:** primary bottom navigation now renders the approved
+  `首页 | 行情 | 组合 | 策略 | 自选` destinations and opens on Home. The selected
+  shell item uses the Third-Hand brand-red role with a pale-red container while
+  unselected destinations remain neutral.
+- **Existing-capability mapping:** Market, Holdings, Paper Trading and Personal
+  Universe keep their existing runtime owners under `行情`, `组合`, `策略` and
+  `自选`. No backend route or authority contract is replaced.
+- **Home baseline:** a dedicated Home shell is added without inventing a new
+  server summary. It explicitly labels the current aggregation as partial and
+  reuses the existing News capability while future attention/review aggregation
+  remains pending.
+- **Compatibility:** held-symbol detail, Watchlist routing, profile/update flow,
+  simulated-account controls and current decision/research drill-down remain
+  reachable. `资讯`, `持仓` and `交易` are no longer primary bottom-nav labels.
+- **Backend/API:** unchanged.
+- **Delivery status:** `ANDROID_SHELL_IMPLEMENTED / CI_DEVICE_ACCEPTANCE_PENDING`.
+  Android compile/unit/screenshot/Debug/Release/ci-gate and physical-device
+  comparison against the approved target references remain required before UIX0
+  runtime shell acceptance.
+- **Authority impact:** none. Formal Decision, StrategyProfile, ReviewPolicy,
+  Evidence, Risk, sizing, ExecutionPrecheck, Paper Broker and Evaluation authority
+  remain unchanged and server-owned.

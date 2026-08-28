@@ -103,7 +103,7 @@ private fun ThirdHandApp(resumeSignal: Int) {
         savedGlossaryTerms = runCatching { ApiClient.service(context).glossaryEntries().map { it.term }.filter { it.isNotBlank() } }.getOrDefault(emptyList())
     }
     var themeMode by remember { mutableStateOf(ThemeStore.load(context)) }
-    var tab by remember { mutableIntStateOf(1) } // Default to Market for better first impression
+    var tab by remember { mutableIntStateOf(0) } // UIX0 target shell opens on Home.
     var detailStock by remember { mutableStateOf<ResearchTargetDto?>(null) }
     var holdingDetail by remember { mutableStateOf<ResearchTargetDto?>(null) }
     var researchTarget by remember { mutableStateOf<ResearchTargetDto?>(null) }
@@ -142,13 +142,13 @@ private fun ThirdHandApp(resumeSignal: Int) {
                 if (detailStock == null && holdingDetail == null && researchTarget == null && !profileOpen) {
                     NavigationBar(
                         containerColor = MaterialTheme.colorScheme.surface,
-                        tonalElevation = 8.dp
+                        tonalElevation = 0.dp,
                     ) {
                         listOf(
-                            Triple("资讯", Icons.AutoMirrored.Filled.Article, 0),
+                            Triple("首页", Icons.Filled.Home, 0),
                             Triple("行情", Icons.Filled.AutoGraph, 1),
-                            Triple("持仓", Icons.Filled.Wallet, 2),
-                            Triple("交易", Icons.Filled.AccountBalanceWallet, 3),
+                            Triple("组合", Icons.Filled.Wallet, 2),
+                            Triple("策略", Icons.Filled.AccountBalanceWallet, 3),
                             Triple("自选", Icons.Filled.Bookmark, 4),
                         ).forEach { (label, icon, targetTab) ->
                             NavigationBarItem(
@@ -157,10 +157,12 @@ private fun ThirdHandApp(resumeSignal: Int) {
                                 icon = { Icon(icon, contentDescription = label) },
                                 label = { Text(label, style = MaterialTheme.typography.labelSmall) },
                                 colors = NavigationBarItemDefaults.colors(
-                                    selectedIconColor = MaterialTheme.colorScheme.primary,
-                                    selectedTextColor = MaterialTheme.colorScheme.primary,
-                                    indicatorColor = MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.5f)
-                                )
+                                    selectedIconColor = Color(0xFFF52D3A),
+                                    selectedTextColor = Color(0xFFF52D3A),
+                                    indicatorColor = Color(0xFFFFE0E3),
+                                    unselectedIconColor = Color(0xFF667085),
+                                    unselectedTextColor = Color(0xFF667085),
+                                ),
                             )
                         }
                     }
@@ -204,7 +206,7 @@ private fun ThirdHandApp(resumeSignal: Int) {
                         label = "mainNav"
                     ) { activeTab ->
                         when (activeTab) {
-                            0 -> NewsScreen()
+                            0 -> HomeScreen()
                             1 -> MarketScreen(onOpenDetail = { detailStock = it })
                             2 -> HoldingsScreen(onOpenDetail = {
                                 holdingDetail = ResearchTargetDto(it.symbol, it.name, "active_holding", it.created_at)
@@ -216,7 +218,7 @@ private fun ThirdHandApp(resumeSignal: Int) {
                                 },
                                 onOpenProfile = { profileOpen = true },
                             )
-                            else -> MarketScreen(onOpenDetail = { detailStock = it })
+                            else -> HomeScreen()
                         }
                     }
                 }
