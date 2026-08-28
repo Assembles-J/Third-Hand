@@ -108,6 +108,24 @@ private fun ThirdHandApp(resumeSignal: Int) {
     var holdingDetail by remember { mutableStateOf<ResearchTargetDto?>(null) }
     var researchTarget by remember { mutableStateOf<ResearchTargetDto?>(null) }
     var profileOpen by remember { mutableStateOf(false) }
+    var startupUpdate by remember { mutableStateOf<AppUpdate?>(null) }
+    var dismissedUpdateVersionCode by remember { mutableIntStateOf(-1) }
+
+    LaunchedEffect(resumeSignal) {
+        if (resumeSignal <= 0) return@LaunchedEffect
+        runCatching { AppUpdateManager.check(context) }
+            .onSuccess { update ->
+                if (update == null) {
+                    startupUpdate = null
+                } else {
+                    AppUpdateManager.downloadAutomaticallyOnWifi(context, update)
+                    if (update.versionCode != dismissedUpdateVersionCode) {
+                        startupUpdate = update
+                    }
+                }
+            }
+        // Update discovery is best-effort and must never block the normal app path.
+    }
 
     BackHandler(enabled = detailStock != null || holdingDetail != null || researchTarget != null || profileOpen) {
         when {
@@ -203,6 +221,16 @@ private fun ThirdHandApp(resumeSignal: Int) {
                     }
                 }
             }
+        }
+
+        startupUpdate?.let { update ->
+            AppUpdateDialog(
+                update = update,
+                onDismiss = {
+                    dismissedUpdateVersionCode = update.versionCode
+                    startupUpdate = null
+                },
+            )
         }
     }
 }
@@ -422,6 +450,9 @@ fun ProfileScreen(
     val scope = rememberCoroutineScope()
     val snackbarHostState = remember { SnackbarHostState() }
     var dialog by remember { mutableStateOf<ProfileDialog?>(null) }
+    var manualUpdate by remember { mutableStateOf<AppUpdate?>(null) }
+    var updateChecking by remember { mutableStateOf(false) }
+    var automaticDownload by remember { mutableStateOf(AppUpdateManager.automaticDownloadEnabled(context)) }
 
     Scaffold(snackbarHost = { SnackbarHost(snackbarHostState) }) { paddingValues ->
         Column(
@@ -468,6 +499,38 @@ fun ProfileScreen(
                 snackbarHostState.showSnackbar(message)
             }
         }
+        ProfileMenuItem(if (updateChecking) "正在检查更新…" else "检查更新", Icons.Default.Refresh) {
+            if (!updateChecking) {
+                scope.launch {
+                    updateChecking = true
+                    runCatching { AppUpdateManager.check(context) }
+                        .onSuccess { update ->
+                            manualUpdate = update
+                            if (update == null) {
+                                snackbarHostState.showSnackbar(
+                                    if (BuildConfig.DEBUG) "调试版不接收生产更新" else "当前已是最新版本"
+                                )
+                            } else {
+                                AppUpdateManager.downloadAutomaticallyOnWifi(context, update)
+                            }
+                        }
+                        .onFailure {
+                            snackbarHostState.showSnackbar("检查更新失败，请稍后重试")
+                        }
+                    updateChecking = false
+                }
+            }
+        }
+        ProfileSwitchItem(
+            title = "Wi‑Fi 自动下载更新",
+            subtitle = "发现新版本后仅在 Wi‑Fi 下自动开始后台下载",
+            icon = Icons.Default.CloudSync,
+            checked = automaticDownload,
+            onCheckedChange = { enabled ->
+                automaticDownload = enabled
+                AppUpdateManager.setAutomaticDownloadEnabled(context, enabled)
+            },
+        )
 
         Spacer(Modifier.height(AppSpacing.xxLarge))
     }
@@ -499,7 +562,65 @@ fun ProfileScreen(
         )
         null -> Unit
     }
+
+    manualUpdate?.let { update ->
+        AppUpdateDialog(update = update, onDismiss = { manualUpdate = null })
     }
+    }
+}
+
+@Composable
+private fun AppUpdateDialog(
+    update: AppUpdate,
+    onDismiss: () -> Unit,
+) {
+    val context = LocalContext.current
+    var actionMessage by remember(update.versionCode) { mutableStateOf<String?>(null) }
+    val completed = AppUpdateManager.hasCompletedDownload(context, update)
+    val active = AppUpdateManager.hasActiveDownload(context, update)
+
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text("发现新版本 ${update.versionName}") },
+        text = {
+            Column(verticalArrangement = Arrangement.spacedBy(AppSpacing.small)) {
+                Text(update.changelog.ifBlank { "新版本已经可用。" })
+                when {
+                    completed -> Text(
+                        AppUpdateManager.completedUpdateMessage(context) ?: "安装包已下载完成，可开始安装。",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.primary,
+                    )
+                    active -> Text(
+                        "安装包正在后台下载，下载完成后可在个人中心安装。",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.primary,
+                    )
+                }
+                actionMessage?.let {
+                    Text(it, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.error)
+                }
+            }
+        },
+        dismissButton = { TextButton(onClick = onDismiss) { Text("稍后") } },
+        confirmButton = {
+            TextButton(
+                enabled = !active || completed,
+                onClick = {
+                    when (AppUpdateManager.downloadAndInstall(context, update)) {
+                        UpdateLaunchResult.DOWNLOAD_STARTED -> onDismiss()
+                        UpdateLaunchResult.INSTALLER_OPENED -> onDismiss()
+                        UpdateLaunchResult.NEED_INSTALL_PERMISSION -> actionMessage = "请允许 Third-Hand 安装未知来源应用，返回后再次点击安装更新。"
+                        UpdateLaunchResult.NEED_STORAGE_PERMISSION -> actionMessage = "请允许存储访问后重新下载。"
+                        UpdateLaunchResult.SIGNATURE_MISMATCH -> actionMessage = "安装包签名与当前应用不一致，已阻止覆盖安装。"
+                        UpdateLaunchResult.DOWNLOAD_UNAVAILABLE -> actionMessage = "暂时无法下载或打开安装包，请稍后重试。"
+                    }
+                },
+            ) {
+                Text(if (completed) "安装更新" else if (active) "后台下载中" else "下载更新")
+            }
+        },
+    )
 }
 
 @Composable
@@ -515,6 +636,31 @@ private fun ProfileMenuItem(title: String, icon: ImageVector, onClick: () -> Uni
         Spacer(Modifier.width(AppSpacing.large))
         Text(title, style = MaterialTheme.typography.bodyMedium, fontWeight = FontWeight.Medium, modifier = Modifier.weight(1f))
         Icon(Icons.Default.ChevronRight, null, tint = MaterialTheme.colorScheme.outlineVariant, modifier = Modifier.size(16.dp))
+    }
+    HorizontalDivider(modifier = Modifier.padding(horizontal = AppSpacing.xxLarge), thickness = 0.5.dp, color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f))
+}
+
+@Composable
+private fun ProfileSwitchItem(
+    title: String,
+    subtitle: String,
+    icon: ImageVector,
+    checked: Boolean,
+    onCheckedChange: (Boolean) -> Unit,
+) {
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(horizontal = AppSpacing.xxLarge, vertical = AppSpacing.medium),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Icon(icon, null, modifier = Modifier.size(20.dp), tint = MaterialTheme.colorScheme.primary)
+        Spacer(Modifier.width(AppSpacing.large))
+        Column(Modifier.weight(1f)) {
+            Text(title, style = MaterialTheme.typography.bodyMedium, fontWeight = FontWeight.Medium)
+            Text(subtitle, style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+        }
+        Switch(checked = checked, onCheckedChange = onCheckedChange)
     }
     HorizontalDivider(modifier = Modifier.padding(horizontal = AppSpacing.xxLarge), thickness = 0.5.dp, color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f))
 }

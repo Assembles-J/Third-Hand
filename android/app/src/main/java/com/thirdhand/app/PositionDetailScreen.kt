@@ -125,40 +125,31 @@ fun PositionDetailRoute(
             modifier = Modifier.fillMaxSize().padding(padding).background(MaterialTheme.colorScheme.background),
             contentPadding = PaddingValues(bottom = AppSpacing.xxLarge)
         ) {
-            item {
-                PositionHeroSection(state)
-            }
+            item { PositionHeroSection(state) }
+
+            item { PositionMetricsGrid(state) }
 
             item {
-                PositionMetricsGrid(state)
+                CompactSectionTitle("技术图表")
+                TradingPeriodKLinePanel(symbol = target.symbol, quote = state.quote)
             }
 
-            item {
-                SectionLabel("技术图表", "K-Line View")
-                Card(
-                    modifier = Modifier.padding(horizontal = AppSpacing.xxLarge),
-                    colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
-                    shape = MaterialTheme.shapes.large,
-                    elevation = CardDefaults.cardElevation(defaultElevation = 1.dp)
-                ) {
-                    Box(Modifier.padding(vertical = AppSpacing.medium)) {
-                        TradingPeriodKLinePanel(symbol = target.symbol, quote = state.quote)
-                    }
-                }
-            }
-
-            item {
-                SectionLabel("成交流水", "Transaction History")
-            }
+            item { CompactSectionTitle("成交流水") }
 
             if (state.sales.isEmpty()) {
                 item {
-                    Text("暂无卖出成交记录", Modifier.fillMaxWidth().padding(AppSpacing.xxLarge), textAlign = TextAlign.Center, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    Text(
+                        "暂无卖出成交记录",
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(horizontal = AppSpacing.xxLarge, vertical = AppSpacing.medium),
+                        textAlign = TextAlign.Center,
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
                 }
             } else {
-                items(state.sales.take(20), key = { it.id }) { sale ->
-                    SaleHistoryItem(sale)
-                }
+                items(state.sales.take(20), key = { it.id }) { sale -> SaleHistoryItem(sale) }
             }
         }
     }
@@ -252,11 +243,19 @@ private fun MetricCell(label: String, value: String, modifier: Modifier = Modifi
 }
 
 @Composable
-private fun SectionLabel(title: String, subtitle: String) {
-    Column(Modifier.padding(horizontal = AppSpacing.xxLarge, vertical = AppSpacing.large)) {
-        Text(title.uppercase(Locale.ROOT), style = MaterialTheme.typography.labelMedium, fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.primary, letterSpacing = 1.sp)
-        Text(subtitle, style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
-    }
+private fun CompactSectionTitle(title: String) {
+    Text(
+        text = title,
+        modifier = Modifier.padding(
+            start = AppSpacing.xxLarge,
+            end = AppSpacing.xxLarge,
+            top = AppSpacing.large,
+            bottom = AppSpacing.small,
+        ),
+        style = MaterialTheme.typography.titleSmall,
+        fontWeight = FontWeight.Bold,
+        color = MaterialTheme.colorScheme.onSurface,
+    )
 }
 
 @Composable

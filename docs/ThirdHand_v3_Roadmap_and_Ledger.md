@@ -741,7 +741,7 @@ Also preserve:
   infrastructure for the Watchlist Add flow and introduces no trading authority.
 - **PUX1 Personal Universe / Watchlist:** `BACKEND_READY / API_VISIBLE` via #86;
   `ANDROID_VISIBLE / ACCEPTANCE_PENDING` via #92.
-  The accepted backend/API slice adds typed Watchlist/Personal Universe contracts,
+  The accepted backend/API slice adds typed Personal Universe contracts,
   additive `0019_pux1_watchlist_metadata`, local-only Portfolio + Watchlist
   composition, explicit `GET /v1/personal-universe` and
   `PUT /v1/watchlist/{symbol}`, v2 route registration and regression tests.
@@ -1079,3 +1079,28 @@ Paper Broker or Evaluation authority.
 - **Authority impact:** none. This changes acquisition redundancy only and does
   not modify Formal Action, StrategyProfile, Evidence authority, Risk, sizing,
   ExecutionPrecheck, Paper Broker or Evaluation authority.
+
+## Delivery update — 2026-08-28 — Android update recovery and K-line density
+
+- **Android update recovery:** restored foreground/resume update discovery through
+  the existing `resumeSignal` and `AppUpdateManager` contract. Release builds
+  check the existing `/v1/app-update` endpoint; Debug remains intentionally
+  excluded. When the persisted preference is enabled, an available release may
+  enqueue automatically on Wi-Fi without blocking normal app startup.
+- **Stable update controls:** Profile -> Application Settings exposes a manual
+  `检查更新` action and a persisted `Wi-Fi 自动下载更新` switch. Download,
+  SHA-256 verification, signature verification, install-permission handling and
+  system-installer ownership remain in the existing update manager.
+- **K-line density:** Holding Detail removes the duplicated English section label,
+  the outer nested chart Card and the extra fixed-height wrapper. One chart
+  surface owns identity, equal-width period controls, OHLC/selected-bar facts,
+  price canvas and volume; the transaction-history empty state is also tightened.
+- **Backend:** unchanged. No backend route, DTO, provider or persistence contract
+  changes in this slice.
+- **Accepted:** implementation is repository-ready but not yet device-accepted;
+  official Android CI and a physical-device update/K-line walkthrough remain the
+  acceptance gates.
+- **Delivery status:** `ANDROID_READY / CI_DEVICE_ACCEPTANCE_PENDING`.
+- **Authority impact:** none. This is Android presentation/update-delivery work
+  only and does not modify Formal Decision, StrategyProfile, Evidence, Risk,
+  sizing, ExecutionPrecheck, Paper Broker or Evaluation authority.

@@ -1,5 +1,6 @@
 package com.thirdhand.app
 
+import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.layout.*
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
@@ -59,71 +60,93 @@ fun TradingPeriodKLinePanel(symbol: String, quote: MarketQuoteDto?) {
         loading = false
     }
 
-    LaunchedEffect(symbol) {
-        loadData()
-    }
+    LaunchedEffect(symbol) { loadData() }
 
-    Column(Modifier.fillMaxWidth().padding(AppSpacing.large)) {
+    Card(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(horizontal = AppSpacing.xxLarge),
+        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
+        shape = MaterialTheme.shapes.large,
+        elevation = CardDefaults.cardElevation(defaultElevation = 0.dp),
+        border = BorderStroke(0.5.dp, MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.55f)),
+    ) {
+        Column(
+            modifier = Modifier.padding(horizontal = AppSpacing.large, vertical = AppSpacing.medium),
+            verticalArrangement = Arrangement.spacedBy(AppSpacing.small),
+        ) {
+            Text(
+                text = quote?.let { "${it.name.ifBlank { symbol }} · ${it.symbol}" } ?: symbol,
+                style = MaterialTheme.typography.labelMedium,
+                fontWeight = FontWeight.SemiBold,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+
             Row(
                 modifier = Modifier.fillMaxWidth(),
-                verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.SpaceBetween
+                horizontalArrangement = Arrangement.spacedBy(4.dp),
             ) {
-                Column {
-                    Text("技术图表", style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.Bold)
-                    Text(
-                        text = quote?.let { "${it.name.ifBlank { symbol }} · ${it.symbol}" } ?: symbol,
-                        style = MaterialTheme.typography.labelSmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    )
-                }
-
-                Row {
-                    listOf("分时", "日线", "周线", "月线").forEach { p ->
-                        TextButton(
-                            onClick = { period = p },
-                            contentPadding = PaddingValues(horizontal = 8.dp, vertical = 0.dp),
-                            modifier = Modifier.height(32.dp)
-                        ) {
-                            Text(
-                                text = p,
-                                style = MaterialTheme.typography.labelMedium,
-                                fontWeight = if (period == p) FontWeight.Bold else FontWeight.Normal,
-                                color = if (period == p) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant
-                            )
-                        }
+                listOf("分时", "日线", "周线", "月线").forEach { item ->
+                    val selected = period == item
+                    TextButton(
+                        onClick = { period = item },
+                        modifier = Modifier.weight(1f).height(32.dp),
+                        contentPadding = PaddingValues(horizontal = 4.dp, vertical = 0.dp),
+                        colors = ButtonDefaults.textButtonColors(
+                            containerColor = if (selected) MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.55f) else MaterialTheme.colorScheme.surface,
+                            contentColor = if (selected) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant,
+                        ),
+                        shape = MaterialTheme.shapes.small,
+                    ) {
+                        Text(
+                            text = item,
+                            style = MaterialTheme.typography.labelMedium,
+                            fontWeight = if (selected) FontWeight.Bold else FontWeight.Medium,
+                        )
                     }
                 }
             }
 
-            Spacer(Modifier.height(AppSpacing.medium))
-
-            Box(
-                modifier = Modifier.fillMaxWidth().height(240.dp),
-                contentAlignment = Alignment.Center
-            ) {
-                if (loading) {
-                    CircularProgressIndicator(Modifier.size(24.dp))
-                } else if (error != null) {
-                    Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                        Text(error!!, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.error)
-                        TextButton(onClick = { loadData() }) { Text("重新加载") }
+            when {
+                loading -> {
+                    Box(
+                        modifier = Modifier.fillMaxWidth().height(248.dp),
+                        contentAlignment = Alignment.Center,
+                    ) {
+                        CircularProgressIndicator(Modifier.size(24.dp), strokeWidth = 2.dp)
                     }
-                } else {
+                }
+                error != null -> {
+                    Box(
+                        modifier = Modifier.fillMaxWidth().height(200.dp),
+                        contentAlignment = Alignment.Center,
+                    ) {
+                        Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                            Text(error!!, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.error)
+                            TextButton(onClick = { loadData() }) { Text("重新加载") }
+                        }
+                    }
+                }
+                else -> {
                     val chartBars = chartBarsForPeriod(period, bars, intradayBars)
-
                     if (chartBars.isNotEmpty()) {
                         KLineChart(
                             bars = chartBars,
                             quote = quote,
                             useTimeAxis = period == "分时",
-                            paperMarkers = paperLogs
+                            paperMarkers = paperLogs,
                         )
                     } else {
-                        Text("暂无数据", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                        Box(
+                            modifier = Modifier.fillMaxWidth().height(180.dp),
+                            contentAlignment = Alignment.Center,
+                        ) {
+                            Text("暂无数据", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                        }
                     }
                 }
             }
+        }
     }
 }
 
