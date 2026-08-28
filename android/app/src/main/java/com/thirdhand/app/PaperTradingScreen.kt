@@ -42,11 +42,13 @@ fun PaperTradingScreen(onOpenDetail: (ResearchTargetDto) -> Unit) {
     val context = LocalContext.current
     val api = remember(context) { ApiClient.service(context) }
     val scope = rememberCoroutineScope()
+    val snackbarHostState = remember { SnackbarHostState() }
     var dashboard by remember { mutableStateOf<PaperTradingDashboardDto?>(null) }
     var positionPresentation by remember { mutableStateOf(PaperPositionPresentation()) }
     var openedPositionTarget by remember { mutableStateOf<ResearchTargetDto?>(null) }
     var refreshing by remember { mutableStateOf(false) }
     var runningNow by remember { mutableStateOf(false) }
+    var changingTradingEnabled by remember { mutableStateOf(false) }
     var message by remember { mutableStateOf<String?>(null) }
     var error by remember { mutableStateOf<String?>(null) }
     var showAllLogs by remember { mutableStateOf(false) }
@@ -113,7 +115,8 @@ fun PaperTradingScreen(onOpenDetail: (ResearchTargetDto) -> Unit) {
                     else Icon(Icons.Filled.Refresh, "刷新", tint = MaterialTheme.colorScheme.primary)
                 }
             }
-        }
+        },
+        snackbarHost = { SnackbarHost(snackbarHostState) },
     ) { paddingValues ->
         LazyColumn(
             modifier = Modifier.fillMaxSize().padding(paddingValues),
@@ -151,13 +154,37 @@ fun PaperTradingScreen(onOpenDetail: (ResearchTargetDto) -> Unit) {
             item {
                 ExecutionControlPanel(
                     running = runningNow,
+                    changingEnabled = changingTradingEnabled,
                     status = dashboard?.status,
+                    onEnabledChange = { enabled ->
+                        if (!changingTradingEnabled) {
+                            scope.launch {
+                                changingTradingEnabled = true
+                                val result = runCatching {
+                                    val current = api.adminConfig()
+                                    api.saveAdminConfig(current.copy(paper_trading_enabled = enabled))
+                                }
+                                if (result.isSuccess) {
+                                    snackbarHostState.showSnackbar(
+                                        if (enabled) "AI 模拟交易已开启" else "AI 模拟交易已暂停"
+                                    )
+                                    refresh()
+                                } else {
+                                    snackbarHostState.showSnackbar("切换 AI 模拟交易失败，请稍后重试")
+                                }
+                                changingTradingEnabled = false
+                            }
+                        }
+                    },
                     onRun = {
                         scope.launch {
                             runningNow = true
-                            runCatching { api.runPaperTradingNow() }.onSuccess {
-                                message = it.message
+                            val result = runCatching { api.runPaperTradingNow() }
+                            if (result.isSuccess) {
+                                message = result.getOrNull()?.message
                                 refresh()
+                            } else {
+                                snackbarHostState.showSnackbar("运行模拟决策失败，请稍后重试")
                             }
                             runningNow = false
                         }
@@ -267,7 +294,14 @@ private fun EquityMetric(label: String, value: String) {
 }
 
 @Composable
-private fun ExecutionControlPanel(running: Boolean, status: PaperTradingStatusDto?, onRun: () -> Unit) {
+private fun ExecutionControlPanel(
+    running: Boolean,
+    changingEnabled: Boolean,
+    status: PaperTradingStatusDto?,
+    onEnabledChange: (Boolean) -> Unit,
+    onRun: () -> Unit,
+) {
+    val enabled = status?.enabled == true
     Surface(
         modifier = Modifier.fillMaxWidth().padding(horizontal = AppSpacing.xxLarge, vertical = AppSpacing.large),
         color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.3f),
@@ -277,30 +311,53 @@ private fun ExecutionControlPanel(running: Boolean, status: PaperTradingStatusDt
             Row(verticalAlignment = Alignment.CenterVertically) {
                 Icon(Icons.Default.Terminal, null, modifier = Modifier.size(20.dp), tint = MaterialTheme.colorScheme.primary)
                 Spacer(Modifier.width(AppSpacing.medium))
-                Text("自动执行引擎", style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.Bold)
-                Spacer(Modifier.weight(1f))
-                if (status?.running == true) {
-                    CircularProgressIndicator(Modifier.size(16.dp), strokeWidth = 2.dp)
-                } else {
+                Column(Modifier.weight(1f)) {
+                    Text("AI 模拟交易", style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.Bold)
                     Text(
-                        if (status?.enabled == true) "已开启" else "已暂停",
+                        when {
+                            status == null -> "正在读取自动交易状态…"
+                            enabled -> "已开启 · 模拟账套会按既有决策与风控链自动轮换"
+                            else -> "已暂停 · 打开开关即可恢复自动轮换"
+                        },
                         style = MaterialTheme.typography.labelSmall,
-                        color = if (status?.enabled == true) MaterialTheme.marketColors.rise else MaterialTheme.marketColors.neutral
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                }
+                Spacer(Modifier.width(AppSpacing.medium))
+                if (changingEnabled) {
+                    CircularProgressIndicator(Modifier.size(22.dp), strokeWidth = 2.dp)
+                } else {
+                    Switch(
+                        checked = enabled,
+                        onCheckedChange = onEnabledChange,
+                        enabled = status != null && status.running != true && !running,
                     )
                 }
             }
 
+            Spacer(Modifier.height(AppSpacing.small))
+            Text(
+                "仅控制模拟账套，不会向真实券商提交订单。",
+                style = MaterialTheme.typography.labelSmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
             Spacer(Modifier.height(AppSpacing.medium))
 
             Button(
                 onClick = onRun,
-                enabled = !running && status?.running != true,
+                enabled = enabled && !changingEnabled && !running && status?.running != true,
                 modifier = Modifier.fillMaxWidth(),
                 shape = MaterialTheme.shapes.medium
             ) {
                 Icon(Icons.Default.PlayArrow, null)
                 Spacer(Modifier.width(AppSpacing.small))
-                Text(if (running) "正在运行模拟决策..." else "立即运行决策轮换")
+                Text(
+                    when {
+                        running || status?.running == true -> "正在运行模拟决策..."
+                        !enabled -> "请先开启 AI 模拟交易"
+                        else -> "立即运行决策轮换"
+                    }
+                )
             }
         }
     }

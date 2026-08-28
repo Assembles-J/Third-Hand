@@ -392,7 +392,7 @@ Backend/domain:
 - typed Personal Universe membership for POSITION/WATCHLIST/both;
 - always include all open positions;
 - local-only composition from Portfolio + Watchlist and cached display data;
-- no Decision/AI/remote-research invocation from the read model.
+- no Decision/AI/remote-research invocation from the read API.
 
 API:
 - preserve existing GET/POST/DELETE `/v1/watchlist`;
@@ -825,7 +825,7 @@ Also preserve:
 - PENDING DecisionOutcomes are still derived rather than persisted, so N3.6 does
   not invent a pending count. The API returns `pending_decision_count = null` with
   reason `pending_outcomes_are_derived_not_materialized_n3_6`. Likewise N3.4/5
-  unavailable account-level return/drawdown/benchmark-excess metrics remain null
+  unavailable account-level return/drawdown/turnover remain null
   with their existing reason codes rather than being presented as zero.
 - `/calibration` is intentionally absent; probability calibration remains N6.
 - N3.6 is now part of the accepted N3 product chain. The final N3.8 section below
@@ -1104,3 +1104,30 @@ Paper Broker or Evaluation authority.
 - **Authority impact:** none. This is Android presentation/update-delivery work
   only and does not modify Formal Decision, StrategyProfile, Evidence, Risk,
   sizing, ExecutionPrecheck, Paper Broker or Evaluation authority.
+
+## Delivery update — 2026-08-28 — AI simulation trading control recovery
+
+- **Android entry:** Bottom navigation -> Trading now keeps an `AI 模拟交易`
+  switch visible inside the execution-control panel even when automatic paper
+  trading is paused. The user can explicitly resume or pause the existing
+  simulated-account scheduler instead of reaching a dead-end `已暂停` state.
+- **Existing configuration contract:** Android reads the current
+  `GET /v1/admin/config` payload and writes the same complete configuration back
+  through `PUT /v1/admin/config`, changing only `paper_trading_enabled`; update
+  checking and the configured paper interval are preserved.
+- **Guarded manual run:** `立即运行决策轮换` is disabled while the scheduler is
+  paused, while its enabled state is being changed, or while a run is already in
+  progress. Toggle/run failures are surfaced through the screen Snackbar instead
+  of silently leaving the user unsure whether the action succeeded.
+- **Boundary:** this restores the existing governed paper-account scheduler; it
+  does **not** resume or implement N5 isolated AI-agent paper trading (#96), and
+  it does not give an LLM direct ledger or fill authority. The UI explicitly
+  states that no real broker order is submitted.
+- **Backend:** unchanged. The persisted paper-trading setting and Paper Broker
+  safety contracts already exist; this slice restores their missing Android
+  control surface only.
+- **Accepted:** repository CI and a physical-device off -> on -> manual run -> off
+  walkthrough remain required before this recovery is device-accepted.
+- **Delivery status:** `ANDROID_READY / CI_DEVICE_ACCEPTANCE_PENDING`.
+- **Authority impact:** none. Formal Decision, Risk, sizing, ExecutionPrecheck,
+  Paper Broker rules and Evaluation authority are unchanged.
