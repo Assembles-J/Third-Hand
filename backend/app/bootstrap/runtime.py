@@ -16,8 +16,11 @@ def load_legacy_application() -> ModuleType:
     Import ordering is part of the production contract: daily-history policy,
     compatibility hooks, and legacy synthetic instrument normalization must wrap
     PortfolioStore/provider classes before the legacy module constructs its
-    singletons. Paper runtime governance then patches that exact module object.
-    Adaptive scheduling narrows cadence/scope without changing policy authority.
+    singletons. Optional HiThink acquisition wraps those already-governed market
+    and daily-history providers before the legacy singletons are constructed, so
+    disabled/unconfigured deployments preserve the existing provider behavior.
+    Paper runtime governance then patches that exact module object. Adaptive
+    scheduling narrows cadence/scope without changing policy authority.
     Session-aware data scheduling narrows when provider-backed refreshes may run.
     Corporate-event policy wraps the already-local-first derived refresh; the
     HKEX Tier-1 fetcher is then registered on that bounded acquisition service.
@@ -34,6 +37,12 @@ def load_legacy_application() -> ModuleType:
     install_daily_history_policy()
     install_daily_history_compat()
     install_instrument_metadata_policy()
+
+    # Import only after daily-history governance is installed: hithink_finance
+    # captures the governed callables as its fallback chain at import time.
+    from app.hithink_finance import install as install_hithink_finance
+
+    install_hithink_finance()
 
     from app.legacy import application_legacy as application
     from app.paper_runtime_integration import install as install_paper_runtime_governance
