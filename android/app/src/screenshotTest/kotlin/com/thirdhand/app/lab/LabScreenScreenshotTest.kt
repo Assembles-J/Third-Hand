@@ -5,6 +5,8 @@ import androidx.compose.ui.tooling.preview.Preview
 import com.android.tools.screenshot.PreviewTest
 import com.thirdhand.app.ThemeMode
 import com.thirdhand.app.ThirdHandTheme
+import com.thirdhand.app.ui.components.StrategyWorkspaceNavigationProvider
+import com.thirdhand.app.ui.components.StrategyWorkspaceSection
 
 private const val LAB_PREVIEW_WIDTH = 420
 private const val LAB_PREVIEW_HEIGHT = 900
@@ -44,6 +46,11 @@ fun LabErrorScreenshotTest() {
 @Composable
 private fun LabScreenshotFrame(state: LabUiState) {
     ThirdHandTheme(ThemeMode.LIGHT) {
-        LabScreenContent(state = state, onBack = {}, onRefresh = {})
+        StrategyWorkspaceNavigationProvider(
+            selected = StrategyWorkspaceSection.STRATEGY_EVALUATION,
+            onSelect = {},
+        ) {
+            LabScreenContent(state = state, onBack = {}, onRefresh = {})
+        }
     }
 }

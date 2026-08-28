@@ -1592,3 +1592,39 @@ Paper Broker or Evaluation authority.
 - **Authority impact:** none. Formal Decision, StrategyProfile, ReviewPolicy,
   Evidence, Risk, sizing, ExecutionPrecheck, Paper Broker and Evaluation authority
   remain unchanged and server-owned.
+
+## Delivery update — 2026-08-29 — Strategy workspace section navigation
+
+- **Implementation contract:** merged #155 defines the Strategy workspace as the
+  existing `模拟执行 | 收益复盘 | 策略评估` capability set. This slice begins wiring
+  those sections without adding a new backend read model or trading action.
+- **Primary entry:** the existing `策略执行` screen remains the default `模拟执行`
+  destination. Its accepted simulated-account equity, positions, auto-execution,
+  manual decision rotation, execution-chain and decision-audit behavior are
+  unchanged.
+- **Section navigation:** the shared financial header adds a compact white
+  text-first selector with red active text and a short underline. `收益复盘` opens
+  the existing Execution Review surface; `策略评估` opens the existing read-only
+  SWING_V1 Strategy Lab. No large selected pill or second bottom navigation is
+  introduced.
+- **Compatibility route:** because the current primary shell is still a single
+  numeric-tab activity, review/evaluation are hosted in one non-exported Android
+  Strategy subroute activity. Switching between those two sections stays inside
+  that subroute; selecting `模拟执行` or Back returns to the existing primary
+  Strategy screen and restores the canonical bottom navigation. This is the
+  bounded compatibility route explicitly allowed by the #155 UI contract, not a
+  new navigation architecture.
+- **Screenshot coverage:** the existing `策略执行` 420x900 preview now exercises
+  the selector, and Strategy Lab deterministic preview states are rendered under
+  the same `策略评估` selector context. Hashes must be visually reviewed before
+  they are accepted into the screenshot manifest.
+- **Backend/API:** unchanged. Existing paper dashboard/config/run/audit,
+  daily-review and GET-only Lab contracts remain authoritative; Android does not
+  calculate new review, performance or trading facts.
+- **Delivery status:** `ANDROID_IMPLEMENTED / SCREENSHOT_CI_DEVICE_ACCEPTANCE_PENDING`.
+  Repository compile/unit, screenshot render/review/hash lock, Debug/Release and
+  `ci-gate` remain required before repository acceptance; #133 still owns the
+  physical-device Strategy walkthrough before `PRODUCT_DONE`.
+- **Authority impact:** none. The existing Formal-decision simulated-account
+  scheduler remains distinct from N5/#96 isolated AI-agent paper trading and from
+  any real broker execution authority.
