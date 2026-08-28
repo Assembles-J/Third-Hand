@@ -29,4 +29,4 @@ fun TradingSection(title: String, detail: String? = null, modifier: Modifier = M
 }
 
 @Composable
-fun TradingRowDivider() = DenseRowDivider()
+fun TradingRowDivider(inset: Boolean = true) = DenseRowDivider(inset = inset)

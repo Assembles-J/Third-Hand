@@ -1,28 +1,27 @@
 package com.thirdhand.app
 
-import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
-import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalUriHandler
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import com.thirdhand.app.ui.components.DenseStateTag
 import com.thirdhand.app.ui.components.TradingPageHeader
 import com.thirdhand.app.ui.components.TradingRowDivider
 import com.thirdhand.app.ui.components.TradingSection
 import com.thirdhand.app.ui.theme.AppSpacing
+import com.thirdhand.app.ui.theme.CompactTypography
 import kotlinx.coroutines.launch
 
 private const val NewsPageSize = 20
@@ -42,7 +41,12 @@ fun NewsScreen() {
     var scopeFilter by remember { mutableStateOf("all") }
 
     fun loadPage(reset: Boolean) = scope.launch {
-        if (reset) { loading = true; error = null } else loadingMore = true
+        if (reset) {
+            loading = true
+            error = null
+        } else {
+            loadingMore = true
+        }
         val offset = if (reset) 0 else news.size
         runCatching { api.cachedNews(NewsPageSize, offset, scopeFilter) }
             .onSuccess { page ->
@@ -50,7 +54,8 @@ fun NewsScreen() {
                 hasMore = page.size == NewsPageSize
             }
             .onFailure { error = "数据同步异常：${it.message ?: "网络连接失败"}" }
-        loading = false; loadingMore = false
+        loading = false
+        loadingMore = false
     }
 
     fun refreshInBackground() = scope.launch {
@@ -64,51 +69,74 @@ fun NewsScreen() {
         }.onSuccess { loadPage(true) }
     }
 
-    LaunchedEffect(scopeFilter) { loadPage(true); refreshInBackground() }
+    LaunchedEffect(scopeFilter) {
+        loadPage(true)
+        refreshInBackground()
+    }
 
     Scaffold(
         topBar = {
-            TradingPageHeader("资讯中心", "深度研报、市场公告与持仓动态") {
+            TradingPageHeader("资讯", "公告、快讯与现有关注范围关联资讯") {
                 IconButton(onClick = { loadPage(true); refreshInBackground() }, enabled = !loading) {
-                    if (loading) CircularProgressIndicator(Modifier.size(20.dp), strokeWidth = 2.dp)
-                    else Icon(Icons.Filled.Refresh, "刷新", tint = MaterialTheme.colorScheme.primary)
+                    if (loading) {
+                        CircularProgressIndicator(Modifier.size(AppSpacing.xLarge), strokeWidth = 2.dp)
+                    } else {
+                        Icon(Icons.Filled.Refresh, "刷新", tint = MaterialTheme.colorScheme.primary)
+                    }
                 }
             }
         }
     ) { paddingValues ->
         LazyColumn(
             modifier = Modifier.fillMaxSize().padding(paddingValues),
-            contentPadding = PaddingValues(bottom = AppSpacing.xxLarge)
+            contentPadding = PaddingValues(bottom = AppSpacing.xxLarge),
         ) {
             item {
                 LazyRow(
                     modifier = Modifier.fillMaxWidth(),
-                    contentPadding = PaddingValues(horizontal = AppSpacing.xxLarge, vertical = AppSpacing.medium)
+                    contentPadding = PaddingValues(
+                        horizontal = AppSpacing.contentHorizontal,
+                        vertical = AppSpacing.xs,
+                    ),
                 ) {
                     items(listOf("all" to "推荐", "paper_positions" to "自选", "learning_cases" to "研报关联")) { (value, label) ->
                         FilterChip(
                             selected = scopeFilter == value,
                             onClick = { scopeFilter = value },
-                            label = { Text(label) },
-                            modifier = Modifier.padding(end = AppSpacing.small),
-                            shape = MaterialTheme.shapes.small
+                            label = { Text(label, style = CompactTypography.secondary) },
+                            modifier = Modifier
+                                .padding(end = AppSpacing.small)
+                                .heightIn(min = AppSpacing.touchTarget),
+                            shape = MaterialTheme.shapes.small,
                         )
                     }
                 }
             }
 
             if (loading && news.isEmpty()) {
-                item { LinearProgressIndicator(Modifier.fillMaxWidth().padding(horizontal = AppSpacing.xxLarge)) }
+                item {
+                    LinearProgressIndicator(
+                        Modifier.fillMaxWidth().padding(horizontal = AppSpacing.contentHorizontal)
+                    )
+                }
             }
 
-            error?.let {
+            error?.let { message ->
                 item {
                     Surface(
-                        Modifier.fillMaxWidth().padding(horizontal = AppSpacing.xxLarge),
+                        Modifier.fillMaxWidth().padding(
+                            horizontal = AppSpacing.contentHorizontal,
+                            vertical = AppSpacing.small,
+                        ),
                         color = MaterialTheme.colorScheme.errorContainer,
-                        shape = MaterialTheme.shapes.small
+                        shape = MaterialTheme.shapes.small,
                     ) {
-                        Text(it, Modifier.padding(AppSpacing.medium), style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onErrorContainer)
+                        Text(
+                            message,
+                            Modifier.padding(AppSpacing.medium),
+                            style = CompactTypography.secondary,
+                            color = MaterialTheme.colorScheme.onErrorContainer,
+                        )
                     }
                 }
             }
@@ -116,7 +144,7 @@ fun NewsScreen() {
             item {
                 TradingSection(
                     title = if (scopeFilter == "all") "全市场动态" else "关联资讯",
-                    detail = if (news.isNotEmpty()) "已加载 ${news.size} 条即时快讯" else "正在检索最新数据..."
+                    detail = if (news.isNotEmpty()) "${news.size} 条" else "正在检索最新数据",
                 )
             }
 
@@ -129,15 +157,20 @@ fun NewsScreen() {
             if (hasMore && news.isNotEmpty()) {
                 item {
                     TextButton(
-                        modifier = Modifier.fillMaxWidth().padding(AppSpacing.xxLarge),
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .heightIn(min = AppSpacing.touchTarget),
                         onClick = { loadPage(false) },
-                        enabled = !loadingMore
+                        enabled = !loadingMore,
                     ) {
                         if (loadingMore) {
-                            CircularProgressIndicator(Modifier.size(16.dp), strokeWidth = 2.dp)
-                            Spacer(Modifier.width(8.dp))
+                            CircularProgressIndicator(Modifier.size(AppSpacing.large), strokeWidth = 2.dp)
+                            Spacer(Modifier.width(AppSpacing.small))
                         }
-                        Text(if (loadingMore) "加载中" else "查看更多资讯")
+                        Text(
+                            if (loadingMore) "加载中" else "查看更多资讯",
+                            style = CompactTypography.secondary,
+                        )
                     }
                 }
             }
@@ -146,64 +179,72 @@ fun NewsScreen() {
 }
 
 @Composable
-private fun NewsRow(item: NewsItemDto, onClick: () -> Unit) {
+internal fun NewsRow(item: NewsItemDto, onClick: () -> Unit) {
     val isAnnouncement = item.source_name.contains("公告") || item.source_name.contains("交易所")
+    val tagColor = if (isAnnouncement) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.tertiary
 
     Column(
         modifier = Modifier
             .fillMaxWidth()
+            .heightIn(min = AppSpacing.touchTarget)
             .clickable(onClick = onClick)
-            .padding(horizontal = AppSpacing.xxLarge, vertical = AppSpacing.large)
+            .padding(horizontal = AppSpacing.rowHorizontal, vertical = AppSpacing.rowVertical),
     ) {
-        Row(verticalAlignment = Alignment.CenterVertically) {
-            Surface(
-                color = if (isAnnouncement) MaterialTheme.colorScheme.tertiaryContainer else MaterialTheme.colorScheme.secondaryContainer,
-                shape = RoundedCornerShape(4.dp)
-            ) {
-                Text(
-                    text = if (isAnnouncement) "公告" else "快讯",
-                    modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp),
-                    style = MaterialTheme.typography.labelSmall,
-                    fontWeight = FontWeight.Bold,
-                    color = if (isAnnouncement) MaterialTheme.colorScheme.onTertiaryContainer else MaterialTheme.colorScheme.onSecondaryContainer
-                )
-            }
-            Spacer(Modifier.width(AppSpacing.small))
-            Text(
-                text = newsTimestamp(item.published_at),
-                style = MaterialTheme.typography.labelSmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant
-            )
-        }
-
-        Spacer(Modifier.height(AppSpacing.small))
-
         Text(
             text = item.title,
-            style = MaterialTheme.typography.titleMedium,
-            fontWeight = FontWeight.Bold,
+            style = CompactTypography.rowTitle,
+            fontWeight = FontWeight.SemiBold,
             maxLines = 2,
             overflow = TextOverflow.Ellipsis,
-            color = MaterialTheme.colorScheme.onSurface
+            color = MaterialTheme.colorScheme.onSurface,
         )
 
-        if (item.explanation.isNotBlank()) {
-            Spacer(Modifier.height(4.dp))
+        Spacer(Modifier.height(AppSpacing.xs))
+
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            DenseStateTag(
+                text = if (isAnnouncement) "公告" else "快讯",
+                color = tagColor,
+            )
+            if (item.source_name.isNotBlank()) {
+                Spacer(Modifier.width(AppSpacing.small))
+                Text(
+                    text = item.source_name,
+                    style = CompactTypography.caption,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                    modifier = Modifier.weight(1f),
+                )
+            } else {
+                Spacer(Modifier.weight(1f))
+            }
             Text(
-                text = item.explanation,
-                style = MaterialTheme.typography.bodySmall,
+                text = newsTimestamp(item.published_at),
+                style = CompactTypography.caption,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
-                maxLines = 3,
-                overflow = TextOverflow.Ellipsis
             )
         }
 
-        Spacer(Modifier.height(AppSpacing.large))
-        TradingRowDivider()
+        if (item.explanation.isNotBlank()) {
+            Spacer(Modifier.height(AppSpacing.xs))
+            Text(
+                text = item.explanation,
+                style = CompactTypography.secondary,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                maxLines = 2,
+                overflow = TextOverflow.Ellipsis,
+            )
+        }
     }
+    TradingRowDivider()
 }
 
 private fun newsTimestamp(value: String?): String {
     val raw = value?.replace('T', ' ')?.substringBefore("+") ?: return ""
-    return if (raw.length > 16) raw.takeLast(16) else raw
+    return when {
+        raw.length >= 16 && raw.getOrNull(4) == '-' -> raw.substring(5, 16)
+        raw.length > 16 -> raw.takeLast(16)
+        else -> raw
+    }
 }
