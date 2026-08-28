@@ -6,16 +6,11 @@ scheduler-owned Personal Universe symbol may enter expensive research work.
 """
 from __future__ import annotations
 
-from contextvars import ContextVar
-
 from app.api.v1.review.router import create_review_router
 from app.application_services.personal_universe.review_service import PersonalUniverseReviewService
 from app.domain.personal_universe import ReviewMode
 from app.infrastructure.database.personal_universe_repository import PersonalUniverseRepository
 from app.infrastructure.database.review_plan_repository import ReviewPlanRepository
-
-
-_explicit_cycle: ContextVar[bool] = ContextVar("pux2_explicit_review_cycle", default=False)
 
 
 def install(m) -> None:
@@ -38,7 +33,6 @@ def install(m) -> None:
     if "/v1/review-plan/{symbol}" not in existing_paths:
         m.app.include_router(create_review_router(service))
 
-    original_run_cycle = m.run_paper_trading_cycle
     original_refresh_market_intelligence = m.refresh_paper_market_intelligence
     original_prepare_decisions = m.prepare_paper_decisions
     original_refresh_company = getattr(m, "refresh_company_intelligence_focus", None)
@@ -47,26 +41,7 @@ def install(m) -> None:
         return service.scheduler_plan(
             symbol,
             evaluated_at=m.beijing_now(),
-            explicit_user_request=_explicit_cycle.get(),
         )
-
-    def run_paper_trading_cycle(
-        requested_symbols: list[str],
-        force: bool = False,
-        allow_when_disabled: bool = False,
-    ) -> dict[str, object]:
-        # Existing force=true is already an explicit operator/manual request.
-        # Treat it as a full-review override for Personal Universe symbols while
-        # leaving formal candidate membership and execution gates unchanged.
-        token = _explicit_cycle.set(bool(force))
-        try:
-            return original_run_cycle(
-                requested_symbols,
-                force=force,
-                allow_when_disabled=allow_when_disabled,
-            )
-        finally:
-            _explicit_cycle.reset(token)
 
     def refresh_paper_market_intelligence(symbols: list[str], names: dict[str, str]) -> None:
         permitted: list[str] = []
@@ -113,11 +88,9 @@ def install(m) -> None:
             run_id=run_id,
         ) or 0)
 
-    def prepare_paper_decisions(
-        symbols: list[str],
-        run_id: str | None = None,
-        names: dict[str, str] | None = None,
-    ) -> int:
+    def prepare_paper_decisions(symbols: list[str], *args, **kwargs) -> int:
+        """Filter research depth while transparently preserving the legacy call contract."""
+        run_id = kwargs.get("run_id")
         permitted: list[str] = []
         for symbol in symbols:
             plan = review_plan(symbol)
@@ -164,9 +137,8 @@ def install(m) -> None:
 
         if not permitted:
             return 0
-        return int(original_prepare_decisions(permitted, run_id=run_id, names=names) or 0)
+        return int(original_prepare_decisions(permitted, *args, **kwargs) or 0)
 
-    m.run_paper_trading_cycle = run_paper_trading_cycle
     m.refresh_paper_market_intelligence = refresh_paper_market_intelligence
     if callable(original_refresh_company):
         m.refresh_company_intelligence_focus = refresh_company_intelligence_focus
