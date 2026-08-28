@@ -4,10 +4,10 @@ services:
       context: ./backend
       args:
         # Direct Docker builds (including CI) keep the Dockerfile's official-PyPI default.
-        # Compose deployments use the Aliyun mirror by default because production
-        # connectivity to files.pythonhosted.org is too slow for reliable rebuilds.
-        PIP_INDEX_URL: "${PIP_INDEX_URL:-https://mirrors.aliyun.com/pypi/simple/}"
-        PIP_TRUSTED_HOST: "${PIP_TRUSTED_HOST:-mirrors.aliyun.com}"
+        # Compose deployments run on Aliyun ECS and use the VPC-local PyPI mirror so
+        # first-time image rebuilds do not depend on slow public package downloads.
+        PIP_INDEX_URL: "${PIP_INDEX_URL:-http://mirrors.cloud.aliyuncs.com/pypi/simple/}"
+        PIP_TRUSTED_HOST: "${PIP_TRUSTED_HOST:-mirrors.cloud.aliyuncs.com}"
         PIP_TIMEOUT: "${PIP_TIMEOUT:-120}"
         PIP_RETRIES: "${PIP_RETRIES:-5}"
     image: third-hand-api:latest
