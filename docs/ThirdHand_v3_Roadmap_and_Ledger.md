@@ -1628,3 +1628,13 @@ Paper Broker or Evaluation authority.
 - **Authority impact:** none. The existing Formal-decision simulated-account
   scheduler remains distinct from N5/#96 isolated AI-agent paper trading and from
   any real broker execution authority.
+
+## Delivery update — 2026-08-30 — Strategy shell design-gap reconciliation (#164)
+
+- **Design-gap ownership:** parent #159 records that the accepted UIX runtime remains materially distant from the supplied AI-trading reference. #164 is the first bounded Strategy implementation slice under #161; it does not reopen completed UIX correctness acceptance.
+- **Android chrome:** the Strategy root visible title changes from the implementation label `策略执行` to the product destination `策略`. The subtitle is tightened to `AI决策 · 模拟执行 · 风险控制`, and the current workspace selector receives stronger typography plus a clearer brand-red active underline.
+- **Capability accuracy:** existing `模拟执行 | 收益复盘 | 策略评估` routes remain unchanged and reachable. This slice deliberately does not rename a route to unsupported `研究计划`, does not create real-broker controls and does not fabricate a new backend workspace contract simply to mimic the reference.
+- **Visual acceptance:** CI #491 rendered the intentional Strategy/Lab screenshot delta. The rendered Strategy and Lab states were inspected at normal phone scale before accepting the new screenshot hashes; screenshot-hash update alone is not treated as visual acceptance.
+- **Backend/API:** unchanged. Existing paper dashboard/config/run/audit, daily-review and GET-only Lab contracts remain authoritative.
+- **Delivery status:** `ANDROID_RENDER_REVIEWED / FINAL_ATOMIC_CI_DEVICE_ACCEPTANCE_PENDING`. The implementation, canonical ledger sync and accepted screenshot manifest must land as one atomic product commit before governance/CI can pass. Physical-device review remains required before #164 closes.
+- **Authority impact:** none. Formal Decision, StrategyProfile, ReviewPolicy, Evidence, Risk, sizing, ExecutionPrecheck, Paper Broker and Evaluation remain server-owned; this slice grants no AI or broker execution authority.

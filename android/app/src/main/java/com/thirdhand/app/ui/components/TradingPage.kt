@@ -68,9 +68,10 @@ fun StrategyWorkspaceNavigationProvider(
 fun TradingPageHeader(title: String, subtitle: String, action: @Composable (() -> Unit)? = null) {
     val providedNavigation = LocalStrategyWorkspaceNavigation.current
     val context = LocalContext.current
+    val isStrategyRoot = title == "策略执行"
     val navigation = when {
         providedNavigation != null -> providedNavigation
-        title == "策略执行" -> StrategyWorkspaceNavigation(
+        isStrategyRoot -> StrategyWorkspaceNavigation(
             selected = StrategyWorkspaceSection.SIMULATED_EXECUTION,
             onSelect = { target ->
                 if (target != StrategyWorkspaceSection.SIMULATED_EXECUTION) {
@@ -81,10 +82,13 @@ fun TradingPageHeader(title: String, subtitle: String, action: @Composable (() -
         else -> null
     }
 
+    val visibleTitle = if (isStrategyRoot) "策略" else title
+    val visibleSubtitle = if (isStrategyRoot) "AI决策 · 模拟执行 · 风险控制" else subtitle
+
     Column {
         DensePageHeader(
-            title = title,
-            subtitle = subtitle,
+            title = visibleTitle,
+            subtitle = visibleSubtitle,
             action = action,
         )
         navigation?.let { StrategyWorkspaceSectionBar(it.selected, it.onSelect) }
@@ -119,16 +123,16 @@ fun StrategyWorkspaceSectionBar(
                         Text(
                             text = section.label,
                             modifier = Modifier.align(Alignment.Center),
-                            style = CompactTypography.secondary,
-                            fontWeight = if (active) FontWeight.SemiBold else FontWeight.Medium,
+                            style = if (active) CompactTypography.rowTitle else CompactTypography.secondary,
+                            fontWeight = if (active) FontWeight.Bold else FontWeight.Medium,
                             color = if (active) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant,
                         )
                         if (active) {
                             Surface(
                                 modifier = Modifier
                                     .align(Alignment.BottomCenter)
-                                    .fillMaxWidth(0.46f)
-                                    .height(2.dp),
+                                    .fillMaxWidth(0.68f)
+                                    .height(3.dp),
                                 color = MaterialTheme.colorScheme.primary,
                             ) {}
                         }
@@ -137,7 +141,7 @@ fun StrategyWorkspaceSectionBar(
             }
             HorizontalDivider(
                 thickness = 0.5.dp,
-                color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.55f),
+                color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.45f),
             )
         }
     }

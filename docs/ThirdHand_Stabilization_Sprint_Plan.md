@@ -220,3 +220,28 @@ Before coding, read:
 Each implementation PR must use the delivery matrix required by
 `ThirdHand_v3_Documentation_and_Delivery_Governance.md` and synchronize the
 canonical documents in the same commit when product code changes.
+
+## 11. Post-S0 visual fidelity handoff — 2026-08-30
+
+The completed UIX0-UIX6 device walkthrough proved routing, readability and the
+current authority boundaries, but the supplied AI-trading reference still shows
+a material product-level visual and information-architecture gap. That follow-up
+is tracked separately by parent #159 and must not reopen already accepted S0/UIX
+correctness work.
+
+The first implementation slice is #164 under Strategy parent #161. It is limited
+to Strategy shell chrome and workspace-selector fidelity:
+
+- the visible Strategy root title becomes the product destination `策略` rather
+  than the implementation label `策略执行`;
+- the subtitle remains capability-accurate (`AI决策 · 模拟执行 · 风险控制`);
+- the existing `模拟执行 | 收益复盘 | 策略评估` routes remain authoritative and
+  reachable while their selector styling moves closer to the supplied reference;
+- no unsupported `研究计划`, real-broker action, new Decision authority, API or
+  DTO is introduced merely to match the mockup;
+- intentional Strategy/Lab screenshot changes require visual review before their
+  hashes are accepted, followed by normal Android CI and device acceptance.
+
+This is a presentation reconciliation track, not permission to resume paused N5
+AI paper-account authority or to treat reference-only order controls as shipped
+capability.
