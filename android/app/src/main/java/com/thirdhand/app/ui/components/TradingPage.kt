@@ -7,6 +7,9 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
@@ -25,10 +28,14 @@ import com.thirdhand.app.ui.theme.AppSpacing
 import com.thirdhand.app.ui.theme.CompactTypography
 
 /** Existing Strategy surfaces grouped under one authority-safe mobile workspace. */
-enum class StrategyWorkspaceSection(val label: String, val key: String) {
-    SIMULATED_EXECUTION("模拟执行", "execution"),
-    EXECUTION_REVIEW("收益复盘", "review"),
-    STRATEGY_EVALUATION("策略评估", "evaluation");
+enum class StrategyWorkspaceSection(
+    val label: String,
+    val key: String,
+    val subtitle: String,
+) {
+    SIMULATED_EXECUTION("模拟执行", "execution", "模拟账户 · 决策驱动 · 风控执行"),
+    EXECUTION_REVIEW("收益复盘", "review", "每日建议 · 收益复盘 · 执行结果"),
+    STRATEGY_EVALUATION("策略评估", "evaluation", "SWING_V1 · 仿真评估 · 只读实验室");
 
     companion object {
         fun fromKey(value: String?): StrategyWorkspaceSection =
@@ -60,9 +67,9 @@ fun StrategyWorkspaceNavigationProvider(
 /**
  * Compatibility wrapper for existing financial screens.
  *
- * UIX9 keeps the public header contract stable while adding the compact Strategy
- * section selector only to the real Strategy execution route or an explicitly
- * provided Strategy subroute. Other financial screens keep the UIX8 chrome.
+ * The public header contract stays stable. Strategy routes are rendered as one
+ * dedicated workspace with a shared `策略` title and section-specific, factual
+ * subtitle. Other financial screens keep the shared dense page chrome.
  */
 @Composable
 fun TradingPageHeader(title: String, subtitle: String, action: @Composable (() -> Unit)? = null) {
@@ -83,8 +90,8 @@ fun TradingPageHeader(title: String, subtitle: String, action: @Composable (() -
 
     Column {
         DensePageHeader(
-            title = title,
-            subtitle = subtitle,
+            title = if (navigation != null) "策略" else title,
+            subtitle = navigation?.selected?.subtitle ?: subtitle,
             action = action,
         )
         navigation?.let { StrategyWorkspaceSectionBar(it.selected, it.onSelect) }
@@ -106,7 +113,8 @@ fun StrategyWorkspaceSectionBar(
             Row(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .height(AppSpacing.touchTarget),
+                    .height(AppSpacing.touchTarget)
+                    .padding(horizontal = AppSpacing.contentHorizontal),
             ) {
                 StrategyWorkspaceSection.entries.forEach { section ->
                     val active = section == selected
@@ -119,17 +127,22 @@ fun StrategyWorkspaceSectionBar(
                         Text(
                             text = section.label,
                             modifier = Modifier.align(Alignment.Center),
-                            style = CompactTypography.secondary,
+                            style = if (active) CompactTypography.rowTitle else CompactTypography.secondary,
                             fontWeight = if (active) FontWeight.SemiBold else FontWeight.Medium,
-                            color = if (active) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant,
+                            color = if (active) {
+                                MaterialTheme.colorScheme.primary
+                            } else {
+                                MaterialTheme.colorScheme.onSurfaceVariant
+                            },
                         )
                         if (active) {
                             Surface(
                                 modifier = Modifier
                                     .align(Alignment.BottomCenter)
-                                    .fillMaxWidth(0.46f)
-                                    .height(2.dp),
+                                    .width(30.dp)
+                                    .height(3.dp),
                                 color = MaterialTheme.colorScheme.primary,
+                                shape = RoundedCornerShape(3.dp),
                             ) {}
                         }
                     }
@@ -137,7 +150,7 @@ fun StrategyWorkspaceSectionBar(
             }
             HorizontalDivider(
                 thickness = 0.5.dp,
-                color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.55f),
+                color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.45f),
             )
         }
     }
