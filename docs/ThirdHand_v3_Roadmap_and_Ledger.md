@@ -1628,3 +1628,28 @@ Paper Broker or Evaluation authority.
 - **Authority impact:** none. The existing Formal-decision simulated-account
   scheduler remains distinct from N5/#96 isolated AI-agent paper trading and from
   any real broker execution authority.
+
+## Delivery update — 2026-08-30 — Strategy shell chrome gap slice (#164)
+
+- **Header:** all three existing Strategy workspace sections now share the visible
+  page title `策略` instead of exposing separate generic page titles. The subtitle
+  remains section-specific and factual: simulated-account execution, daily
+  execution review, and read-only SWING_V1 evaluation retain their existing
+  authority boundaries and refresh actions.
+- **Workspace selector:** `模拟执行 | 收益复盘 | 策略评估` remains the exact capability
+  set. The selector keeps full-width 44dp interaction targets but uses the page
+  content inset, stronger active typography and a compact 30dp red underline so
+  it reads as workspace navigation rather than a generic table tab.
+- **Page rhythm:** the brand-red header, white selector and thin divider now form
+  one compact Strategy chrome before the existing factual summary/content. No
+  large hero card or second bottom navigation is introduced.
+- **Backend/API:** unchanged. Existing paper dashboard/config/run/audit,
+  daily-review and GET-only Lab contracts are reused exactly.
+- **Safety / authority:** no real-broker action, research-plan payload, Decision
+  authority, scheduler behavior or evaluation write path is added. The existing
+  simulated-account Paper Broker and read-only Evaluation boundaries remain
+  unchanged.
+- **Delivery status:** `ANDROID_IMPLEMENTED / SCREENSHOT_CI_DEVICE_ACCEPTANCE_PENDING`.
+  Intentional Strategy/Lab screenshot changes must be rendered and reviewed,
+  approved hashes updated, Android CI green, and a device screenshot reviewed
+  before #164 closes.
