@@ -1653,3 +1653,31 @@ Paper Broker or Evaluation authority.
   Intentional Strategy/Lab screenshot changes must be rendered and reviewed,
   approved hashes updated, Android CI green, and a device screenshot reviewed
   before #164 closes.
+
+## Delivery update — 2026-08-30 — Strategy dashboard composition (#167)
+
+- **Reference reconciliation:** after #166 aligned the shared Strategy chrome, the
+  simulated-execution body still read as a legacy execution-management list. #167
+  reorganizes only existing authoritative facts into a dashboard hierarchy closer
+  to the supplied Strategy reference.
+- **Composition:** the page keeps the simulated-account equity summary, then shows
+  `模拟执行状态`, a factual `本轮执行概览`, `最近决策执行`, and `模拟持仓概览`. The latest
+  run card uses persisted `SimulationRunDto` / paper-runtime facts for processed,
+  executed and skipped counts plus timestamp/status.
+- **Semantic accuracy:** the UI deliberately says `本轮` rather than inventing a
+  daily aggregate and says `最近决策执行` rather than fabricating AI confidence,
+  target-price or recommendation fields that are absent from the current contract.
+- **Controls / drill-down:** the existing auto-execution switch, guarded manual-run
+  CTA, no-real-broker warning, execution-chain route, paper-position detail and
+  decision-audit drill-down remain unchanged and reachable.
+- **Backend/API:** unchanged. The slice reuses `PaperTradingDashboardDto`,
+  `PaperTradingStatusDto`, `SimulationRunDto`, paper logs and position presentation;
+  no endpoint, DTO, provider or persistence path is added.
+- **Authority impact:** none. Formal Decision, StrategyProfile, ReviewPolicy,
+  Evidence, Risk, sizing, ExecutionPrecheck, Paper Broker and Evaluation remain
+  server-owned. This does not implement N5 AI-agent paper trading or real broker
+  execution.
+- **Delivery status:** `ANDROID_IMPLEMENTED / SCREENSHOT_CI_DEVICE_ACCEPTANCE_PENDING`.
+  The intentional Strategy screenshot delta must be visually reviewed before its
+  hash is accepted; Android CI and physical-device readability remain required
+  before #167 closes.

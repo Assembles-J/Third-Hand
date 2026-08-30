@@ -265,7 +265,53 @@ internal fun PaperTradingOverview(
                 item { PaperTradingStatusMessage(message) }
             }
 
-            item { TradingSection("持仓明细") }
+            item { TradingSection("模拟执行状态") }
+            item {
+                ExecutionControlPanel(
+                    running = running,
+                    changingEnabled = changingEnabled,
+                    status = dashboard?.status,
+                    onEnabledChange = onEnabledChange,
+                    onRun = onRun,
+                )
+            }
+
+            item { TradingSection("本轮执行概览") }
+            item {
+                LatestRunSummary(
+                    run = runs.firstOrNull(),
+                    fallbackStatus = dashboard?.status,
+                )
+            }
+            item { HistoryLink(runs = runs, onClick = onOpenRunChain) }
+
+            item { TradingSection("最近决策执行") }
+
+            val executedLogs = dashboard?.logs.orEmpty().filter { it.status == "executed" }
+            if (executedLogs.isEmpty()) {
+                item { EmptyStatePlaceholder("暂无已执行的模拟决策") }
+            }
+
+            items(executedLogs.take(3), key = { it.id }) { log ->
+                PaperLogRow(log, onOpenDecision = {
+                    log.decision_id?.let(onOpenDecision)
+                })
+            }
+
+            if (dashboard?.logs.orEmpty().size > 3) {
+                item {
+                    TextButton(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(horizontal = AppSpacing.contentHorizontal),
+                        onClick = onOpenAllLogs,
+                    ) {
+                        Text("查看完整操作与拦截记录", style = CompactTypography.secondary)
+                    }
+                }
+            }
+
+            item { TradingSection("模拟持仓概览") }
 
             val positions = dashboard?.account?.positions.orEmpty()
             if (positions.isEmpty()) {
@@ -279,46 +325,88 @@ internal fun PaperTradingOverview(
                     )
                 }
             }
+        }
+    }
+}
 
-            item { TradingSection("执行控制") }
-            item {
-                ExecutionControlPanel(
-                    running = running,
-                    changingEnabled = changingEnabled,
-                    status = dashboard?.status,
-                    onEnabledChange = onEnabledChange,
-                    onRun = onRun,
-                )
+@Composable
+private fun LatestRunSummary(
+    run: SimulationRunDto?,
+    fallbackStatus: PaperTradingStatusDto?,
+) {
+    val statusText = when (run?.status ?: fallbackStatus?.last_status) {
+        "completed" -> "已完成"
+        "failed" -> "失败"
+        "running" -> "运行中"
+        "never_run", null -> "未运行"
+        else -> run?.status ?: fallbackStatus?.last_status.orEmpty()
+    }
+    val statusColor = when (run?.status ?: fallbackStatus?.last_status) {
+        "completed" -> MaterialTheme.colorScheme.primary
+        "failed" -> MaterialTheme.colorScheme.error
+        else -> MaterialTheme.colorScheme.onSurfaceVariant
+    }
+    val symbolCount = run?.symbol_count ?: fallbackStatus?.last_symbols?.size ?: 0
+    val executed = run?.executed ?: fallbackStatus?.last_executed ?: 0
+    val skipped = run?.skipped ?: fallbackStatus?.last_skipped ?: 0
+    val timestamp = run?.started_at ?: fallbackStatus?.last_started_at
+
+    Surface(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(horizontal = AppSpacing.contentHorizontal),
+        color = MaterialTheme.colorScheme.surface,
+        shape = RoundedCornerShape(8.dp),
+        tonalElevation = 1.dp,
+    ) {
+        Column(
+            modifier = Modifier.padding(
+                horizontal = AppSpacing.medium,
+                vertical = AppSpacing.small,
+            ),
+        ) {
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Text("最近一轮", style = CompactTypography.rowTitle)
+                Spacer(Modifier.weight(1f))
+                DenseStateTag(statusText, statusColor)
             }
-
-            item { HistoryLink(runs = runs, onClick = onOpenRunChain) }
-
-            item { TradingSection("最近成交") }
-
-            val executedLogs = dashboard?.logs.orEmpty().filter { it.status == "executed" }
-            if (executedLogs.isEmpty()) {
-                item { EmptyStatePlaceholder("暂无成交记录") }
-            }
-
-            items(executedLogs.take(5), key = { it.id }) { log ->
-                PaperLogRow(log, onOpenDecision = {
-                    log.decision_id?.let(onOpenDecision)
-                })
-            }
-
-            if (dashboard?.logs.orEmpty().size > 5) {
-                item {
-                    TextButton(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .padding(horizontal = AppSpacing.contentHorizontal),
-                        onClick = onOpenAllLogs,
-                    ) {
-                        Text("查看完整操作与拦截记录", style = CompactTypography.secondary)
-                    }
-                }
+            Text(
+                timestamp?.let { paperBeijingTimestamp(it) } ?: "暂无执行时间",
+                style = CompactTypography.caption,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                modifier = Modifier.padding(top = AppSpacing.xxs),
+            )
+            HorizontalDivider(
+                modifier = Modifier.padding(vertical = AppSpacing.small),
+                thickness = 0.5.dp,
+                color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.45f),
+            )
+            Row(Modifier.fillMaxWidth()) {
+                RunMetric("处理标的", symbolCount.toString(), Modifier.weight(1f))
+                RunMetric("已执行", executed.toString(), Modifier.weight(1f))
+                RunMetric("已跳过", skipped.toString(), Modifier.weight(1f))
             }
         }
+    }
+}
+
+@Composable
+private fun RunMetric(label: String, value: String, modifier: Modifier = Modifier) {
+    Column(modifier, horizontalAlignment = Alignment.Start) {
+        Text(
+            label,
+            style = CompactTypography.caption,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+        )
+        Text(
+            value,
+            style = CompactTypography.rowValue,
+            fontWeight = FontWeight.SemiBold,
+            color = MaterialTheme.colorScheme.onSurface,
+        )
     }
 }
 
