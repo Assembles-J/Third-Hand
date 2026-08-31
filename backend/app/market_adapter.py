@@ -51,12 +51,17 @@ MARKET_ADAPTERS: dict[MarketCode, MarketAdapter] = {
         # required at the execution boundary; it must never be inferred.
         settlement_currency="CNY",
         settlement_channel="SH_HK_CONNECT_RMB",
-        # HK board lots are instrument-specific.  Zero means callers must
-        # obtain explicit instrument metadata before sizing/execution.
+        # HK board lots are instrument-specific. Zero means callers must obtain
+        # authoritative instrument metadata before sizing/execution.
         default_lot_size=0,
-        settlement_rule="HK_INSTRUMENT_SPECIFIC",
+        # Sellability and clearing settlement are different concerns. Ordinary
+        # HK inventory is not subject to the CN A-share T+1 sellability lock;
+        # broker-supported same-day resale is therefore modeled explicitly as
+        # T0 sellability. Board-lot/tick rules remain instrument metadata.
+        settlement_rule="HK_T0_SELLABILITY",
         # Do not silently apply CN fees to HK trades. A configured HK paper
-        # schedule is required before the simulated ledger may execute them.
+        # schedule plus an explicit HKD/CNY cash-settlement policy is required
+        # before the simulated ledger may execute them.
         paper_fee_schedule="UNCONFIGURED",
         benchmark_symbols=("HSI", "HSTECH"),
     ),
@@ -99,7 +104,7 @@ def market_for_symbol(symbol: str) -> MarketCode | None:
     if len(normalized) == 6 and normalized.isdigit():
         return "CN"
 
-    # Common US ticker representation.  Exchange-qualified/provider-specific
+    # Common US ticker representation. Exchange-qualified/provider-specific
     # symbols should be normalized by their provider before reaching here.
     if _US_TICKER.fullmatch(normalized):
         return "US"

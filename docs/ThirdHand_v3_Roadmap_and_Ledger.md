@@ -1653,3 +1653,14 @@ Paper Broker or Evaluation authority.
   Intentional Strategy/Lab screenshot changes must be rendered and reviewed,
   approved hashes updated, Android CI green, and a device screenshot reviewed
   before #164 closes.
+
+## Delivery update — 2026-08-31 — legacy paper-lot recovery and HK sellability boundary (#170)
+
+- **Production observation:** four CN paper positions bought on 2026-08-18 retained correct aggregate quantities and immutable executed BUY/SELL history but had no `paper_position_lots`. Because sellability is lot-derived, normal account projection reported the full positions as locked indefinitely even though the ledger replay exactly matched each aggregate holding.
+- **Repository repair:** before normal `paper_account()` projection, aggregate positions with zero active lots are replayed through the existing FIFO `_reconcile_legacy_position_lots()` authority. Recovery commits only when immutable executed BUY/SELL history proves the exact remaining quantity; mismatches remain fail-closed, and repeated reads/restarts cannot duplicate reconstructed lots.
+- **HK sellability:** the HK MarketAdapter now names `HK_T0_SELLABILITY` explicitly. Clearing settlement remains separate from security sellability; board lot and price tick remain instrument-specific metadata rather than CN defaults.
+- **Execution boundary:** the normal paper account remains CNY-only. HK paper fills stay disabled while `paper_fee_schedule=UNCONFIGURED` and no explicit HKD cash subledger or Stock-Connect conversion/settlement policy exists. No CN fee schedule, CN T+1 rule, global 100-share lot, or inferred FX conversion may be used as a fallback.
+- **Backend tests:** regression coverage includes prior-session CN recovery to full sellability, idempotent repeated reads, aggregate/ledger mismatch refusal, same-day HK legacy-lot sellability, and the explicit HK adapter rule.
+- **Android/API:** no new order-entry surface or DTO is introduced in this slice. Existing lot-derived sellability consumers benefit from corrected projections; market-aware HK labeling and future manual simulated BUY/SELL remain tracked by #170 and must reuse the same deterministic Paper Broker boundary.
+- **Delivery status:** `BACKEND_READY / CI_ACCEPTANCE_PENDING`. Phase 5 deployed acceptance remains #46; full HK simulated execution is not accepted by this change.
+- **Authority impact:** none. Formal Decision, AI, StrategyProfile, Risk, sizing and ExecutionPrecheck authority are unchanged; Paper Broker and lot reconstruction remain deterministic and fail-closed.

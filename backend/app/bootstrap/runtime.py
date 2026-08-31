@@ -16,34 +16,40 @@ def load_legacy_application() -> ModuleType:
     Import ordering is part of the production contract: daily-history policy,
     compatibility hooks, and legacy synthetic instrument normalization must wrap
     PortfolioStore/provider classes before the legacy module constructs its
-    singletons. Optional HiThink acquisition wraps those already-governed market
-    and daily-history providers before the legacy singletons are constructed, so
-    disabled/unconfigured deployments preserve the existing provider behavior.
-    Paper runtime governance then patches that exact module object. Adaptive
-    scheduling narrows cadence/scope without changing policy authority. A bounded
-    execution-only poll may consume a later eligible cached quote between full
-    reviews without regenerating decisions or invoking research providers.
-    Session-aware data scheduling narrows when provider-backed refreshes may run.
-    Corporate-event policy wraps the already-local-first derived refresh; the
-    HKEX Tier-1 fetcher is then registered on that bounded acquisition service.
-    V2 research/Personal-Universe services are registered next. PUX2 ReviewPlan
-    governance then limits expensive scheduler research while preserving the
-    existing formal candidate and execution authorities. Official release-aware
-    Company Intelligence refresh is installed before Mandatory Acquisition is
-    allowed to turn LOCAL_MISS/stale coverage into bounded provider attempts.
+    singletons. Legacy paper-lot recovery is installed at the same persistence
+    boundary so old aggregate positions cannot remain permanently locked merely
+    because their PositionLots predate the current schema. Optional HiThink
+    acquisition wraps those already-governed market and daily-history providers
+    before the legacy singletons are constructed, so disabled/unconfigured
+    deployments preserve the existing provider behavior. Paper runtime
+    governance then patches that exact module object. Adaptive scheduling narrows
+    cadence/scope without changing policy authority. A bounded execution-only
+    poll may consume a later eligible cached quote between full reviews without
+    regenerating decisions or invoking research providers. Session-aware data
+    scheduling narrows when provider-backed refreshes may run. Corporate-event
+    policy wraps the already-local-first derived refresh; the HKEX Tier-1 fetcher
+    is then registered on that bounded acquisition service. V2 research/Personal-
+    Universe services are registered next. PUX2 ReviewPlan governance then limits
+    expensive scheduler research while preserving the existing formal candidate
+    and execution authorities. Official release-aware Company Intelligence
+    refresh is installed before Mandatory Acquisition is allowed to turn
+    LOCAL_MISS/stale coverage into bounded provider attempts.
     DecisionContextBuilder, Evidence, AI, Arbiter and execution stay remote-I/O
     free.
     """
     from app.daily_history_policy import install as install_daily_history_policy
     from app.daily_history_compat import install as install_daily_history_compat
     from app.instrument_metadata_policy import install as install_instrument_metadata_policy
+    from app.paper_legacy_lot_recovery import install as install_paper_legacy_lot_recovery
 
     install_daily_history_policy()
     install_daily_history_compat()
     install_instrument_metadata_policy()
+    install_paper_legacy_lot_recovery()
 
-    # Import only after daily-history governance is installed: hithink_finance
-    # captures the governed callables as its fallback chain at import time.
+    # Import only after persistence/data governance is installed: the legacy
+    # module constructs its PortfolioStore singleton at import time, while
+    # hithink_finance captures governed callables as its fallback chain.
     from app.hithink_finance import install as install_hithink_finance
 
     install_hithink_finance()
