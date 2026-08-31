@@ -20,6 +20,7 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import com.thirdhand.app.paperorder.PaperManualOrderPanel
 import com.thirdhand.app.ui.components.DenseRowDivider
 import com.thirdhand.app.ui.components.DenseStateTag
 import com.thirdhand.app.ui.components.TradingPageHeader
@@ -179,6 +180,9 @@ fun PaperTradingScreen(onOpenDetail: (ResearchTargetDto) -> Unit) {
         onOpenRunChain = { showRunChain = true },
         onOpenDecision = { selectedDecisionId = it },
         onOpenAllLogs = { showAllLogs = true },
+        manualOrderContent = {
+            PaperManualOrderPanel(onOrderExecuted = ::refresh)
+        },
         snackbarHost = { SnackbarHost(snackbarHostState) },
     )
 
@@ -236,6 +240,7 @@ internal fun PaperTradingOverview(
     onOpenRunChain: () -> Unit,
     onOpenDecision: (String) -> Unit,
     onOpenAllLogs: () -> Unit,
+    manualOrderContent: (@Composable () -> Unit)? = null,
     snackbarHost: @Composable () -> Unit = {},
 ) {
     Scaffold(
@@ -289,6 +294,11 @@ internal fun PaperTradingOverview(
                     onEnabledChange = onEnabledChange,
                     onRun = onRun,
                 )
+            }
+
+            manualOrderContent?.let { content ->
+                item { TradingSection("手工模拟下单") }
+                item { content() }
             }
 
             item { HistoryLink(runs = runs, onClick = onOpenRunChain) }
