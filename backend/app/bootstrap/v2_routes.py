@@ -22,6 +22,7 @@ from app.application_services.company.service import CompanyIntelligenceService
 from app.application_services.decision.workspace import DecisionWorkspaceService
 from app.application_services.evaluation.lab_query_service import LabQueryService
 from app.application_services.market.symbol_search_service import SymbolSearchService
+from app.application_services.paper.manual_order import ManualPaperOrderService
 from app.application_services.personal_universe.service import PersonalUniverseService
 from app.application_services.research.data_gateway import ResearchDataGateway
 from app.infrastructure.database.benchmark_evaluation_repository import BenchmarkEvaluationRepository
@@ -164,6 +165,12 @@ def register_v2_routes(application) -> None:
     if not hasattr(application, "decision_workspace_service_v2"):
         application.decision_workspace_service_v2 = DecisionWorkspaceService(application.store)
 
+    if not hasattr(application, "manual_paper_order_service_v2"):
+        application.manual_paper_order_service_v2 = ManualPaperOrderService(
+            application.store,
+            calendar=application.trading_calendar,
+        )
+
     if not hasattr(application, "lab_query_service_v2"):
         experiment_repository = ExperimentDefinitionRepository(application.store)
         outcome_repository = EvaluationOutcomeRepository(application.store)
@@ -186,7 +193,12 @@ def register_v2_routes(application) -> None:
     if "/v1/admin/day0-diagnostics" not in existing_paths:
         application.app.include_router(create_admin_diagnostics_router(application.day0_diagnostics_service_v2))
     if "/v1/paper-trading/adaptive-plan" not in existing_paths:
-        application.app.include_router(create_paper_schedule_router(application.adaptive_paper_schedule_state))
+        application.app.include_router(
+            create_paper_schedule_router(
+                application.adaptive_paper_schedule_state,
+                application.manual_paper_order_service_v2,
+            )
+        )
     if "/v1/company-intelligence/{symbol}/requirements" not in existing_paths:
         application.app.include_router(create_company_intelligence_router(application.company_intelligence_service_v2))
     if "/v1/decisions/{symbol}/workspace" not in existing_paths:
