@@ -29,6 +29,7 @@ def test_market_adapter_exposes_explicit_market_rules():
     assert hk.settlement_currency == "CNY"
     assert hk.settlement_channel == "SH_HK_CONNECT_RMB"
     assert hk.default_lot_size == 0
+    assert hk.settlement_rule == "HK_T0_SELLABILITY"
     assert hk.paper_fee_schedule == "UNCONFIGURED"
     assert hk.exchange_calendar == "XHKG"
     assert hk.benchmark_symbols == ("HSI", "HSTECH")
