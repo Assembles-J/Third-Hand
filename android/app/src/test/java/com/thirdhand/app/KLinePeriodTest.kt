@@ -43,6 +43,48 @@ class KLinePeriodTest {
         assertEquals(350.0, monthly.last().volume ?: 0.0, 0.001)
     }
 
+    @Test
+    fun malformed_provider_wick_is_clamped_for_chart_without_mutating_raw_bar() {
+        val previous = DailyPriceDto(
+            trading_date = "2026-08-31",
+            open = 5.04,
+            close = 5.08,
+            high = 5.12,
+            low = 5.00,
+        )
+        val malformed = DailyPriceDto(
+            trading_date = "2026-09-01",
+            open = 5.08,
+            close = 5.13,
+            high = 7.72,
+            low = 3.61,
+        )
+
+        val result = sanitizeBarsForChart(listOf(previous, malformed))
+
+        assertEquals(1, result.anomalyCount)
+        assertEquals(5.13, result.bars.last().high ?: 0.0, 0.001)
+        assertEquals(5.08, result.bars.last().low ?: 0.0, 0.001)
+        assertEquals(7.72, malformed.high ?: 0.0, 0.001)
+        assertEquals(3.61, malformed.low ?: 0.0, 0.001)
+    }
+
+    @Test
+    fun ordinary_large_candle_is_preserved() {
+        val normal = DailyPriceDto(
+            trading_date = "2026-09-01",
+            open = 5.00,
+            close = 5.48,
+            high = 5.52,
+            low = 4.96,
+        )
+
+        val result = sanitizeBarsForChart(listOf(normal))
+
+        assertEquals(0, result.anomalyCount)
+        assertEquals(normal, result.bars.single())
+    }
+
     private fun bar(date: String, open: Double, close: Double, volume: Double) = DailyPriceDto(
         trading_date = date,
         open = open,

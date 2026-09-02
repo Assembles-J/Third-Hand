@@ -39,11 +39,13 @@ import androidx.compose.ui.unit.dp
 import com.thirdhand.app.ui.components.KLineChart
 import com.thirdhand.app.ui.theme.AppSpacing
 import com.thirdhand.app.ui.theme.CompactTypography
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import java.time.LocalDate
 import java.time.format.DateTimeFormatter
 import java.time.temporal.WeekFields
 import java.util.Locale
+import kotlin.math.abs
 
 @Composable
 fun TradingPeriodKLinePanel(symbol: String, quote: MarketQuoteDto?) {
@@ -55,6 +57,8 @@ fun TradingPeriodKLinePanel(symbol: String, quote: MarketQuoteDto?) {
     var intradayBars by remember(symbol) { mutableStateOf<List<DailyPriceDto>>(emptyList()) }
     var period by remember(symbol) { mutableStateOf("日线") }
     var loading by remember(symbol) { mutableStateOf(true) }
+    var loadingMessage by remember(symbol) { mutableStateOf("正在加载历史 K 线") }
+    var loadingDetail by remember(symbol) { mutableStateOf("正在读取已缓存行情；缺失部分会由服务端自动补齐。") }
     var intradayLoading by remember(symbol) { mutableStateOf(true) }
     var error by remember(symbol) { mutableStateOf<String?>(null) }
     var paperLogs by remember(symbol) { mutableStateOf<List<PaperTradingLogDto>>(emptyList()) }
@@ -62,6 +66,8 @@ fun TradingPeriodKLinePanel(symbol: String, quote: MarketQuoteDto?) {
 
     fun loadData() = scope.launch {
         loading = true
+        loadingMessage = "正在加载历史 K 线"
+        loadingDetail = "正在读取已缓存行情；缺失部分会由服务端自动补齐。"
         intradayLoading = true
         error = null
 
@@ -112,6 +118,20 @@ fun TradingPeriodKLinePanel(symbol: String, quote: MarketQuoteDto?) {
     }
 
     LaunchedEffect(symbol) { loadData() }
+
+    LaunchedEffect(symbol, loading, bars.isEmpty()) {
+        if (!loading || bars.isNotEmpty()) return@LaunchedEffect
+        delay(1_200)
+        if (loading && bars.isEmpty()) {
+            loadingMessage = "后台正在拉取历史 K 线"
+            loadingDetail = "当前没有足够缓存，正在等待服务端行情源返回；页面会自动更新。"
+        }
+        delay(5_000)
+        if (loading && bars.isEmpty()) {
+            loadingMessage = "行情源响应较慢，仍在获取"
+            loadingDetail = "后台请求仍在进行，请稍候，不需要重复刷新。"
+        }
+    }
 
     Card(
         modifier = Modifier
@@ -196,12 +216,11 @@ fun TradingPeriodKLinePanel(symbol: String, quote: MarketQuoteDto?) {
 
             when {
                 loading && bars.isEmpty() -> {
-                    Box(
+                    KLineLoadingState(
+                        title = loadingMessage,
+                        detail = loadingDetail,
                         modifier = Modifier.fillMaxWidth().height(220.dp),
-                        contentAlignment = Alignment.Center,
-                    ) {
-                        CircularProgressIndicator(Modifier.size(24.dp), strokeWidth = 2.dp)
-                    }
+                    )
                 }
                 error != null && bars.isEmpty() -> {
                     Box(
@@ -215,8 +234,25 @@ fun TradingPeriodKLinePanel(symbol: String, quote: MarketQuoteDto?) {
                     }
                 }
                 else -> {
-                    val chartBars = chartBarsForPeriod(period, bars, intradayBars)
+                    // Validate provider OHLC at the finest source resolution first.
+                    // Weekly/monthly candles may legitimately span a large range, so
+                    // never run the single-bar anomaly guard on an aggregate candle.
+                    val sourceBars = if (period == "分时") latestIntradaySession(intradayBars) else bars
+                    val sanitizedSource = sanitizeBarsForChart(sourceBars)
+                    val chartBars = when (period) {
+                        "分时" -> sanitizedSource.bars
+                        "周线" -> aggregateBars(sanitizedSource.bars, "周线")
+                        "月线" -> aggregateBars(sanitizedSource.bars, "月线")
+                        else -> sanitizedSource.bars
+                    }
                     if (chartBars.isNotEmpty()) {
+                        if (sanitizedSource.anomalyCount > 0) {
+                            Text(
+                                text = "检测到 ${sanitizedSource.anomalyCount} 个异常高/低点，已仅修正图表缩放，不改动原始行情。",
+                                style = CompactTypography.caption,
+                                color = MaterialTheme.colorScheme.tertiary,
+                            )
+                        }
                         KLineChart(
                             bars = chartBars,
                             quote = quote,
@@ -225,19 +261,18 @@ fun TradingPeriodKLinePanel(symbol: String, quote: MarketQuoteDto?) {
                             showMovingAverages = period != "分时" && indicatorsVisible,
                         )
                     } else if (period == "分时" && intradayLoading) {
-                        Box(
+                        KLineLoadingState(
+                            title = "正在拉取当日分时",
+                            detail = "仅加载最新交易日 09:30–15:00 的分时数据。",
                             modifier = Modifier.fillMaxWidth().height(180.dp),
-                            contentAlignment = Alignment.Center,
-                        ) {
-                            CircularProgressIndicator(Modifier.size(22.dp), strokeWidth = 2.dp)
-                        }
+                        )
                     } else {
                         Box(
                             modifier = Modifier.fillMaxWidth().height(180.dp),
                             contentAlignment = Alignment.Center,
                         ) {
                             Text(
-                                if (period == "分时") "最新交易日暂无分时数据" else "暂无数据",
+                                if (period == "分时") "最新交易日暂无分时数据" else "暂无 K 线数据",
                                 style = CompactTypography.secondary,
                                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                             )
@@ -247,6 +282,79 @@ fun TradingPeriodKLinePanel(symbol: String, quote: MarketQuoteDto?) {
             }
         }
     }
+}
+
+@Composable
+private fun KLineLoadingState(
+    title: String,
+    detail: String,
+    modifier: Modifier = Modifier,
+) {
+    Box(modifier = modifier, contentAlignment = Alignment.Center) {
+        Column(
+            horizontalAlignment = Alignment.CenterHorizontally,
+            verticalArrangement = Arrangement.spacedBy(AppSpacing.small),
+        ) {
+            CircularProgressIndicator(Modifier.size(24.dp), strokeWidth = 2.dp)
+            Text(
+                text = title,
+                style = CompactTypography.secondary,
+                fontWeight = FontWeight.SemiBold,
+                color = MaterialTheme.colorScheme.onSurface,
+            )
+            Text(
+                text = detail,
+                style = CompactTypography.caption,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+        }
+    }
+}
+
+internal data class SanitizedChartBars(
+    val bars: List<DailyPriceDto>,
+    val anomalyCount: Int,
+)
+
+/**
+ * Keep one malformed provider wick from flattening the entire chart.
+ *
+ * The raw DailyPriceDto is not persisted or rewritten here. We only replace the
+ * high/low used for drawing when the OHLC envelope is structurally impossible or
+ * when a single source candle's range exceeds 60% of its local reference price and
+ * the wick itself exceeds 35%. Run this before weekly/monthly aggregation so a
+ * legitimately wide aggregate candle is never mistaken for a provider anomaly.
+ */
+internal fun sanitizeBarsForChart(bars: List<DailyPriceDto>): SanitizedChartBars {
+    if (bars.isEmpty()) return SanitizedChartBars(emptyList(), 0)
+    var anomalyCount = 0
+    val safeBars = bars.mapIndexed { index, bar ->
+        val open = bar.open ?: bar.close
+        val bodyHigh = maxOf(open, bar.close)
+        val bodyLow = minOf(open, bar.close)
+        val high = bar.high ?: bodyHigh
+        val low = bar.low ?: bodyLow
+        val previousClose = bars.getOrNull(index - 1)?.close
+        val referenceValues = listOfNotNull(previousClose, open, bar.close).filter { it > 0.0 }
+        val reference = if (referenceValues.isEmpty()) 0.0 else referenceValues.average()
+        val rangeRatio = if (reference > 0.0) abs(high - low) / reference else 0.0
+        val wickRatio = if (reference > 0.0) {
+            maxOf(abs(high - bodyHigh), abs(bodyLow - low)) / reference
+        } else {
+            0.0
+        }
+        val structurallyInvalid =
+            high <= 0.0 || low <= 0.0 || high < bodyHigh || low > bodyLow || high < low
+        val extremeProviderWick = rangeRatio > 0.60 && wickRatio > 0.35
+
+        if (structurallyInvalid || extremeProviderWick) {
+            anomalyCount += 1
+            bar.copy(high = bodyHigh, low = bodyLow)
+        } else {
+            bar
+        }
+    }
+    return SanitizedChartBars(safeBars, anomalyCount)
 }
 
 internal fun latestIntradaySession(intradayBars: List<DailyPriceDto>): List<DailyPriceDto> {
