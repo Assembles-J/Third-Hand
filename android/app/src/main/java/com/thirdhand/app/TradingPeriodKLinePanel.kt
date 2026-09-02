@@ -7,6 +7,7 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
@@ -15,6 +16,7 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Tune
+import androidx.compose.material.icons.outlined.TouchApp
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
@@ -321,18 +323,32 @@ internal fun TradingPeriodKLineContent(
                 }
             }
 
-            Text(
-                if (period == "分时") {
-                    "按住分时曲线查看当日价格"
-                } else {
-                    "左右拖拽查看不同期间 · 长按K线查看详情"
-                },
+            Row(
                 modifier = Modifier
                     .fillMaxWidth()
                     .padding(top = 3.dp),
-                style = CompactTypography.caption,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-            )
+                horizontalArrangement = Arrangement.Center,
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Text(
+                    if (period == "分时") {
+                        "按住分时曲线查看当日价格"
+                    } else {
+                        "左右拖拽查看不同期间 · 长按K线查看详情"
+                    },
+                    style = CompactTypography.caption,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+                if (period != "分时") {
+                    Spacer(Modifier.width(3.dp))
+                    Icon(
+                        Icons.Outlined.TouchApp,
+                        contentDescription = null,
+                        modifier = Modifier.size(12.dp),
+                        tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                }
+            }
         }
     }
 }
