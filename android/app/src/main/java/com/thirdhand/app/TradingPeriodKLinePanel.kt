@@ -179,8 +179,8 @@ internal fun TradingPeriodKLineContent(
         elevation = CardDefaults.cardElevation(defaultElevation = 1.dp),
     ) {
         Column(
-            modifier = Modifier.padding(horizontal = 14.dp, vertical = 10.dp),
-            verticalArrangement = Arrangement.spacedBy(7.dp),
+            modifier = Modifier.padding(horizontal = 14.dp, vertical = 8.dp),
+            verticalArrangement = Arrangement.spacedBy(5.dp),
         ) {
             Row(
                 modifier = Modifier.fillMaxWidth(),
@@ -192,7 +192,7 @@ internal fun TradingPeriodKLineContent(
                         onClick = { onPeriodChange(item) },
                         modifier = Modifier
                             .weight(1f)
-                            .height(40.dp),
+                            .height(36.dp),
                         contentPadding = PaddingValues(horizontal = 2.dp, vertical = 0.dp),
                         colors = ButtonDefaults.textButtonColors(
                             containerColor = MaterialTheme.colorScheme.surface,
@@ -208,7 +208,7 @@ internal fun TradingPeriodKLineContent(
                             )
                             Box(
                                 modifier = Modifier
-                                    .padding(top = 4.dp)
+                                    .padding(top = 3.dp)
                                     .width(24.dp)
                                     .height(2.dp)
                                     .background(
@@ -225,7 +225,7 @@ internal fun TradingPeriodKLineContent(
                     enabled = period != "分时",
                     modifier = Modifier
                         .width(66.dp)
-                        .height(40.dp),
+                        .height(36.dp),
                     contentPadding = PaddingValues(horizontal = 2.dp, vertical = 0.dp),
                     colors = ButtonDefaults.textButtonColors(
                         contentColor = MaterialTheme.colorScheme.onSurfaceVariant,
