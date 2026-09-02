@@ -33,7 +33,6 @@ import androidx.compose.material.icons.outlined.StarBorder
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.CircularProgressIndicator
-import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.LinearProgressIndicator
@@ -51,7 +50,6 @@ import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
@@ -251,7 +249,7 @@ internal fun StockDetailVisualScaffold(
                 selectedTab = 3,
                 items = stockDetailPrimaryItems(),
                 onTabSelected = onPrimaryDestination,
-                modifier = Modifier.height(56.dp),
+                exactReferenceHeight = true,
             )
         },
         containerColor = MaterialTheme.colorScheme.background,
@@ -409,8 +407,8 @@ internal fun StockTargetSummaryCard(
             val lockLabel = if (target.symbol.isCnSecuritySymbol()) "T+1锁定" else "锁定数量"
 
             Column(
-                modifier = Modifier.padding(horizontal = 16.dp, vertical = 14.dp),
-                verticalArrangement = Arrangement.spacedBy(15.dp),
+                modifier = Modifier.padding(horizontal = 16.dp, vertical = 10.dp),
+                verticalArrangement = Arrangement.spacedBy(11.dp),
             ) {
                 Row(
                     modifier = Modifier.fillMaxWidth(),
@@ -486,8 +484,8 @@ internal fun StockTargetSummaryCard(
                 else -> colors.fall
             }
             Column(
-                modifier = Modifier.padding(horizontal = 16.dp, vertical = 14.dp),
-                verticalArrangement = Arrangement.spacedBy(15.dp),
+                modifier = Modifier.padding(horizontal = 16.dp, vertical = 10.dp),
+                verticalArrangement = Arrangement.spacedBy(11.dp),
             ) {
                 Row(
                     modifier = Modifier.fillMaxWidth(),
