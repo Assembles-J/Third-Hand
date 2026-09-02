@@ -188,39 +188,43 @@ internal fun TradingPeriodKLineContent(
                 modifier = Modifier.fillMaxWidth(),
                 verticalAlignment = Alignment.CenterVertically,
             ) {
-                listOf("分时", "日线", "周线", "月线").forEach { item ->
-                    val selected = period == item
-                    TextButton(
-                        onClick = { onPeriodChange(item) },
-                        modifier = Modifier
-                            .weight(1f)
-                            .height(36.dp),
-                        contentPadding = PaddingValues(horizontal = 2.dp, vertical = 0.dp),
-                        colors = ButtonDefaults.textButtonColors(
-                            containerColor = MaterialTheme.colorScheme.surface,
-                            contentColor = if (selected) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant,
-                        ),
-                        shape = RoundedCornerShape(0.dp),
-                    ) {
-                        Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                            Text(
-                                item,
-                                style = CompactTypography.body,
-                                fontWeight = if (selected) FontWeight.SemiBold else FontWeight.Normal,
-                            )
-                            Box(
-                                modifier = Modifier
-                                    .padding(top = 3.dp)
-                                    .width(24.dp)
-                                    .height(2.dp)
-                                    .background(
-                                        if (selected) MaterialTheme.colorScheme.primary else Color.Transparent,
-                                        RoundedCornerShape(2.dp),
-                                    ),
-                            )
+                Row {
+                    listOf("分时", "日线", "周线", "月线").forEach { item ->
+                        val selected = period == item
+                        TextButton(
+                            onClick = { onPeriodChange(item) },
+                            modifier = Modifier
+                                .width(66.dp)
+                                .height(36.dp),
+                            contentPadding = PaddingValues(horizontal = 2.dp, vertical = 0.dp),
+                            colors = ButtonDefaults.textButtonColors(
+                                containerColor = MaterialTheme.colorScheme.surface,
+                                contentColor = if (selected) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant,
+                            ),
+                            shape = RoundedCornerShape(0.dp),
+                        ) {
+                            Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                                Text(
+                                    item,
+                                    style = CompactTypography.body,
+                                    fontWeight = if (selected) FontWeight.SemiBold else FontWeight.Normal,
+                                )
+                                Box(
+                                    modifier = Modifier
+                                        .padding(top = 3.dp)
+                                        .width(24.dp)
+                                        .height(2.dp)
+                                        .background(
+                                            if (selected) MaterialTheme.colorScheme.primary else Color.Transparent,
+                                            RoundedCornerShape(2.dp),
+                                        ),
+                                )
+                            }
                         }
                     }
                 }
+
+                Spacer(Modifier.weight(1f))
 
                 TextButton(
                     onClick = onIndicatorToggle,
