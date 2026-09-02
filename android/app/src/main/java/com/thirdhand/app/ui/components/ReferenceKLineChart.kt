@@ -370,10 +370,15 @@ private fun ReferenceSnapshot(selected: DailyPriceDto, change: Double, color: Co
             fontWeight = FontWeight.SemiBold,
             color = color,
         )
-        Row(Modifier.fillMaxWidth().padding(top = 4.dp), horizontalArrangement = Arrangement.spacedBy(13.dp)) {
+        Row(Modifier.fillMaxWidth().padding(top = 4.dp), horizontalArrangement = Arrangement.spacedBy(9.dp)) {
             ReferenceMetric("开", selected.open ?: selected.close)
             ReferenceMetric("高", selected.high ?: selected.close)
             ReferenceMetric("低", selected.low ?: selected.close)
+            Text(
+                "量 ${referenceCompactVolume(selected.volume)}",
+                style = MaterialTheme.typography.labelSmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
             selected.turnover_rate?.let {
                 Text("换 ${"%.2f".format(Locale.US, it)}%", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
             }
