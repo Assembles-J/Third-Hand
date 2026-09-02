@@ -1700,3 +1700,13 @@ Paper Broker or Evaluation authority.
 - **Android:** no Android code change is required for this backend contract slice. Existing clients ignore additive fields and remain fail-closed; a later UI slice may render the detailed contract reasons without recomputing them locally.
 - **Delivery status:** `BACKEND_CONTRACT_READY / API_DIAGNOSTIC_VISIBLE / HK_FILL_DISABLED / CI_PENDING`.
 - **Authority impact:** no new execution authority. USER intent, Formal Decision and AI boundaries are unchanged; the deterministic Paper Broker remains the only future ledger-write authority.
+
+## Delivery update — 2026-09-02 — Android K-line load contract alignment (#176)
+
+- **Root cause:** Holding/Stock detail requested daily history with `limit=5000` and intraday data with `limit=2000`, while the existing backend contracts accept at most `800` and `1500`. Retrofit therefore received HTTP 422 before the chart could render, and the previous catch path did not emit a useful Android diagnostic.
+- **Android fix:** daily history now requests `800` and intraday requests `1500`. Daily history is the core chart dependency; intraday and simulated BUY/SELL marker requests degrade independently so an optional source cannot blank an otherwise valid K-line.
+- **Observability:** failures emit tagged `KLine` Logcat diagnostics for daily, intraday and paper-marker loading while the user-facing retry state remains concise.
+- **Backend:** unchanged. Existing route validation, DTOs, persistence and provider behavior remain authoritative.
+- **Accepted:** implementation is not yet device-accepted; repository CI and a physical-device Daily/Weekly/Monthly/Intraday walkthrough remain the acceptance gates.
+- **Delivery status:** `ANDROID_IMPLEMENTED / CI_DEVICE_ACCEPTANCE_PENDING`.
+- **Authority impact:** none. K-line and paper markers remain read-only display evidence and do not alter Formal Decision, StrategyProfile, ReviewPolicy, Risk, sizing, ExecutionPrecheck, Paper Broker or Evaluation authority.

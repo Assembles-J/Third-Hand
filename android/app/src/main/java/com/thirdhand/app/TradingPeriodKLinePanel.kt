@@ -1,5 +1,6 @@
 package com.thirdhand.app
 
+import android.util.Log
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.layout.*
 import androidx.compose.material3.*
@@ -33,30 +34,41 @@ fun TradingPeriodKLinePanel(symbol: String, quote: MarketQuoteDto?) {
     fun loadData() = scope.launch {
         loading = true
         error = null
+
         runCatching {
-            val daily = api.marketHistory(symbol, limit = 5_000)
-            val intraday = api.marketIntraday(symbol, limit = 2_000).map { bar ->
-                DailyPriceDto(
-                    trading_date = bar.bar_time,
-                    open = bar.open,
-                    close = bar.close,
-                    high = bar.high,
-                    low = bar.low,
-                    volume = bar.volume,
-                    amount = bar.amount,
-                    adjustment = "1m"
-                )
-            }
-            val logs = api.paperTradingLogs(symbol).filter { it.status == "executed" }
-            Triple(daily, intraday, logs)
-        }.onSuccess { (daily, intraday, logs) ->
+            val daily = api.marketHistory(symbol, limit = 800)
+            val intraday = runCatching {
+                api.marketIntraday(symbol, limit = 1_500).map { bar ->
+                    DailyPriceDto(
+                        trading_date = bar.bar_time,
+                        open = bar.open,
+                        close = bar.close,
+                        high = bar.high,
+                        low = bar.low,
+                        volume = bar.volume,
+                        amount = bar.amount,
+                        adjustment = "1m"
+                    )
+                }
+            }.onFailure { throwable ->
+                Log.w(TAG_KLINE, "Failed to load intraday bars for symbol=$symbol", throwable)
+            }.getOrDefault(emptyList())
+            daily to intraday
+        }.onSuccess { (daily, intraday) ->
             bars = daily
             val latestSession = intraday.maxOfOrNull { it.trading_date.take(10) }
             intradayBars = intraday.filter { it.trading_date.take(10) == latestSession }
-            paperLogs = logs
-        }.onFailure {
+
+            paperLogs = runCatching {
+                api.paperTradingLogs(symbol).filter { it.status == "executed" }
+            }.onFailure { throwable ->
+                Log.w(TAG_KLINE, "Failed to load paper-trading markers for symbol=$symbol", throwable)
+            }.getOrDefault(emptyList())
+        }.onFailure { throwable ->
+            Log.e(TAG_KLINE, "Failed to load daily K-line bars for symbol=$symbol", throwable)
             error = "无法加载 K 线数据"
         }
+
         loading = false
     }
 
@@ -188,3 +200,5 @@ internal fun aggregateBars(bars: List<DailyPriceDto>, period: String): List<Dail
         )
     }
 }
+
+private const val TAG_KLINE = "KLine"
