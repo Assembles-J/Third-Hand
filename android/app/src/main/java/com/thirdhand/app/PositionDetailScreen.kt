@@ -1,18 +1,45 @@
 package com.thirdhand.app
 
 import androidx.compose.foundation.background
-import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.PaddingValues
+import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.statusBarsPadding
+import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.AutoGraph
 import androidx.compose.material.icons.filled.Refresh
-import androidx.compose.material3.*
-import androidx.compose.runtime.*
+import androidx.compose.material3.Button
+import androidx.compose.material3.Card
+import androidx.compose.material3.CardDefaults
+import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
+import androidx.compose.material3.LinearProgressIndicator
+import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.Scaffold
+import androidx.compose.material3.Surface
+import androidx.compose.material3.Text
+import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
@@ -34,7 +61,6 @@ import java.time.ZoneOffset
 import java.time.temporal.ChronoUnit
 import java.util.Locale
 
-@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun PositionDetailRoute(
     target: ResearchTargetDto,
@@ -58,7 +84,7 @@ fun PositionDetailRoute(
         null -> Unit
     }
 
-    val context = LocalContext.current
+    val context = androidx.compose.ui.platform.LocalContext.current
     val api = remember(context) { ApiClient.service(context) }
     val scope = rememberCoroutineScope()
     var state by remember(target.symbol) { mutableStateOf(PositionDetailUiState()) }
@@ -75,8 +101,13 @@ fun PositionDetailRoute(
             val holding = holdingDeferred.await().getOrNull()
             val paperPosition = accountDeferred.await().getOrNull()?.positions?.firstOrNull { it.symbol == target.symbol }
             val sales = salesDeferred.await().getOrDefault(emptyList())
-
-            val name = firstValidSecurityName(target.symbol, quote?.name, holding?.name, paperPosition?.name, target.name) ?: target.symbol
+            val name = firstValidSecurityName(
+                target.symbol,
+                quote?.name,
+                holding?.name,
+                paperPosition?.name,
+                target.name,
+            ) ?: target.symbol
 
             state = PositionDetailUiState(
                 loading = false,
@@ -85,7 +116,9 @@ fun PositionDetailRoute(
                 paperPosition = paperPosition,
                 sales = sales,
                 resolvedName = name,
-                error = if (quote == null && holding == null && paperPosition == null) "无法连接行情与持仓服务" else null,
+                error = if (quote == null && holding == null && paperPosition == null) {
+                    "无法连接行情与持仓服务"
+                } else null,
             )
         }
     }
@@ -94,61 +127,35 @@ fun PositionDetailRoute(
 
     Scaffold(
         topBar = {
-            TopAppBar(
-                title = {
-                    Column {
-                        Text(
-                            state.resolvedName ?: target.name,
-                            style = CompactTypography.pageTitle,
-                            maxLines = 1,
-                            overflow = TextOverflow.Ellipsis,
-                        )
-                        Text(
-                            target.symbol,
-                            style = CompactTypography.caption,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant,
-                        )
-                    }
-                },
-                navigationIcon = {
-                    IconButton(onClick = onBack) { Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "返回") }
-                },
-                actions = {
-                    IconButton(onClick = { secondaryPage = PositionSecondaryPage.DECISION }) {
-                        Icon(Icons.Default.AutoGraph, contentDescription = "决策分析", tint = MaterialTheme.colorScheme.primary)
-                    }
-                    IconButton(onClick = ::load, enabled = !state.loading) {
-                        if (state.loading) {
-                            CircularProgressIndicator(Modifier.size(AppSpacing.xLarge), strokeWidth = 2.dp)
-                        } else {
-                            Icon(Icons.Default.Refresh, contentDescription = "刷新")
-                        }
-                    }
-                },
+            PositionDetailTopBar(
+                title = state.resolvedName ?: target.name,
+                symbol = target.symbol,
+                loading = state.loading,
+                onBack = onBack,
+                onDecision = { secondaryPage = PositionSecondaryPage.DECISION },
+                onRefresh = ::load,
             )
         },
+        containerColor = MaterialTheme.colorScheme.background,
     ) { padding ->
         LazyColumn(
             modifier = Modifier
                 .fillMaxSize()
-                .padding(padding)
-                .background(MaterialTheme.colorScheme.background),
+                .padding(padding),
             contentPadding = PaddingValues(bottom = AppSpacing.xxLarge),
+            verticalArrangement = Arrangement.spacedBy(AppSpacing.medium),
         ) {
             if (state.loading && state.quote == null && state.holding == null && state.paperPosition == null) {
                 item { LinearProgressIndicator(Modifier.fillMaxWidth()) }
             }
 
-            item { PositionHeroSection(state) }
+            item { PositionHoldingSummaryCard(state) }
 
             state.error?.let { message ->
                 item { PositionStatusMessage(message) }
             }
 
-            item { PositionMetricsGrid(state) }
-
             item {
-                CompactSectionTitle("技术图表")
                 TradingPeriodKLinePanel(symbol = target.symbol, quote = state.quote)
             }
 
@@ -173,6 +180,223 @@ fun PositionDetailRoute(
     }
 }
 
+@Composable
+private fun PositionDetailTopBar(
+    title: String,
+    symbol: String,
+    loading: Boolean,
+    onBack: () -> Unit,
+    onDecision: () -> Unit,
+    onRefresh: () -> Unit,
+) {
+    Surface(
+        color = MaterialTheme.colorScheme.primary,
+        contentColor = MaterialTheme.colorScheme.onPrimary,
+    ) {
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .statusBarsPadding()
+                .height(58.dp)
+                .padding(horizontal = AppSpacing.xs),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            IconButton(onClick = onBack, modifier = Modifier.size(AppSpacing.touchTarget)) {
+                Icon(
+                    Icons.AutoMirrored.Filled.ArrowBack,
+                    contentDescription = "返回",
+                    tint = MaterialTheme.colorScheme.onPrimary,
+                )
+            }
+
+            Column(
+                modifier = Modifier
+                    .weight(1f)
+                    .padding(start = AppSpacing.small),
+            ) {
+                Text(
+                    title,
+                    style = CompactTypography.pageTitle,
+                    fontWeight = FontWeight.SemiBold,
+                    color = MaterialTheme.colorScheme.onPrimary,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                )
+                Text(
+                    symbol,
+                    style = CompactTypography.caption,
+                    color = MaterialTheme.colorScheme.onPrimary.copy(alpha = 0.80f),
+                    maxLines = 1,
+                )
+            }
+
+            IconButton(onClick = onDecision, modifier = Modifier.size(AppSpacing.touchTarget)) {
+                Icon(
+                    Icons.Default.AutoGraph,
+                    contentDescription = "决策分析",
+                    tint = MaterialTheme.colorScheme.onPrimary,
+                )
+            }
+            IconButton(
+                onClick = onRefresh,
+                enabled = !loading,
+                modifier = Modifier.size(AppSpacing.touchTarget),
+            ) {
+                if (loading) {
+                    CircularProgressIndicator(
+                        modifier = Modifier.size(18.dp),
+                        strokeWidth = 2.dp,
+                        color = MaterialTheme.colorScheme.onPrimary,
+                    )
+                } else {
+                    Icon(
+                        Icons.Default.Refresh,
+                        contentDescription = "刷新",
+                        tint = MaterialTheme.colorScheme.onPrimary,
+                    )
+                }
+            }
+        }
+    }
+}
+
+@Composable
+internal fun PositionHoldingSummaryCard(state: PositionDetailUiState) {
+    val colors = MaterialTheme.marketColors
+    val currentPrice = state.quote?.price ?: state.holding?.average_cost ?: state.paperPosition?.last_price ?: 0.0
+    val averageCost = state.holding?.average_cost ?: state.paperPosition?.average_cost ?: 0.0
+    val quantity = state.holding?.quantity ?: state.paperPosition?.quantity ?: 0.0
+    val marketValue = currentPrice * quantity
+    val pnl = if (averageCost > 0) (currentPrice - averageCost) * quantity else 0.0
+    val pnlPercent = if (averageCost > 0) (currentPrice - averageCost) / averageCost * 100 else 0.0
+    val pnlColor = when {
+        pnl > 0 -> colors.rise
+        pnl < 0 -> colors.fall
+        else -> colors.neutral
+    }
+    val currency = state.quote?.currency.positionCurrencySymbol()
+
+    Card(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(horizontal = AppSpacing.contentHorizontal),
+        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
+        shape = MaterialTheme.shapes.large,
+        elevation = CardDefaults.cardElevation(defaultElevation = 0.dp),
+    ) {
+        Column(
+            modifier = Modifier.padding(horizontal = AppSpacing.large, vertical = AppSpacing.large),
+            verticalArrangement = Arrangement.spacedBy(AppSpacing.medium),
+        ) {
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                verticalAlignment = Alignment.Bottom,
+            ) {
+                Column(Modifier.weight(1f)) {
+                    Text(
+                        "持仓市值",
+                        style = CompactTypography.secondary,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                    Text(
+                        "$currency${marketValue.positionMoney()}",
+                        style = MaterialTheme.typography.headlineLarge,
+                        fontWeight = FontWeight.SemiBold,
+                    )
+                }
+                Column(horizontalAlignment = Alignment.End) {
+                    Text(
+                        "累计盈亏",
+                        style = CompactTypography.secondary,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                    Text(
+                        "${if (pnl > 0) "+" else ""}$currency${pnl.positionMoney()}  ${if (pnlPercent > 0) "+" else ""}${"%.2f".format(Locale.US, pnlPercent)}%",
+                        style = MaterialTheme.typography.titleMedium,
+                        fontWeight = FontWeight.SemiBold,
+                        color = pnlColor,
+                    )
+                }
+            }
+
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.spacedBy(AppSpacing.medium),
+            ) {
+                PositionSummaryFact(
+                    label = "现价",
+                    value = "$currency${currentPrice.positionMoney()}",
+                    modifier = Modifier.weight(1f),
+                    badge = positionQuoteStateLabel(state.quote?.display_freshness),
+                )
+                PositionSummaryFact(
+                    label = "成本价",
+                    value = "$currency${averageCost.positionMoney()}",
+                    modifier = Modifier.weight(1f),
+                )
+                PositionSummaryFact(
+                    label = "持仓数量",
+                    value = quantity.positionQuantity(),
+                    modifier = Modifier.weight(1f),
+                    alignEnd = true,
+                )
+            }
+
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.spacedBy(AppSpacing.medium),
+            ) {
+                PositionSummaryFact(
+                    label = "可用卖出",
+                    value = state.paperPosition?.sellable_quantity?.positionQuantity() ?: "--",
+                    modifier = Modifier.weight(1f),
+                )
+                PositionSummaryFact(
+                    label = "锁定数量",
+                    value = state.paperPosition?.locked_quantity?.positionQuantity() ?: "--",
+                    modifier = Modifier.weight(1f),
+                    alignEnd = true,
+                )
+            }
+        }
+    }
+}
+
+@Composable
+private fun PositionSummaryFact(
+    label: String,
+    value: String,
+    modifier: Modifier,
+    badge: String? = null,
+    alignEnd: Boolean = false,
+) {
+    Column(
+        modifier = modifier,
+        horizontalAlignment = if (alignEnd) Alignment.End else Alignment.Start,
+    ) {
+        Text(
+            label,
+            style = CompactTypography.caption,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+            maxLines = 1,
+        )
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Text(
+                value,
+                style = CompactTypography.rowValue,
+                fontWeight = FontWeight.SemiBold,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+            )
+            if (!badge.isNullOrBlank()) {
+                Spacer(Modifier.width(AppSpacing.xxs))
+                DenseStateTag(text = badge, color = MaterialTheme.colorScheme.primary)
+            }
+        }
+    }
+}
+
+/** Kept for screenshot/test compatibility while the route uses the combined V2 card. */
 @Composable
 internal fun PositionHeroSection(state: PositionDetailUiState) {
     val colors = MaterialTheme.marketColors
@@ -212,9 +436,7 @@ internal fun PositionHeroSection(state: PositionDetailUiState) {
                 )
             }
         }
-
         Spacer(Modifier.height(AppSpacing.small))
-
         Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
             Text(
                 "现价 $currency${currentPrice.positionMoney()}",
@@ -237,6 +459,7 @@ internal fun PositionHeroSection(state: PositionDetailUiState) {
     DenseRowDivider(inset = false)
 }
 
+/** Kept for screenshot/test compatibility while the route uses the combined V2 card. */
 @Composable
 internal fun PositionMetricsGrid(state: PositionDetailUiState) {
     val quantity = state.holding?.quantity ?: state.paperPosition?.quantity ?: 0.0
@@ -261,8 +484,8 @@ internal fun PositionMetricsGrid(state: PositionDetailUiState) {
         PositionFactPair(
             "可用卖出",
             state.paperPosition?.sellable_quantity?.positionQuantity() ?: "--",
-            "T+1锁定",
-            state.paperPosition?.locked_quantity?.positionQuantity() ?: "0股",
+            "锁定数量",
+            state.paperPosition?.locked_quantity?.positionQuantity() ?: "--",
         )
     }
     DenseRowDivider(inset = false)
@@ -303,7 +526,7 @@ private fun PositionStatusMessage(message: String) {
     Surface(
         modifier = Modifier
             .fillMaxWidth()
-            .padding(horizontal = AppSpacing.contentHorizontal, vertical = AppSpacing.xs),
+            .padding(horizontal = AppSpacing.contentHorizontal),
         color = MaterialTheme.colorScheme.errorContainer,
         shape = MaterialTheme.shapes.small,
     ) {
@@ -323,7 +546,7 @@ private fun CompactSectionTitle(title: String) {
         modifier = Modifier.padding(
             start = AppSpacing.contentHorizontal,
             end = AppSpacing.contentHorizontal,
-            top = AppSpacing.sectionVertical,
+            top = AppSpacing.xs,
             bottom = AppSpacing.xs,
         ),
         style = CompactTypography.sectionTitle,
@@ -367,7 +590,6 @@ private fun SaleHistoryItem(sale: SaleRecordDto) {
     DenseRowDivider()
 }
 
-@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 private fun PositionDecisionSecondaryScreen(
     target: ResearchTargetDto,
@@ -376,15 +598,39 @@ private fun PositionDecisionSecondaryScreen(
 ) {
     Scaffold(
         topBar = {
-            TopAppBar(
-                title = { Text("决策与研究", style = CompactTypography.pageTitle) },
-                navigationIcon = {
-                    IconButton(onClick = onBack) { Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "返回") }
-                },
-            )
+            Surface(
+                color = MaterialTheme.colorScheme.primary,
+                contentColor = MaterialTheme.colorScheme.onPrimary,
+            ) {
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .statusBarsPadding()
+                        .height(54.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    IconButton(onClick = onBack) {
+                        Icon(
+                            Icons.AutoMirrored.Filled.ArrowBack,
+                            contentDescription = "返回",
+                            tint = MaterialTheme.colorScheme.onPrimary,
+                        )
+                    }
+                    Text(
+                        "决策与研究",
+                        style = CompactTypography.pageTitle,
+                        color = MaterialTheme.colorScheme.onPrimary,
+                    )
+                }
+            }
         },
     ) { padding ->
-        LazyColumn(modifier = Modifier.fillMaxSize().padding(padding).background(MaterialTheme.colorScheme.background)) {
+        LazyColumn(
+            modifier = Modifier
+                .fillMaxSize()
+                .padding(padding)
+                .background(MaterialTheme.colorScheme.background),
+        ) {
             item {
                 DecisionWorkspaceSummaryPanel(
                     symbol = target.symbol,
@@ -392,13 +638,20 @@ private fun PositionDecisionSecondaryScreen(
                 )
             }
             item {
-                Column(Modifier.padding(AppSpacing.contentHorizontal), verticalArrangement = Arrangement.spacedBy(AppSpacing.large)) {
+                Column(
+                    Modifier.padding(AppSpacing.contentHorizontal),
+                    verticalArrangement = Arrangement.spacedBy(AppSpacing.large),
+                ) {
                     Text(
                         "这里集中展示 Formal Decision、What Changed 等决策演进过程。",
                         style = CompactTypography.secondary,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                     )
-                    Button(onClick = onOpenResearch, modifier = Modifier.fillMaxWidth(), shape = MaterialTheme.shapes.medium) {
+                    Button(
+                        onClick = onOpenResearch,
+                        modifier = Modifier.fillMaxWidth(),
+                        shape = MaterialTheme.shapes.medium,
+                    ) {
                         Icon(Icons.Default.AutoGraph, null)
                         Spacer(Modifier.width(AppSpacing.small))
                         Text("进入 AI Research 深度对话")
