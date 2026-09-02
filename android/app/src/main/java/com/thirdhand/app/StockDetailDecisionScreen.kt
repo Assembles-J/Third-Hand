@@ -24,11 +24,12 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.AccountBalanceWallet
 import androidx.compose.material.icons.filled.AutoGraph
-import androidx.compose.material.icons.filled.Bookmark
 import androidx.compose.material.icons.filled.ChevronRight
-import androidx.compose.material.icons.filled.Home
 import androidx.compose.material.icons.filled.Refresh
-import androidx.compose.material.icons.filled.Wallet
+import androidx.compose.material.icons.filled.ShowChart
+import androidx.compose.material.icons.outlined.CreditCard
+import androidx.compose.material.icons.outlined.Home
+import androidx.compose.material.icons.outlined.StarBorder
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.CircularProgressIndicator
@@ -315,7 +316,7 @@ private fun StockTargetTopBar(
                 Icons.AutoMirrored.Filled.ArrowBack,
                 contentDescription = "返回",
                 tint = MaterialTheme.colorScheme.onPrimary,
-                modifier = Modifier.size(28.dp),
+                modifier = Modifier.size(26.dp),
             )
         }
 
@@ -342,7 +343,7 @@ private fun StockTargetTopBar(
 
         IconButton(onClick = onDecision, modifier = Modifier.size(AppSpacing.touchTarget)) {
             Icon(
-                Icons.Default.AutoGraph,
+                Icons.Default.ShowChart,
                 contentDescription = "决策与研究",
                 tint = MaterialTheme.colorScheme.onPrimary,
                 modifier = Modifier.size(26.dp),
@@ -705,11 +706,11 @@ private fun StockDetailStatusMessage(message: String, retry: () -> Unit) {
 }
 
 private fun stockDetailPrimaryItems() = listOf(
-    CompactNavigationItem("首页", Icons.Default.Home, 0),
-    CompactNavigationItem("行情", Icons.Default.AutoGraph, 1),
-    CompactNavigationItem("组合", Icons.Default.Wallet, 2),
+    CompactNavigationItem("首页", Icons.Outlined.Home, 0),
+    CompactNavigationItem("行情", Icons.Default.ShowChart, 1),
+    CompactNavigationItem("组合", Icons.Outlined.CreditCard, 2),
     CompactNavigationItem("策略", Icons.Default.AccountBalanceWallet, 3),
-    CompactNavigationItem("自选", Icons.Default.Bookmark, 4),
+    CompactNavigationItem("自选", Icons.Outlined.StarBorder, 4),
 )
 
 private fun String.isCnSecuritySymbol(): Boolean {
