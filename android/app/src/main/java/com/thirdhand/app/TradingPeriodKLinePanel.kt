@@ -228,11 +228,8 @@ internal fun TradingPeriodKLineContent(
                         .height(40.dp),
                     contentPadding = PaddingValues(horizontal = 2.dp, vertical = 0.dp),
                     colors = ButtonDefaults.textButtonColors(
-                        contentColor = if (indicatorsVisible && period != "分时") {
-                            MaterialTheme.colorScheme.primary
-                        } else {
-                            MaterialTheme.colorScheme.onSurfaceVariant
-                        },
+                        contentColor = MaterialTheme.colorScheme.onSurfaceVariant,
+                        disabledContentColor = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.45f),
                     ),
                 ) {
                     Icon(Icons.Default.Tune, contentDescription = null, modifier = Modifier.size(15.dp))
