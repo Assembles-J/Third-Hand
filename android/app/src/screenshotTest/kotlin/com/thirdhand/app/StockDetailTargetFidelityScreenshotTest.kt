@@ -11,7 +11,7 @@ import kotlin.math.sin
     name = "Stock detail - target fidelity",
     showBackground = true,
     widthDp = 420,
-    heightDp = 900,
+    heightDp = 747,
 )
 @Composable
 fun StockDetailTargetFidelityScreenshotTest() {
@@ -71,11 +71,11 @@ fun StockDetailTargetFidelityScreenshotTest() {
             name = "龙洲股份",
             side = "SELL",
             quantity = 100.0,
-            price = bars[bars.lastIndex - 5].close,
+            price = bars[bars.lastIndex - 6].close,
             cash_before = 10_000.0,
             cash_after = 10_430.0,
             reason = "fixture",
-            executed_at = "${bars[bars.lastIndex - 5].trading_date}T10:20:00+08:00",
+            executed_at = "${bars[bars.lastIndex - 6].trading_date}T10:20:00+08:00",
         ),
         PaperTradingLogDto(
             id = "buy-marker",
@@ -126,22 +126,29 @@ fun StockDetailTargetFidelityScreenshotTest() {
 }
 
 private fun targetReferenceBars(): List<DailyPriceDto> {
-    val start = LocalDate.of(2026, 6, 3)
-    val days = generateSequence(start) { it.plusDays(1) }
+    // Keep enough history behind the visible June-Sep viewport so the real mini
+    // navigator is present in the screenshot exactly as it is with production
+    // history (the API normally provides hundreds of rows).
+    val days = generateSequence(LocalDate.of(2026, 3, 2)) { it.plusDays(1) }
         .filter { it.dayOfWeek.value <= 5 }
         .takeWhile { !it.isAfter(LocalDate.of(2026, 9, 2)) }
         .toList()
+    val visibleStart = (days.size - 68).coerceAtLeast(0)
+    val visibleDenominator = (days.lastIndex - visibleStart).coerceAtLeast(1)
 
     return days.mapIndexed { index, date ->
-        val progress = index.toDouble() / (days.lastIndex.coerceAtLeast(1))
-        val base = when {
+        val visibleIndex = (index - visibleStart).coerceAtLeast(0)
+        val progress = visibleIndex.toDouble() / visibleDenominator
+        val base = if (index < visibleStart) {
+            6.82 + sin(index * 0.18) * 0.10
+        } else when {
             progress < 0.30 -> 6.85 - progress / 0.30 * 1.60
             progress < 0.74 -> 5.25 - (progress - 0.30) / 0.44 * 1.18
-            else -> 4.07 + (progress - 0.74) / 0.26 * 0.82
+            else -> 4.07 + (progress - 0.74) / 0.26 * 0.94
         }
-        val wave = sin(index * 0.62) * 0.10
+        val wave = sin(index * 0.62) * 0.09
         val open = base + wave
-        val close = if (index == days.lastIndex) 5.13 else open + sin(index * 1.31) * 0.08
+        val close = if (index == days.lastIndex) 5.13 else open + sin(index * 1.31) * 0.075
         DailyPriceDto(
             trading_date = date.toString(),
             open = if (index == days.lastIndex) 5.00 else open,
@@ -150,6 +157,7 @@ private fun targetReferenceBars(): List<DailyPriceDto> {
             low = if (index == days.lastIndex) 5.00 else minOf(open, close) - 0.06,
             volume = if (index >= days.lastIndex - 5) 42_000.0 + (index % 4) * 13_000.0 else 8_000.0 + (index % 9) * 2_600.0,
             amount = 200_000.0 + index * 1_300.0,
+            change_percent = if (index == days.lastIndex) 0.99 else null,
             turnover_rate = if (index == days.lastIndex) 1.02 else 0.3 + (index % 7) * 0.08,
             adjustment = "qfq",
             source = "screenshot-fixture",
