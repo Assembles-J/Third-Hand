@@ -46,7 +46,7 @@ import java.util.Locale
 import kotlin.math.abs
 import kotlin.math.roundToInt
 
-private const val REFERENCE_VISIBLE_CANDLES = 68
+private const val REFERENCE_VISIBLE_CANDLES = 66
 private const val REFERENCE_MIN_CANDLES = 28
 private const val REFERENCE_MAX_CANDLES = 110
 private const val REFERENCE_GRID_LINES = 5
@@ -140,13 +140,13 @@ fun ReferenceKLineChart(
                 maximum = maximum,
                 minimum = minimum,
                 color = axisColor,
-                modifier = Modifier.width(38.dp).height(178.dp),
+                modifier = Modifier.width(38.dp).height(165.dp),
             )
 
             Canvas(
                 modifier = Modifier
                     .weight(1f)
-                    .height(178.dp)
+                    .height(165.dp)
                     .pointerInput(bars.size, useTimeAxis, safeStart, visible.size) {
                         if (!useTimeAxis) {
                             detectTapGestures(
@@ -335,7 +335,7 @@ fun ReferenceKLineChart(
             Text(referenceCompactVolume(maxVolume), style = CompactTypography.caption, color = axisColor)
         }
 
-        ReferenceVolumeChart(visible, marketColors.rise, marketColors.fall, Modifier.fillMaxWidth().height(42.dp))
+        ReferenceVolumeChart(visible, marketColors.rise, marketColors.fall, Modifier.fillMaxWidth().height(38.dp))
         ReferenceTimeAxis(visible, useTimeAxis, Modifier.fillMaxWidth().padding(top = 2.dp))
 
         if (!useTimeAxis && bars.size > windowSize) {
@@ -348,7 +348,7 @@ fun ReferenceKLineChart(
                     selectedIndex = (windowStart + windowSize - 1).coerceAtMost(bars.lastIndex)
                     crosshairVisible = false
                 },
-                modifier = Modifier.fillMaxWidth().padding(top = 6.dp).height(30.dp),
+                modifier = Modifier.fillMaxWidth().padding(top = 6.dp).height(28.dp),
             )
         }
     }
