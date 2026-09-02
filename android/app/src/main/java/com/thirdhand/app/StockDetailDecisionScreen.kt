@@ -261,7 +261,7 @@ internal fun StockDetailVisualScaffold(
                 .offset(y = (-24).dp)
                 .zIndex(1f),
             contentPadding = PaddingValues(bottom = AppSpacing.xxLarge),
-            verticalArrangement = Arrangement.spacedBy(12.dp),
+            verticalArrangement = Arrangement.spacedBy(6.dp),
         ) {
             item {
                 StockTargetSummaryCard(
@@ -580,12 +580,12 @@ internal fun StockTechnicalSummaryCard(onClick: () -> Unit) {
         shape = RoundedCornerShape(16.dp),
         elevation = CardDefaults.cardElevation(defaultElevation = 1.dp),
     ) {
-        Column(Modifier.padding(horizontal = 14.dp, vertical = 12.dp)) {
+        Column(Modifier.padding(horizontal = 14.dp, vertical = 8.dp)) {
             Row(
                 modifier = Modifier
                     .fillMaxWidth()
                     .clickable(onClick = onClick)
-                    .heightIn(min = 34.dp),
+                    .heightIn(min = 30.dp),
                 verticalAlignment = Alignment.CenterVertically,
             ) {
                 Text(
@@ -606,14 +606,14 @@ internal fun StockTechnicalSummaryCard(onClick: () -> Unit) {
                     modifier = Modifier.size(18.dp),
                 )
             }
-            Spacer(Modifier.height(8.dp))
+            Spacer(Modifier.height(6.dp))
             Surface(
                 modifier = Modifier.fillMaxWidth(),
                 color = MaterialTheme.colorScheme.primary.copy(alpha = 0.055f),
                 shape = RoundedCornerShape(9.dp),
             ) {
                 Row(
-                    modifier = Modifier.padding(horizontal = 10.dp, vertical = 9.dp),
+                    modifier = Modifier.padding(horizontal = 10.dp, vertical = 7.dp),
                     verticalAlignment = Alignment.CenterVertically,
                 ) {
                     Surface(
