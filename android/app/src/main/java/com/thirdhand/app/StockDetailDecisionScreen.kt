@@ -2,9 +2,11 @@ package com.thirdhand.app
 
 import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.BorderStroke
+import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
@@ -13,7 +15,6 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
-import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.statusBarsPadding
@@ -24,9 +25,9 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.AccountBalanceWallet
 import androidx.compose.material.icons.filled.AutoGraph
+import androidx.compose.material.icons.filled.ChevronLeft
 import androidx.compose.material.icons.filled.ChevronRight
 import androidx.compose.material.icons.filled.Refresh
-import androidx.compose.material.icons.filled.ShowChart
 import androidx.compose.material.icons.outlined.CreditCard
 import androidx.compose.material.icons.outlined.Home
 import androidx.compose.material.icons.outlined.StarBorder
@@ -50,13 +51,20 @@ import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.Path
+import androidx.compose.ui.graphics.StrokeCap
+import androidx.compose.ui.graphics.StrokeJoin
+import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import androidx.compose.ui.zIndex
 import com.thirdhand.app.ui.components.CompactBottomNavigation
 import com.thirdhand.app.ui.components.CompactNavigationItem
 import com.thirdhand.app.ui.components.DenseRowDivider
@@ -71,6 +79,9 @@ import java.time.OffsetDateTime
 import java.time.ZoneOffset
 import java.time.format.DateTimeFormatter
 import java.util.Locale
+
+private val StockDetailHeaderTop = Color(0xFFE61E29)
+private val StockDetailHeaderBottom = Color(0xFFEB2831)
 
 @Composable
 fun StockDetailDecisionRoute(
@@ -205,10 +216,9 @@ private fun StockDecisionSecondarySurface(
 }
 
 /**
- * The real StockDetail route, not a preview-only replica. Geometry intentionally
- * follows the approved target: red app chrome, a white position card overlapping
- * the red field, one rounded chart card, compact technical summary and the visible
- * five-entry primary navigation.
+ * The real StockDetail route, not a preview-only replica. The red header is drawn
+ * behind the list so the first card can overlap it without translating the whole
+ * viewport upward. This keeps the lower technical card visible above navigation.
  */
 @Composable
 internal fun StockDetailVisualScaffold(
@@ -225,24 +235,6 @@ internal fun StockDetailVisualScaffold(
     onPrimaryDestination: (Int) -> Unit,
 ) {
     Scaffold(
-        topBar = {
-            Column(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .background(MaterialTheme.colorScheme.primary),
-            ) {
-                StockTargetTopBar(
-                    target = target,
-                    loading = loading,
-                    onBack = onBack,
-                    onDecision = onDecision,
-                    onRefresh = onRefresh,
-                )
-                // The real screen includes the system-status inset in the same red
-                // chrome; this remaining field creates the target card overlap.
-                Spacer(Modifier.height(31.dp))
-            }
-        },
         bottomBar = {
             CompactBottomNavigation(
                 selectedTab = 3,
@@ -253,40 +245,63 @@ internal fun StockDetailVisualScaffold(
         },
         containerColor = MaterialTheme.colorScheme.background,
     ) { paddingValues ->
-        LazyColumn(
+        Box(
             modifier = Modifier
                 .fillMaxSize()
-                .padding(paddingValues)
-                .offset(y = (-45).dp)
-                .zIndex(1f),
-            contentPadding = PaddingValues(bottom = AppSpacing.xxLarge),
-            verticalArrangement = Arrangement.spacedBy(8.dp),
+                .padding(bottom = paddingValues.calculateBottomPadding()),
         ) {
-            item {
-                StockTargetSummaryCard(
+            Column(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .background(
+                        Brush.verticalGradient(
+                            colors = listOf(StockDetailHeaderTop, StockDetailHeaderBottom),
+                        ),
+                    ),
+            ) {
+                StockTargetTopBar(
                     target = target,
-                    quote = quote,
-                    holding = holding,
-                    paperPosition = paperPosition,
+                    loading = loading,
+                    onBack = onBack,
+                    onDecision = onDecision,
+                    onRefresh = onRefresh,
                 )
+                Spacer(Modifier.height(31.dp))
             }
 
-            if (loading && quote == null && holding == null && paperPosition == null) {
+            LazyColumn(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .statusBarsPadding(),
+                contentPadding = PaddingValues(top = 52.dp, bottom = AppSpacing.xxLarge),
+                verticalArrangement = Arrangement.spacedBy(8.dp),
+            ) {
                 item {
-                    LinearProgressIndicator(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .padding(horizontal = AppSpacing.contentHorizontal),
+                    StockTargetSummaryCard(
+                        target = target,
+                        quote = quote,
+                        holding = holding,
+                        paperPosition = paperPosition,
                     )
                 }
-            }
 
-            error?.let { message ->
-                item { StockDetailStatusMessage(message, onRefresh) }
-            }
+                if (loading && quote == null && holding == null && paperPosition == null) {
+                    item {
+                        LinearProgressIndicator(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(horizontal = AppSpacing.contentHorizontal),
+                        )
+                    }
+                }
 
-            item { chartContent() }
-            item { StockTechnicalSummaryCard(onClick = onDecision) }
+                error?.let { message ->
+                    item { StockDetailStatusMessage(message, onRefresh) }
+                }
+
+                item { chartContent() }
+                item { StockTechnicalSummaryCard(onClick = onDecision) }
+            }
         }
     }
 }
@@ -309,10 +324,10 @@ private fun StockTargetTopBar(
     ) {
         IconButton(onClick = onBack, modifier = Modifier.size(AppSpacing.touchTarget)) {
             Icon(
-                Icons.AutoMirrored.Filled.ArrowBack,
+                Icons.Default.ChevronLeft,
                 contentDescription = "返回",
                 tint = MaterialTheme.colorScheme.onPrimary,
-                modifier = Modifier.size(26.dp),
+                modifier = Modifier.size(32.dp),
             )
         }
 
@@ -338,12 +353,7 @@ private fun StockTargetTopBar(
         }
 
         IconButton(onClick = onDecision, modifier = Modifier.size(AppSpacing.touchTarget)) {
-            Icon(
-                Icons.Default.ShowChart,
-                contentDescription = "决策与研究",
-                tint = MaterialTheme.colorScheme.onPrimary,
-                modifier = Modifier.size(26.dp),
-            )
+            StockTargetTrendIcon()
         }
         IconButton(
             onClick = onRefresh,
@@ -365,6 +375,45 @@ private fun StockTargetTopBar(
                 )
             }
         }
+    }
+}
+
+@Composable
+private fun StockTargetTrendIcon() {
+    val color = MaterialTheme.colorScheme.onPrimary
+    Canvas(
+        modifier = Modifier
+            .size(26.dp)
+            .semantics { contentDescription = "决策与研究" },
+    ) {
+        val stroke = 1.6.dp.toPx()
+        val left = 4.dp.toPx()
+        val bottom = 22.dp.toPx()
+        drawLine(
+            color = color,
+            start = Offset(left, 3.dp.toPx()),
+            end = Offset(left, bottom),
+            strokeWidth = stroke,
+            cap = StrokeCap.Round,
+        )
+        drawLine(
+            color = color,
+            start = Offset(left, bottom),
+            end = Offset(23.dp.toPx(), bottom),
+            strokeWidth = stroke,
+            cap = StrokeCap.Round,
+        )
+        val path = Path().apply {
+            moveTo(6.5.dp.toPx(), 17.5.dp.toPx())
+            lineTo(10.5.dp.toPx(), 13.dp.toPx())
+            lineTo(14.5.dp.toPx(), 15.2.dp.toPx())
+            lineTo(21.dp.toPx(), 7.dp.toPx())
+        }
+        drawPath(
+            path = path,
+            color = color,
+            style = Stroke(width = stroke, cap = StrokeCap.Round, join = StrokeJoin.Round),
+        )
     }
 }
 
