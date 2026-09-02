@@ -149,13 +149,13 @@ fun ReferenceKLineChart(
             ReferencePriceAxis(
                 scale = scale,
                 color = axisColor,
-                modifier = Modifier.width(32.dp).height(142.dp),
+                modifier = Modifier.width(32.dp).height(148.dp),
             )
 
             Canvas(
                 modifier = Modifier
                     .weight(1f)
-                    .height(142.dp)
+                    .height(148.dp)
                     .pointerInput(bars.size, useTimeAxis, safeStart, visible.size) {
                         if (!useTimeAxis) {
                             detectTapGestures(
@@ -345,7 +345,7 @@ fun ReferenceKLineChart(
             Text(referenceCompactVolume(maxVolume), style = CompactTypography.caption, color = axisColor)
         }
 
-        ReferenceVolumeChart(visible, marketColors.rise, marketColors.fall, Modifier.fillMaxWidth().height(34.dp))
+        ReferenceVolumeChart(visible, marketColors.rise, marketColors.fall, Modifier.fillMaxWidth().height(36.dp))
         ReferenceTimeAxis(visible, useTimeAxis, Modifier.fillMaxWidth().padding(top = 2.dp))
 
         if (!useTimeAxis && bars.size > windowSize) {
