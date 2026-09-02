@@ -1005,3 +1005,53 @@ Acceptance requires deterministic coverage that non-executable formal states do
 not keep the pending queue alive, a pending frozen decision can be checked between
 full reviews without advancing the analysis clock, and a due full review always
 retains precedence over the execution-only shortcut.
+
+## 18. Paper simulation epochs and user restart boundary
+
+The normal simulated account is a sequence of explicit **paper simulation
+epochs**. Epochs are an operational/account lifecycle boundary; they do not
+rewrite Formal Decision history and do not grant AI any new authority.
+
+The canonical restart contract is:
+
+1. Restart is an explicit USER administrative action. Formal Decision, AI,
+   ReviewPolicy and the scheduler cannot invoke it.
+2. The active epoch is archived with its account snapshot, open-position/lot
+   evidence, active execution deferrals and cash-flow summary. Existing fills,
+   decisions, simulation runs, equity snapshots and review evidence remain
+   historical records. Restart never fabricates SELL fills merely to flatten the
+   account.
+3. The new epoch starts with no paper positions/lots, no inherited T+1 lock or
+   active execution deferral, and an explicit user-selected CNY initial cash
+   balance. The account return baseline is rebased so the new epoch begins at
+   zero P/L and zero return without deleting older cash-flow evidence.
+4. A frozen Formal Decision or review obligation generated before the active
+   epoch `started_at` is historical only. It cannot re-enter the new epoch's
+   pending BUY/SELL or review queue; a post-restart decision is required before a
+   new execution obligation can exist.
+5. Restart requests are exactly idempotent by client request id. The same id and
+   same initial cash may replay the successful result; the same id with different
+   parameters is rejected.
+6. Full automatic paper cycles, execution-only polling, USER manual paper orders
+   and epoch restart share one process-local ledger-mutation lock. Restart uses a
+   non-blocking acquisition and returns `paper_restart_runtime_busy` rather than
+   interleaving with an active ledger mutation. SQLite transaction checks and the
+   existing Paper Broker constraints remain defence in depth.
+7. `GET /v1/paper-trading/runtime-state` is a read-only operational projection.
+   It may expose the active epoch, scheduler mode, automatic-execution state,
+   pending execution/review counts, recent market/research/decision activity,
+   next due work and a human-readable no-trade reason. It creates no trading
+   authority and cannot substitute for persisted execution audit.
+8. Android consumes these server-owned facts and may supply only USER restart
+   intent plus the selected initial cash. It must not recompute scheduler timing,
+   sellability, execution eligibility or epoch membership.
+
+Legacy databases without an epoch table are seeded as one `legacy-epoch-1`
+starting at the earliest persisted paper-account fact available. Historical
+rows remain readable; the seed does not invent historical fills or decisions.
+
+Acceptance requires deterministic coverage that restart preserves history while
+opening an empty zero-return account, supersedes active deferrals, excludes old
+frozen decisions from the new execution queue, rejects conflicting idempotency
+replays, refuses restart while the ledger mutation lock is busy, and makes a
+healthy no-trade interval understandable without server-log archaeology.

@@ -21,6 +21,7 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.thirdhand.app.paperorder.PaperManualOrderPanel
+import com.thirdhand.app.paperruntime.PaperRuntimePanel
 import com.thirdhand.app.ui.components.DenseRowDivider
 import com.thirdhand.app.ui.components.DenseStateTag
 import com.thirdhand.app.ui.components.TradingPageHeader
@@ -180,6 +181,12 @@ fun PaperTradingScreen(onOpenDetail: (ResearchTargetDto) -> Unit) {
         onOpenRunChain = { showRunChain = true },
         onOpenDecision = { selectedDecisionId = it },
         onOpenAllLogs = { showAllLogs = true },
+        runtimeStateContent = {
+            PaperRuntimePanel(
+                defaultInitialCash = dashboard?.account?.initial_cash ?: 0.0,
+                onRestarted = ::refresh,
+            )
+        },
         manualOrderContent = {
             PaperManualOrderPanel(onOrderExecuted = ::refresh)
         },
@@ -240,6 +247,7 @@ internal fun PaperTradingOverview(
     onOpenRunChain: () -> Unit,
     onOpenDecision: (String) -> Unit,
     onOpenAllLogs: () -> Unit,
+    runtimeStateContent: (@Composable () -> Unit)? = null,
     manualOrderContent: (@Composable () -> Unit)? = null,
     snackbarHost: @Composable () -> Unit = {},
 ) {
@@ -264,6 +272,11 @@ internal fun PaperTradingOverview(
                 .padding(paddingValues),
             contentPadding = PaddingValues(bottom = AppSpacing.xxLarge),
         ) {
+            runtimeStateContent?.let { content ->
+                item { TradingSection("系统现在在做什么") }
+                item { content() }
+            }
+
             item { AccountEquitySummary(dashboard?.account) }
 
             errorMessage?.let { message ->

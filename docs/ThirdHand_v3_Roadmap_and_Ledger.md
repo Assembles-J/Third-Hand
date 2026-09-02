@@ -1548,7 +1548,7 @@ Paper Broker or Evaluation authority.
   ticket or N5 AI-agent execution path requires separate domain/API/safety
   acceptance before it may appear in the app.
 - **Backend/API:** unchanged. Existing `paperTradingDashboard()` and
-  `cachedNews(...)` contracts are reused; no DTO, provider, feed authority or
+  `cachedNews(...)` contracts are reused; no new DTO, provider, feed authority or
   trading endpoint is introduced.
 - **Delivery status:** `ANDROID_RENDER_REVIEWED / FINAL_CI_DEVICE_ACCEPTANCE_PENDING`.
   Final atomic-history governance, approved screenshot hash, Debug/Release and
@@ -1710,3 +1710,20 @@ Paper Broker or Evaluation authority.
 - **Accepted:** implementation is not yet device-accepted; repository CI and a physical-device Daily/Weekly/Monthly/Intraday walkthrough remain the acceptance gates.
 - **Delivery status:** `ANDROID_IMPLEMENTED / CI_DEVICE_ACCEPTANCE_PENDING`.
 - **Authority impact:** none. K-line and paper markers remain read-only display evidence and do not alter Formal Decision, StrategyProfile, ReviewPolicy, Risk, sizing, ExecutionPrecheck, Paper Broker or Evaluation authority.
+
+## Delivery update — 2026-09-02 — paper simulation restart epochs and runtime visibility (#175)
+
+- **Product problem:** valid safety layers had made the normal simulated account difficult to understand after a visible fill; a cash edit was not a reset and could leave positions, lots and frozen obligations behind.
+- **Epoch lifecycle:** an explicit USER `POST /v1/paper-trading/restart` archives the active simulation epoch and opens a fresh one with user-selected CNY initial cash. Legacy databases seed one `legacy-epoch-1` from the earliest persisted paper fact rather than inventing history.
+- **History vs active state:** historical fills, Formal Decisions, simulation runs, equity snapshots and review evidence are retained. Restart does not fabricate SELL fills; active positions/lots are cleared, active PositionEpisodes are closed and active execution deferrals are superseded.
+- **Fresh return baseline:** existing cash-flow evidence is retained while an explicit epoch rebase plus new opening balance makes the new empty account begin at zero P/L and zero return with the selected initial cash.
+- **Decision isolation:** current-version pending execution and due-review lookups are scoped to the active epoch start. Pre-epoch frozen BUY/SELL or review obligations are history only and cannot silently re-enter a new simulation round.
+- **Mutation serialization:** full automatic cycles, the 30-60 second execution-only poll, USER manual paper orders and epoch restart share one process-local ledger mutation lock. Restart is non-blocking and returns `paper_restart_runtime_busy` rather than interleaving with an active ledger write.
+- **Runtime observability:** `GET /v1/paper-trading/runtime-state` exposes active epoch, scheduler mode, automatic execution state, pending execution/review counts, recent market/candidate/research/decision/execution activity, next due work and an explicit no-trade reason.
+- **Android:** `策略 -> 模拟执行` mounts a dedicated `paperruntime` Retrofit repository, immutable StateFlow controller and Compose panel. It explains `空仓找机会 / 持仓优先 / 接近满仓，仅管理已有仓位`, separates current-round state from cross-round history, and reuses the same restart request id after a response-loss retry.
+- **Tests:** deterministic backend coverage protects archival/no-fake-SELL behavior, new cash/return baseline, exact idempotency, frozen-decision isolation, readable no-trade state and mutation-lock exclusion; Android controller tests protect restart intent/retry and server-owned runtime projection.
+- **HK:** unchanged. This slice deliberately does not enable HK paper fills; the #170 Stock Connect prerequisites remain fail-closed.
+- **Documentation sync:** canonical Architecture section 18 and this Ledger are updated together; final delivery is squashed to one atomic product/documentation commit before PR CI.
+- **Delivery status:** `BACKEND_READY / API_VISIBLE / ANDROID_IMPLEMENTED / CI_DEVICE_ACCEPTANCE_PENDING`.
+- **Accepted:** not yet. Full repository CI must be green before merge, and #175 remains open for one deployed/device restart plus a no-trade interval walkthrough.
+- **Authority impact:** Formal Decision, StrategyProfile, ReviewPolicy, Evidence, Risk, sizing, ExecutionPrecheck, Paper Broker and AI authority remain unchanged. The only new write authority is an explicit USER account-lifecycle restart operation around the existing deterministic paper ledger.
