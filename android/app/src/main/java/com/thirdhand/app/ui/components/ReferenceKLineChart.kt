@@ -3,9 +3,9 @@ package com.thirdhand.app.ui.components
 import android.graphics.Paint
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.gestures.detectDragGestures
+import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.gestures.detectTransformGestures
 import androidx.compose.foundation.layout.Arrangement
-import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
@@ -52,13 +52,8 @@ private const val REFERENCE_MAX_CANDLES = 110
 private const val REFERENCE_GRID_LINES = 4
 
 /**
- * Target-reference chart for the real Stock/Holding detail surface.
- *
- * It intentionally follows the approved visual hierarchy instead of the older
- * generic chart: selected-session facts, MA legend, bounded price viewport,
- * compact hollow B/S markers, separate volume strip, four-point time axis and
- * the mini navigator. Historical drag/pinch only changes the viewport; it never
- * changes market data or strategy authority.
+ * Stock-detail chart renderer dedicated to the approved red/white reference UI.
+ * It owns presentation and viewport interaction only; source bars remain intact.
  */
 @Composable
 fun ReferenceKLineChart(
@@ -96,28 +91,26 @@ fun ReferenceKLineChart(
     val previousClose = bars.getOrNull(safeSelected - 1)?.close ?: selected.close
     val selectedChange = selected.change_percent ?: if (previousClose != 0.0) {
         (selected.close / previousClose - 1.0) * 100.0
-    } else {
-        0.0
-    }
+    } else 0.0
 
-    val values = visible.flatMap { listOfNotNull(it.open, it.close, it.high, it.low) }
-    val rawMin = values.minOrNull() ?: 0.0
-    val rawMax = values.maxOrNull() ?: 1.0
+    val priceValues = visible.flatMap { listOfNotNull(it.open, it.close, it.high, it.low) }
+    val rawMin = priceValues.minOrNull() ?: 0.0
+    val rawMax = priceValues.maxOrNull() ?: 1.0
     val rawSpan = (rawMax - rawMin).coerceAtLeast(0.01)
-    val padding = (rawSpan * 0.055).coerceAtLeast(0.01)
-    val minimum = rawMin - padding
-    val maximum = rawMax + padding
+    val pricePadding = (rawSpan * 0.055).coerceAtLeast(0.01)
+    val minimum = rawMin - pricePadding
+    val maximum = rawMax + pricePadding
     val priceSpan = (maximum - minimum).coerceAtLeast(0.01)
 
-    val colors = MaterialTheme.marketColors
+    val marketColors = MaterialTheme.marketColors
     val axisColor = MaterialTheme.colorScheme.onSurfaceVariant
     val gridColor = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.34f)
     val surfaceColor = MaterialTheme.colorScheme.surface
-    val primary = MaterialTheme.colorScheme.primary
+    val primaryColor = MaterialTheme.colorScheme.primary
     val selectedColor = when {
-        selectedChange > 0.0 -> colors.rise
-        selectedChange < 0.0 -> colors.fall
-        else -> colors.neutral
+        selectedChange > 0.0 -> marketColors.rise
+        selectedChange < 0.0 -> marketColors.fall
+        else -> marketColors.neutral
     }
     val ma5Color = Color(0xFFF59E0B)
     val ma10Color = Color(0xFF4F6BED)
@@ -127,17 +120,11 @@ fun ReferenceKLineChart(
     val ma20 = remember(bars) { referenceMovingAverage(bars, 20) }
 
     Column(modifier = modifier.fillMaxWidth()) {
-        ReferenceSnapshot(
-            selected = selected,
-            change = selectedChange,
-            color = selectedColor,
-        )
+        ReferenceSnapshot(selected, selectedChange, selectedColor)
 
         if (!useTimeAxis && showMovingAverages) {
             Row(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(top = 5.dp, bottom = 5.dp),
+                modifier = Modifier.fillMaxWidth().padding(top = 5.dp, bottom = 5.dp),
                 horizontalArrangement = Arrangement.spacedBy(14.dp),
             ) {
                 ReferenceMaLegend("MA5", ma5.getOrNull(safeSelected), ma5Color)
@@ -153,16 +140,28 @@ fun ReferenceKLineChart(
                 maximum = maximum,
                 minimum = minimum,
                 color = axisColor,
-                modifier = Modifier
-                    .width(38.dp)
-                    .height(220.dp),
+                modifier = Modifier.width(38.dp).height(220.dp),
             )
 
             Canvas(
                 modifier = Modifier
                     .weight(1f)
                     .height(220.dp)
-                    .pointerInput(bars.size, useTimeAxis) {
+                    .pointerInput(bars.size, useTimeAxis, safeStart, visible.size) {
+                        if (!useTimeAxis) {
+                            detectTapGestures(
+                                onLongPress = { point ->
+                                    val local = ((point.x / size.width.toFloat().coerceAtLeast(1f)) * visible.size)
+                                        .toInt()
+                                        .coerceIn(0, visible.lastIndex)
+                                    selectedIndex = safeStart + local
+                                    crosshairVisible = true
+                                },
+                                onTap = { crosshairVisible = false },
+                            )
+                        }
+                    }
+                    .pointerInput(bars.size, useTimeAxis, windowSize) {
                         if (useTimeAxis) {
                             fun selectAt(x: Float) {
                                 if (visible.isEmpty()) return
@@ -172,10 +171,7 @@ fun ReferenceKLineChart(
                                 selectedIndex = safeStart + local
                             }
                             detectDragGestures(
-                                onDragStart = {
-                                    crosshairVisible = true
-                                    selectAt(it.x)
-                                },
+                                onDragStart = { crosshairVisible = true; selectAt(it.x) },
                                 onDragEnd = { crosshairVisible = false },
                                 onDragCancel = { crosshairVisible = false },
                                 onDrag = { change, _ -> selectAt(change.position.x) },
@@ -219,37 +215,35 @@ fun ReferenceKLineChart(
             ) {
                 val step = size.width / visible.size.coerceAtLeast(1)
                 val candleWidth = (step * 0.52f).coerceIn(1.dp.toPx(), 6.dp.toPx())
-
                 fun y(value: Double): Float =
                     size.height - (((value - minimum) / priceSpan) * size.height).toFloat()
 
                 repeat(REFERENCE_GRID_LINES) { index ->
                     val gridY = size.height * index / (REFERENCE_GRID_LINES - 1).toFloat()
-                    drawLine(gridColor, Offset(0f, gridY), Offset(size.width, gridY), strokeWidth = 0.5.dp.toPx())
+                    drawLine(gridColor, Offset(0f, gridY), Offset(size.width, gridY), 0.5.dp.toPx())
                 }
 
                 if (useTimeAxis) {
                     val path = Path()
                     visible.forEachIndexed { index, bar ->
                         val x = step * index + step / 2f
-                        val pointY = y(bar.close)
-                        if (index == 0) path.moveTo(x, pointY) else path.lineTo(x, pointY)
+                        if (index == 0) path.moveTo(x, y(bar.close)) else path.lineTo(x, y(bar.close))
                     }
-                    drawPath(path, color = primary, style = Stroke(width = 1.35.dp.toPx()))
+                    drawPath(path, primaryColor, style = Stroke(1.35.dp.toPx()))
                 } else {
                     visible.forEachIndexed { localIndex, bar ->
                         val x = step * localIndex + step / 2f
                         val open = bar.open ?: bar.close
                         val high = bar.high ?: maxOf(open, bar.close)
                         val low = bar.low ?: minOf(open, bar.close)
-                        val candleColor = if (bar.close >= open) colors.rise else colors.fall
-                        drawLine(candleColor, Offset(x, y(high)), Offset(x, y(low)), strokeWidth = 0.78.dp.toPx())
+                        val candleColor = if (bar.close >= open) marketColors.rise else marketColors.fall
+                        drawLine(candleColor, Offset(x, y(high)), Offset(x, y(low)), 0.78.dp.toPx())
                         val top = minOf(y(open), y(bar.close))
                         val bottom = maxOf(y(open), y(bar.close))
                         drawRect(
-                            color = candleColor,
-                            topLeft = Offset(x - candleWidth / 2f, top),
-                            size = Size(candleWidth, (bottom - top).coerceAtLeast(1.dp.toPx())),
+                            candleColor,
+                            Offset(x - candleWidth / 2f, top),
+                            Size(candleWidth, (bottom - top).coerceAtLeast(1.dp.toPx())),
                         )
                     }
                     if (showMovingAverages) {
@@ -264,24 +258,19 @@ fun ReferenceKLineChart(
                     val globalIndex = bars.indexOfLast { it.trading_date.take(10) == date }
                     if (globalIndex !in safeStart until windowEnd) return@forEach
                     val local = globalIndex - safeStart
-                    val markerX = step * local + step / 2f
+                    val x = step * local + step / 2f
                     val anchorY = y(marker.price.coerceIn(minimum, maximum))
-                    val isBuy = marker.side.equals("BUY", ignoreCase = true)
+                    val isBuy = marker.side.equals("BUY", true)
                     val markerColor = if (isBuy) Color(0xFF5267D8) else Color(0xFFE85375)
                     val radius = 4.5.dp.toPx()
                     val markerY = (anchorY + if (isBuy) 7.dp.toPx() else -7.dp.toPx())
                         .coerceIn(radius, size.height - radius)
-                    drawLine(
-                        markerColor.copy(alpha = 0.42f),
-                        Offset(markerX, anchorY),
-                        Offset(markerX, markerY),
-                        strokeWidth = 0.55.dp.toPx(),
-                    )
-                    drawCircle(surfaceColor, radius, Offset(markerX, markerY))
-                    drawCircle(markerColor, radius, Offset(markerX, markerY), style = Stroke(width = 0.9.dp.toPx()))
+                    drawLine(markerColor.copy(alpha = 0.42f), Offset(x, anchorY), Offset(x, markerY), 0.55.dp.toPx())
+                    drawCircle(surfaceColor, radius, Offset(x, markerY))
+                    drawCircle(markerColor, radius, Offset(x, markerY), style = Stroke(0.9.dp.toPx()))
                     drawContext.canvas.nativeCanvas.drawText(
                         if (isBuy) "B" else "S",
-                        markerX,
+                        x,
                         markerY + 2.15.dp.toPx(),
                         Paint().apply {
                             isAntiAlias = true
@@ -296,9 +285,9 @@ fun ReferenceKLineChart(
                 if (crosshairVisible) {
                     val local = (safeSelected - safeStart).coerceIn(0, visible.lastIndex)
                     val x = step * local + step / 2f
-                    val crossY = y(selected.close)
-                    drawLine(primary.copy(alpha = 0.34f), Offset(x, 0f), Offset(x, size.height), strokeWidth = 0.65.dp.toPx())
-                    drawLine(primary.copy(alpha = 0.26f), Offset(0f, crossY), Offset(size.width, crossY), strokeWidth = 0.55.dp.toPx())
+                    val selectedY = y(selected.close)
+                    drawLine(primaryColor.copy(alpha = 0.34f), Offset(x, 0f), Offset(x, size.height), 0.65.dp.toPx())
+                    drawLine(primaryColor.copy(alpha = 0.26f), Offset(0f, selectedY), Offset(size.width, selectedY), 0.55.dp.toPx())
                 }
 
                 if (!useTimeAxis && windowEnd == bars.size) {
@@ -307,21 +296,15 @@ fun ReferenceKLineChart(
                     val latestY = y(latestPrice.coerceIn(minimum, maximum))
                     val tagColor = quote?.change_percent?.let {
                         when {
-                            it > 0.0 -> colors.rise
-                            it < 0.0 -> colors.fall
-                            else -> colors.neutral
+                            it > 0.0 -> marketColors.rise
+                            it < 0.0 -> marketColors.fall
+                            else -> marketColors.neutral
                         }
-                    } ?: if (latest.close >= (latest.open ?: latest.close)) colors.rise else colors.fall
+                    } ?: if (latest.close >= (latest.open ?: latest.close)) marketColors.rise else marketColors.fall
                     val tagWidth = 39.dp.toPx()
                     val tagHeight = 19.dp.toPx()
                     val left = (size.width - tagWidth).coerceAtLeast(0f)
                     val top = (latestY - tagHeight / 2f).coerceIn(0f, size.height - tagHeight)
-                    drawLine(
-                        tagColor.copy(alpha = 0.28f),
-                        Offset((left - 16.dp.toPx()).coerceAtLeast(0f), latestY),
-                        Offset(left, latestY),
-                        strokeWidth = 0.55.dp.toPx(),
-                    )
                     drawRoundRect(tagColor, Offset(left, top), Size(tagWidth, tagHeight), CornerRadius(4.dp.toPx()))
                     drawContext.canvas.nativeCanvas.drawText(
                         "%.2f".format(Locale.US, latestPrice),
@@ -340,9 +323,7 @@ fun ReferenceKLineChart(
 
         val maxVolume = visible.maxOfOrNull { it.volume ?: 0.0 } ?: 0.0
         Row(
-            modifier = Modifier
-                .fillMaxWidth()
-                .padding(top = 7.dp, bottom = 3.dp),
+            modifier = Modifier.fillMaxWidth().padding(top = 7.dp, bottom = 3.dp),
             verticalAlignment = Alignment.CenterVertically,
         ) {
             Text(
@@ -351,29 +332,11 @@ fun ReferenceKLineChart(
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
             Spacer(Modifier.weight(1f))
-            Text(
-                referenceCompactVolume(maxVolume),
-                style = CompactTypography.caption,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-            )
+            Text(referenceCompactVolume(maxVolume), style = CompactTypography.caption, color = axisColor)
         }
 
-        ReferenceVolumeChart(
-            visible = visible,
-            riseColor = colors.rise,
-            fallColor = colors.fall,
-            modifier = Modifier
-                .fillMaxWidth()
-                .height(54.dp),
-        )
-
-        ReferenceTimeAxis(
-            visible = visible,
-            useTimeAxis = useTimeAxis,
-            modifier = Modifier
-                .fillMaxWidth()
-                .padding(top = 3.dp),
-        )
+        ReferenceVolumeChart(visible, marketColors.rise, marketColors.fall, Modifier.fillMaxWidth().height(54.dp))
+        ReferenceTimeAxis(visible, useTimeAxis, Modifier.fillMaxWidth().padding(top = 3.dp))
 
         if (!useTimeAxis && bars.size > windowSize) {
             ReferenceMiniNavigator(
@@ -383,11 +346,9 @@ fun ReferenceKLineChart(
                 onWindowStartChange = {
                     windowStart = it.coerceIn(0, maxStart)
                     selectedIndex = (windowStart + windowSize - 1).coerceAtMost(bars.lastIndex)
+                    crosshairVisible = false
                 },
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(top = 8.dp)
-                    .height(34.dp),
+                modifier = Modifier.fillMaxWidth().padding(top = 8.dp).height(34.dp),
             )
         }
     }
@@ -397,7 +358,7 @@ fun ReferenceKLineChart(
 private fun ReferenceSnapshot(selected: DailyPriceDto, change: Double, color: Color) {
     Column(Modifier.fillMaxWidth()) {
         Text(
-            text = buildString {
+            buildString {
                 append(selected.trading_date.take(10))
                 append(" · 收 ")
                 append("%.2f".format(Locale.US, selected.close))
@@ -409,21 +370,12 @@ private fun ReferenceSnapshot(selected: DailyPriceDto, change: Double, color: Co
             fontWeight = FontWeight.SemiBold,
             color = color,
         )
-        Row(
-            modifier = Modifier
-                .fillMaxWidth()
-                .padding(top = 4.dp),
-            horizontalArrangement = Arrangement.spacedBy(13.dp),
-        ) {
+        Row(Modifier.fillMaxWidth().padding(top = 4.dp), horizontalArrangement = Arrangement.spacedBy(13.dp)) {
             ReferenceMetric("开", selected.open ?: selected.close)
             ReferenceMetric("高", selected.high ?: selected.close)
             ReferenceMetric("低", selected.low ?: selected.close)
             selected.turnover_rate?.let {
-                Text(
-                    "换 ${"%.2f".format(Locale.US, it)}%",
-                    style = MaterialTheme.typography.labelSmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                )
+                Text("换 ${"%.2f".format(Locale.US, it)}%", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
             }
         }
     }
@@ -431,39 +383,21 @@ private fun ReferenceSnapshot(selected: DailyPriceDto, change: Double, color: Co
 
 @Composable
 private fun ReferenceMetric(label: String, value: Double) {
-    Text(
-        "$label ${"%.2f".format(Locale.US, value)}",
-        style = MaterialTheme.typography.labelSmall,
-        color = MaterialTheme.colorScheme.onSurfaceVariant,
-    )
+    Text("$label ${"%.2f".format(Locale.US, value)}", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
 }
 
 @Composable
 private fun ReferenceMaLegend(label: String, value: Double?, color: Color) {
-    Text(
-        "$label ${value?.let { "%.2f".format(Locale.US, it) } ?: "--"}",
-        style = MaterialTheme.typography.labelSmall,
-        color = color,
-    )
+    Text("$label ${value?.let { "%.2f".format(Locale.US, it) } ?: "--"}", style = MaterialTheme.typography.labelSmall, color = color)
 }
 
 @Composable
 private fun ReferencePriceAxis(maximum: Double, minimum: Double, color: Color, modifier: Modifier = Modifier) {
-    Column(
-        modifier = modifier.padding(end = 5.dp),
-        verticalArrangement = Arrangement.SpaceBetween,
-        horizontalAlignment = Alignment.End,
-    ) {
+    Column(modifier.padding(end = 5.dp), Arrangement.SpaceBetween, Alignment.End) {
         repeat(REFERENCE_GRID_LINES) { index ->
             val ratio = index / (REFERENCE_GRID_LINES - 1).toDouble()
             val value = maximum - (maximum - minimum) * ratio
-            Text(
-                "%.2f".format(Locale.US, value),
-                style = MaterialTheme.typography.labelSmall,
-                color = color,
-                textAlign = TextAlign.End,
-                maxLines = 1,
-            )
+            Text("%.2f".format(Locale.US, value), style = MaterialTheme.typography.labelSmall, color = color, textAlign = TextAlign.End, maxLines = 1)
         }
     }
 }
@@ -475,22 +409,18 @@ private fun ReferenceVolumeChart(
     fallColor: Color,
     modifier: Modifier = Modifier,
 ) {
-    val max = visible.maxOfOrNull { it.volume ?: 0.0 }?.coerceAtLeast(1.0) ?: 1.0
-    val grid = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.28f)
+    val maxVolume = visible.maxOfOrNull { it.volume ?: 0.0 }?.coerceAtLeast(1.0) ?: 1.0
+    val gridColor = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.28f)
     Canvas(modifier) {
         val step = size.width / visible.size.coerceAtLeast(1)
         val barWidth = (step * 0.52f).coerceIn(1.dp.toPx(), 6.dp.toPx())
-        drawLine(grid, Offset(0f, 0f), Offset(size.width, 0f), strokeWidth = 0.5.dp.toPx())
+        drawLine(gridColor, Offset.Zero, Offset(size.width, 0f), 0.5.dp.toPx())
         visible.forEachIndexed { index, bar ->
             val open = bar.open ?: bar.close
             val color = if (bar.close >= open) riseColor else fallColor
-            val height = (((bar.volume ?: 0.0) / max) * size.height).toFloat()
+            val height = (((bar.volume ?: 0.0) / maxVolume) * size.height).toFloat()
             val x = step * index + step / 2f
-            drawRect(
-                color.copy(alpha = 0.82f),
-                Offset(x - barWidth / 2f, size.height - height),
-                Size(barWidth, height.coerceAtLeast(1f)),
-            )
+            drawRect(color.copy(alpha = 0.82f), Offset(x - barWidth / 2f, size.height - height), Size(barWidth, height.coerceAtLeast(1f)))
         }
     }
 }
@@ -499,7 +429,7 @@ private fun ReferenceVolumeChart(
 private fun ReferenceTimeAxis(visible: List<DailyPriceDto>, useTimeAxis: Boolean, modifier: Modifier = Modifier) {
     if (visible.isEmpty()) return
     val indices = listOf(0, visible.lastIndex / 3, visible.lastIndex * 2 / 3, visible.lastIndex).distinct()
-    Row(modifier = modifier) {
+    Row(modifier) {
         indices.forEachIndexed { slot, index ->
             val alignment = when (slot) {
                 0 -> TextAlign.Start
@@ -527,31 +457,25 @@ private fun ReferenceMiniNavigator(
     modifier: Modifier = Modifier,
 ) {
     val lineColor = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.52f)
-    val primary = MaterialTheme.colorScheme.primary
-    val outline = MaterialTheme.colorScheme.outlineVariant
+    val primaryColor = MaterialTheme.colorScheme.primary
+    val outlineColor = MaterialTheme.colorScheme.outlineVariant
+    val navigatorSurface = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.24f)
     val min = bars.minOfOrNull { it.close } ?: 0.0
     val max = bars.maxOfOrNull { it.close } ?: 1.0
     val span = (max - min).coerceAtLeast(0.01)
     val maxStart = (bars.size - windowSize).coerceAtLeast(0)
 
     Canvas(
-        modifier = modifier.pointerInput(bars.size, windowSize) {
+        modifier.pointerInput(bars.size, windowSize) {
             fun moveTo(x: Float) {
                 val ratio = (x / size.width.toFloat().coerceAtLeast(1f)).coerceIn(0f, 1f)
                 val center = (ratio * (bars.size - 1).coerceAtLeast(0)).roundToInt()
                 onWindowStartChange((center - windowSize / 2).coerceIn(0, maxStart))
             }
-            detectDragGestures(
-                onDragStart = { moveTo(it.x) },
-                onDrag = { change, _ -> moveTo(change.position.x) },
-            )
+            detectDragGestures(onDragStart = { moveTo(it.x) }, onDrag = { change, _ -> moveTo(change.position.x) })
         },
     ) {
-        drawRoundRect(
-            color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.24f),
-            size = size,
-            cornerRadius = CornerRadius(6.dp.toPx()),
-        )
+        drawRoundRect(navigatorSurface, size = size, cornerRadius = CornerRadius(6.dp.toPx()))
         val step = if (bars.size <= 1) size.width else size.width / (bars.size - 1)
         val path = Path()
         bars.forEachIndexed { index, bar ->
@@ -559,26 +483,25 @@ private fun ReferenceMiniNavigator(
             val y = size.height - (((bar.close - min) / span) * size.height).toFloat()
             if (index == 0) path.moveTo(x, y) else path.lineTo(x, y)
         }
-        drawPath(path, lineColor, style = Stroke(width = 0.75.dp.toPx()))
+        drawPath(path, lineColor, style = Stroke(0.75.dp.toPx()))
 
         val left = windowStart.toFloat() / bars.size.coerceAtLeast(1) * size.width
         val right = (windowStart + windowSize).toFloat() / bars.size.coerceAtLeast(1) * size.width
         drawRoundRect(
-            color = primary.copy(alpha = 0.045f),
-            topLeft = Offset(left, 0f),
-            size = Size((right - left).coerceAtLeast(1f), size.height),
-            cornerRadius = CornerRadius(5.dp.toPx()),
-            style = Stroke(width = 1.dp.toPx()),
+            primaryColor.copy(alpha = 0.045f),
+            Offset(left, 0f),
+            Size((right - left).coerceAtLeast(1f), size.height),
+            CornerRadius(5.dp.toPx()),
+            style = Stroke(1.dp.toPx()),
         )
-        drawLine(outline, Offset(left, 0f), Offset(left, size.height), strokeWidth = 1.dp.toPx())
-        drawLine(outline, Offset(right, 0f), Offset(right, size.height), strokeWidth = 1.dp.toPx())
+        drawLine(outlineColor, Offset(left, 0f), Offset(left, size.height), 1.dp.toPx())
+        drawLine(outlineColor, Offset(right, 0f), Offset(right, size.height), 1.dp.toPx())
     }
 }
 
 private fun referenceMovingAverage(bars: List<DailyPriceDto>, days: Int): List<Double?> =
     bars.indices.map { index ->
-        if (index + 1 < days) null
-        else bars.subList(index + 1 - days, index + 1).map { it.close }.average()
+        if (index + 1 < days) null else bars.subList(index + 1 - days, index + 1).map { it.close }.average()
     }
 
 private fun androidx.compose.ui.graphics.drawscope.DrawScope.drawReferenceAverage(
@@ -597,11 +520,9 @@ private fun androidx.compose.ui.graphics.drawscope.DrawScope.drawReferenceAverag
         if (!started) {
             path.moveTo(x, y(value))
             started = true
-        } else {
-            path.lineTo(x, y(value))
-        }
+        } else path.lineTo(x, y(value))
     }
-    if (started) drawPath(path, color, style = Stroke(width = 1.dp.toPx()))
+    if (started) drawPath(path, color, style = Stroke(1.dp.toPx()))
 }
 
 private fun referenceAxisLabel(raw: String, useTimeAxis: Boolean): String {
