@@ -16,13 +16,12 @@ class ManualPaperOrderInput(BaseModel):
     quantity: float = Field(gt=0)
 
 
-def _decorate_manual_order_capability(manual_order_service, capability: dict[str, object]) -> dict[str, object]:
-    """Attach machine-readable HK prerequisites without changing fill authority.
-
-    The existing summary rejection code stays first for backward-compatible
-    clients.  Detailed blockers are additive facts for Android/operations and
-    future Phase 2D execution work.
-    """
+def _decorate_manual_order_capability(
+    manual_order_service,
+    capability: dict[str, object],
+    stock_connect_exchange_rate_service=None,
+) -> dict[str, object]:
+    """Attach machine-readable HK prerequisites without changing fill authority."""
 
     result = dict(capability)
     if str(result.get("market") or "").strip().upper() != "HK":
@@ -30,14 +29,17 @@ def _decorate_manual_order_capability(manual_order_service, capability: dict[str
 
     symbol = str(result.get("symbol") or "").strip().upper()
     metadata = manual_order_service.store.instrument_metadata(symbol)
+    fx_reference = None
+    if stock_connect_exchange_rate_service is not None:
+        fx_reference = stock_connect_exchange_rate_service.status().get("reference")
+
     contract = HkStockConnectPaperContract().evaluate(
         metadata=metadata,
         adapter=adapter_for_market("HK"),
         now=manual_order_service.now_provider(),
-        # Phase 2C intentionally has no trusted FX ingestion source and no
-        # broker/participant pass-through policy yet.  Missing facts remain
-        # explicit blockers instead of being guessed from an internet quote.
-        fx_observation=None,
+        fx_observation=fx_reference,
+        # Phase 2D1 supplies official directional exchange-rate observations but
+        # intentionally does not select broker/participant fee policies yet.
         broker_commission_policy=None,
         participant_clearing_pass_through_policy=None,
     )
@@ -49,12 +51,27 @@ def _decorate_manual_order_capability(manual_order_service, capability: dict[str
     return result
 
 
-def create_paper_schedule_router(schedule_state, manual_order_service=None) -> APIRouter:
+def create_paper_schedule_router(
+    schedule_state,
+    manual_order_service=None,
+    stock_connect_exchange_rate_service=None,
+) -> APIRouter:
     router = APIRouter(prefix="/v1/paper-trading", tags=["paper-trading"])
 
     @router.get("/adaptive-plan")
     def adaptive_plan() -> dict[str, object]:
         return dict(schedule_state())
+
+    if stock_connect_exchange_rate_service is not None:
+        @router.get("/stock-connect-rates")
+        def stock_connect_rates() -> dict[str, object]:
+            """Read only the latest locally persisted Stock Connect FX facts."""
+            return dict(stock_connect_exchange_rate_service.status())
+
+        @router.post("/stock-connect-rates/refresh")
+        def refresh_stock_connect_rates() -> dict[str, object]:
+            """Explicit bounded refresh of the two documented SSE rate tables."""
+            return dict(stock_connect_exchange_rate_service.refresh())
 
     if manual_order_service is not None:
         @router.get("/order-capability/{symbol}")
@@ -62,6 +79,7 @@ def create_paper_schedule_router(schedule_state, manual_order_service=None) -> A
             return _decorate_manual_order_capability(
                 manual_order_service,
                 manual_order_service.capability(symbol),
+                stock_connect_exchange_rate_service,
             )
 
         @router.post("/orders")
@@ -81,6 +99,7 @@ def create_paper_schedule_router(schedule_state, manual_order_service=None) -> A
                         "capability": _decorate_manual_order_capability(
                             manual_order_service,
                             error.capability,
+                            stock_connect_exchange_rate_service,
                         ),
                     },
                 ) from error
