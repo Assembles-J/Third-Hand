@@ -1,6 +1,7 @@
 package com.thirdhand.app
 
 import androidx.activity.compose.BackHandler
+import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
@@ -404,8 +405,8 @@ internal fun StockTargetSummaryCard(
             val lockLabel = if (target.symbol.isCnSecuritySymbol()) "T+1锁定" else "锁定数量"
 
             Column(
-                modifier = Modifier.padding(horizontal = 16.dp, vertical = 10.dp),
-                verticalArrangement = Arrangement.spacedBy(11.dp),
+                modifier = Modifier.padding(horizontal = 16.dp, vertical = 9.dp),
+                verticalArrangement = Arrangement.spacedBy(9.dp),
             ) {
                 Row(
                     modifier = Modifier.fillMaxWidth(),
@@ -419,7 +420,7 @@ internal fun StockTargetSummaryCard(
                         )
                         Text(
                             "$currency${marketValue.stockPositionMoney()}",
-                            style = MaterialTheme.typography.headlineLarge.copy(fontSize = 29.sp, lineHeight = 34.sp),
+                            style = MaterialTheme.typography.headlineLarge.copy(fontSize = 28.sp, lineHeight = 33.sp),
                             fontWeight = FontWeight.Bold,
                             color = MaterialTheme.colorScheme.onSurface,
                         )
@@ -481,8 +482,8 @@ internal fun StockTargetSummaryCard(
                 else -> colors.fall
             }
             Column(
-                modifier = Modifier.padding(horizontal = 16.dp, vertical = 10.dp),
-                verticalArrangement = Arrangement.spacedBy(11.dp),
+                modifier = Modifier.padding(horizontal = 16.dp, vertical = 9.dp),
+                verticalArrangement = Arrangement.spacedBy(9.dp),
             ) {
                 Row(
                     modifier = Modifier.fillMaxWidth(),
@@ -492,7 +493,7 @@ internal fun StockTargetSummaryCard(
                         Text("最新价", style = CompactTypography.secondary, color = MaterialTheme.colorScheme.onSurfaceVariant)
                         Text(
                             currentPrice?.let { "$currency${it.stockMoney()}" } ?: "--",
-                            style = MaterialTheme.typography.headlineLarge.copy(fontSize = 29.sp, lineHeight = 34.sp),
+                            style = MaterialTheme.typography.headlineLarge.copy(fontSize = 28.sp, lineHeight = 33.sp),
                             fontWeight = FontWeight.Bold,
                             color = changeColor,
                         )
@@ -577,12 +578,12 @@ internal fun StockTechnicalSummaryCard(onClick: () -> Unit) {
         shape = RoundedCornerShape(14.dp),
         elevation = CardDefaults.cardElevation(defaultElevation = 1.dp),
     ) {
-        Column(Modifier.padding(horizontal = 14.dp, vertical = 8.dp)) {
+        Column(Modifier.padding(horizontal = 14.dp, vertical = 6.dp)) {
             Row(
                 modifier = Modifier
                     .fillMaxWidth()
                     .clickable(onClick = onClick)
-                    .heightIn(min = 30.dp),
+                    .heightIn(min = 26.dp),
                 verticalAlignment = Alignment.CenterVertically,
             ) {
                 Text(
@@ -600,17 +601,18 @@ internal fun StockTechnicalSummaryCard(onClick: () -> Unit) {
                     Icons.Default.ChevronRight,
                     contentDescription = null,
                     tint = MaterialTheme.colorScheme.onSurfaceVariant,
-                    modifier = Modifier.size(18.dp),
+                    modifier = Modifier.size(17.dp),
                 )
             }
-            Spacer(Modifier.height(6.dp))
+            Spacer(Modifier.height(4.dp))
             Surface(
                 modifier = Modifier.fillMaxWidth(),
-                color = MaterialTheme.colorScheme.primary.copy(alpha = 0.055f),
-                shape = RoundedCornerShape(9.dp),
+                color = MaterialTheme.colorScheme.primary.copy(alpha = 0.045f),
+                shape = RoundedCornerShape(8.dp),
+                border = BorderStroke(0.5.dp, MaterialTheme.colorScheme.primary.copy(alpha = 0.14f)),
             ) {
                 Row(
-                    modifier = Modifier.padding(horizontal = 10.dp, vertical = 7.dp),
+                    modifier = Modifier.padding(horizontal = 10.dp, vertical = 4.dp),
                     verticalAlignment = Alignment.CenterVertically,
                 ) {
                     Surface(
@@ -620,7 +622,7 @@ internal fun StockTechnicalSummaryCard(onClick: () -> Unit) {
                     ) {
                         Text(
                             "AI 分析",
-                            modifier = Modifier.padding(horizontal = 7.dp, vertical = 3.dp),
+                            modifier = Modifier.padding(horizontal = 7.dp, vertical = 2.dp),
                             style = CompactTypography.caption,
                             fontWeight = FontWeight.SemiBold,
                         )
