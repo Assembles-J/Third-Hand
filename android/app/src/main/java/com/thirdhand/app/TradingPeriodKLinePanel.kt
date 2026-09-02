@@ -179,7 +179,7 @@ internal fun TradingPeriodKLineContent(
         elevation = CardDefaults.cardElevation(defaultElevation = 1.dp),
     ) {
         Column(
-            modifier = Modifier.padding(horizontal = 14.dp, top = 8.dp, bottom = 12.dp),
+            modifier = Modifier.padding(start = 14.dp, top = 8.dp, end = 14.dp, bottom = 12.dp),
             verticalArrangement = Arrangement.spacedBy(5.dp),
         ) {
             Row(
