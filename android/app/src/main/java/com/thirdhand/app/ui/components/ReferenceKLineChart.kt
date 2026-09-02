@@ -44,12 +44,22 @@ import com.thirdhand.app.ui.theme.CompactTypography
 import com.thirdhand.app.ui.theme.marketColors
 import java.util.Locale
 import kotlin.math.abs
+import kotlin.math.ceil
+import kotlin.math.floor
+import kotlin.math.log10
+import kotlin.math.pow
 import kotlin.math.roundToInt
 
 private const val REFERENCE_VISIBLE_CANDLES = 66
 private const val REFERENCE_MIN_CANDLES = 28
 private const val REFERENCE_MAX_CANDLES = 110
 private const val REFERENCE_GRID_LINES = 5
+
+private data class ReferencePriceScale(
+    val minimum: Double,
+    val maximum: Double,
+    val step: Double,
+)
 
 /**
  * Stock-detail chart renderer dedicated to the approved red/white reference UI.
@@ -96,10 +106,9 @@ fun ReferenceKLineChart(
     val priceValues = visible.flatMap { listOfNotNull(it.open, it.close, it.high, it.low) }
     val rawMin = priceValues.minOrNull() ?: 0.0
     val rawMax = priceValues.maxOrNull() ?: 1.0
-    val rawSpan = (rawMax - rawMin).coerceAtLeast(0.01)
-    val pricePadding = (rawSpan * 0.055).coerceAtLeast(0.01)
-    val minimum = rawMin - pricePadding
-    val maximum = rawMax + pricePadding
+    val scale = remember(rawMin, rawMax) { referencePriceScale(rawMin, rawMax) }
+    val minimum = scale.minimum
+    val maximum = scale.maximum
     val priceSpan = (maximum - minimum).coerceAtLeast(0.01)
 
     val marketColors = MaterialTheme.marketColors
@@ -118,9 +127,10 @@ fun ReferenceKLineChart(
     val ma5 = remember(bars) { referenceMovingAverage(bars, 5) }
     val ma10 = remember(bars) { referenceMovingAverage(bars, 10) }
     val ma20 = remember(bars) { referenceMovingAverage(bars, 20) }
+    val volumeSuffix = referenceVolumeSuffix(quote?.symbol)
 
     Column(modifier = modifier.fillMaxWidth()) {
-        ReferenceSnapshot(selected, selectedChange, selectedColor)
+        ReferenceSnapshot(selected, selectedChange, selectedColor, volumeSuffix)
 
         if (!useTimeAxis && showMovingAverages) {
             Row(
@@ -137,10 +147,9 @@ fun ReferenceKLineChart(
 
         Row(Modifier.fillMaxWidth()) {
             ReferencePriceAxis(
-                maximum = maximum,
-                minimum = minimum,
+                scale = scale,
                 color = axisColor,
-                modifier = Modifier.width(38.dp).height(165.dp),
+                modifier = Modifier.width(32.dp).height(165.dp),
             )
 
             Canvas(
@@ -209,6 +218,7 @@ fun ReferenceKLineChart(
                                     }
                                 }
                                 selectedIndex = (windowStart + windowSize - 1).coerceAtMost(bars.lastIndex)
+                                crosshairVisible = false
                             }
                         }
                     },
@@ -327,7 +337,7 @@ fun ReferenceKLineChart(
             verticalAlignment = Alignment.CenterVertically,
         ) {
             Text(
-                "成交量 ${referenceCompactVolume(selected.volume)}",
+                "成交量 ${referenceCompactVolume(selected.volume)}$volumeSuffix",
                 style = CompactTypography.caption,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
@@ -355,7 +365,12 @@ fun ReferenceKLineChart(
 }
 
 @Composable
-private fun ReferenceSnapshot(selected: DailyPriceDto, change: Double, color: Color) {
+private fun ReferenceSnapshot(
+    selected: DailyPriceDto,
+    change: Double,
+    color: Color,
+    volumeSuffix: String,
+) {
     Column(Modifier.fillMaxWidth()) {
         Text(
             buildString {
@@ -370,17 +385,24 @@ private fun ReferenceSnapshot(selected: DailyPriceDto, change: Double, color: Co
             fontWeight = FontWeight.SemiBold,
             color = color,
         )
-        Row(Modifier.fillMaxWidth().padding(top = 4.dp), horizontalArrangement = Arrangement.spacedBy(9.dp)) {
+        Row(
+            Modifier.fillMaxWidth().padding(top = 4.dp),
+            horizontalArrangement = Arrangement.spacedBy(9.dp),
+        ) {
             ReferenceMetric("开", selected.open ?: selected.close)
             ReferenceMetric("高", selected.high ?: selected.close)
             ReferenceMetric("低", selected.low ?: selected.close)
             Text(
-                "量 ${referenceCompactVolume(selected.volume)}",
+                "量 ${referenceCompactVolume(selected.volume)}$volumeSuffix",
                 style = MaterialTheme.typography.labelSmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
             selected.turnover_rate?.let {
-                Text("换 ${"%.2f".format(Locale.US, it)}%", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                Text(
+                    "换 ${"%.2f".format(Locale.US, it)}%",
+                    style = MaterialTheme.typography.labelSmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
             }
         }
     }
@@ -388,21 +410,42 @@ private fun ReferenceSnapshot(selected: DailyPriceDto, change: Double, color: Co
 
 @Composable
 private fun ReferenceMetric(label: String, value: Double) {
-    Text("$label ${"%.2f".format(Locale.US, value)}", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+    Text(
+        "$label ${"%.2f".format(Locale.US, value)}",
+        style = MaterialTheme.typography.labelSmall,
+        color = MaterialTheme.colorScheme.onSurfaceVariant,
+    )
 }
 
 @Composable
 private fun ReferenceMaLegend(label: String, value: Double?, color: Color) {
-    Text("$label ${value?.let { "%.2f".format(Locale.US, it) } ?: "--"}", style = MaterialTheme.typography.labelSmall, color = color)
+    Text(
+        "$label ${value?.let { "%.2f".format(Locale.US, it) } ?: "--"}",
+        style = MaterialTheme.typography.labelSmall,
+        color = color,
+    )
 }
 
 @Composable
-private fun ReferencePriceAxis(maximum: Double, minimum: Double, color: Color, modifier: Modifier = Modifier) {
-    Column(modifier.padding(end = 5.dp), Arrangement.SpaceBetween, Alignment.End) {
+private fun ReferencePriceAxis(
+    scale: ReferencePriceScale,
+    color: Color,
+    modifier: Modifier = Modifier,
+) {
+    Column(
+        modifier = modifier.padding(end = 4.dp),
+        verticalArrangement = Arrangement.SpaceBetween,
+        horizontalAlignment = Alignment.End,
+    ) {
         repeat(REFERENCE_GRID_LINES) { index ->
-            val ratio = index / (REFERENCE_GRID_LINES - 1).toDouble()
-            val value = maximum - (maximum - minimum) * ratio
-            Text("%.2f".format(Locale.US, value), style = MaterialTheme.typography.labelSmall, color = color, textAlign = TextAlign.End, maxLines = 1)
+            val value = scale.maximum - scale.step * index
+            Text(
+                "%.2f".format(Locale.US, value),
+                style = MaterialTheme.typography.labelSmall,
+                color = color,
+                textAlign = TextAlign.End,
+                maxLines = 1,
+            )
         }
     }
 }
@@ -425,13 +468,21 @@ private fun ReferenceVolumeChart(
             val color = if (bar.close >= open) riseColor else fallColor
             val height = (((bar.volume ?: 0.0) / maxVolume) * size.height).toFloat()
             val x = step * index + step / 2f
-            drawRect(color.copy(alpha = 0.82f), Offset(x - barWidth / 2f, size.height - height), Size(barWidth, height.coerceAtLeast(1f)))
+            drawRect(
+                color.copy(alpha = 0.82f),
+                Offset(x - barWidth / 2f, size.height - height),
+                Size(barWidth, height.coerceAtLeast(1f)),
+            )
         }
     }
 }
 
 @Composable
-private fun ReferenceTimeAxis(visible: List<DailyPriceDto>, useTimeAxis: Boolean, modifier: Modifier = Modifier) {
+private fun ReferenceTimeAxis(
+    visible: List<DailyPriceDto>,
+    useTimeAxis: Boolean,
+    modifier: Modifier = Modifier,
+) {
     if (visible.isEmpty()) return
     val indices = listOf(0, visible.lastIndex / 3, visible.lastIndex * 2 / 3, visible.lastIndex).distinct()
     Row(modifier) {
@@ -464,6 +515,8 @@ private fun ReferenceMiniNavigator(
     val lineColor = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.52f)
     val primaryColor = MaterialTheme.colorScheme.primary
     val outlineColor = MaterialTheme.colorScheme.outlineVariant
+    val handleColor = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.72f)
+    val handleMarkColor = MaterialTheme.colorScheme.surface.copy(alpha = 0.9f)
     val navigatorSurface = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.24f)
     val min = bars.minOfOrNull { it.close } ?: 0.0
     val max = bars.maxOfOrNull { it.close } ?: 1.0
@@ -477,10 +530,17 @@ private fun ReferenceMiniNavigator(
                 val center = (ratio * (bars.size - 1).coerceAtLeast(0)).roundToInt()
                 onWindowStartChange((center - windowSize / 2).coerceIn(0, maxStart))
             }
-            detectDragGestures(onDragStart = { moveTo(it.x) }, onDrag = { change, _ -> moveTo(change.position.x) })
+            detectDragGestures(
+                onDragStart = { moveTo(it.x) },
+                onDrag = { change, _ -> moveTo(change.position.x) },
+            )
         },
     ) {
-        drawRoundRect(navigatorSurface, size = size, cornerRadius = CornerRadius(6.dp.toPx()))
+        drawRoundRect(
+            navigatorSurface,
+            size = size,
+            cornerRadius = CornerRadius(6.dp.toPx()),
+        )
         val step = if (bars.size <= 1) size.width else size.width / (bars.size - 1)
         val path = Path()
         bars.forEachIndexed { index, bar ->
@@ -493,20 +553,69 @@ private fun ReferenceMiniNavigator(
         val left = windowStart.toFloat() / bars.size.coerceAtLeast(1) * size.width
         val right = (windowStart + windowSize).toFloat() / bars.size.coerceAtLeast(1) * size.width
         drawRoundRect(
-            primaryColor.copy(alpha = 0.045f),
+            primaryColor.copy(alpha = 0.035f),
             Offset(left, 0f),
             Size((right - left).coerceAtLeast(1f), size.height),
             CornerRadius(5.dp.toPx()),
             style = Stroke(1.dp.toPx()),
         )
-        drawLine(outlineColor, Offset(left, 0f), Offset(left, size.height), 1.dp.toPx())
-        drawLine(outlineColor, Offset(right, 0f), Offset(right, size.height), 1.dp.toPx())
+
+        val handleWidth = 6.dp.toPx()
+        val handleHeight = 22.dp.toPx().coerceAtMost(size.height)
+        val handleTop = (size.height - handleHeight) / 2f
+        listOf(left, right).forEach { centerX ->
+            val handleLeft = (centerX - handleWidth / 2f)
+                .coerceIn(0f, (size.width - handleWidth).coerceAtLeast(0f))
+            drawRoundRect(
+                handleColor,
+                Offset(handleLeft, handleTop),
+                Size(handleWidth, handleHeight),
+                CornerRadius(2.dp.toPx()),
+            )
+            val markX = handleLeft + handleWidth / 2f
+            val markHalf = 1.2.dp.toPx()
+            listOf(-3.dp.toPx(), 0f, 3.dp.toPx()).forEach { delta ->
+                drawLine(
+                    handleMarkColor,
+                    Offset(markX - markHalf, size.height / 2f + delta),
+                    Offset(markX + markHalf, size.height / 2f + delta),
+                    0.55.dp.toPx(),
+                )
+            }
+        }
+        drawLine(outlineColor.copy(alpha = 0.45f), Offset(left, 0f), Offset(left, size.height), 0.5.dp.toPx())
+        drawLine(outlineColor.copy(alpha = 0.45f), Offset(right, 0f), Offset(right, size.height), 0.5.dp.toPx())
     }
+}
+
+private fun referencePriceScale(rawMin: Double, rawMax: Double): ReferencePriceScale {
+    if (!rawMin.isFinite() || !rawMax.isFinite()) return ReferencePriceScale(0.0, 1.0, 0.25)
+    if (rawMax <= rawMin) {
+        val step = (abs(rawMax).coerceAtLeast(1.0) * 0.02).coerceAtLeast(0.01)
+        return ReferencePriceScale(rawMin - step * 2, rawMin + step * 2, step)
+    }
+
+    val rawSpan = rawMax - rawMin
+    val paddedMin = rawMin - rawSpan * 0.10
+    val paddedMax = rawMax + rawSpan * 0.10
+    val roughStep = (paddedMax - paddedMin) / (REFERENCE_GRID_LINES - 1)
+    val magnitude = 10.0.pow(floor(log10(roughStep)))
+    var step = ceil(roughStep / magnitude) * magnitude
+    var minimum = floor(paddedMin / step) * step
+    var maximum = minimum + step * (REFERENCE_GRID_LINES - 1)
+
+    if (maximum + 1e-9 < paddedMax) {
+        step = ceil((roughStep + magnitude) / magnitude) * magnitude
+        minimum = floor(paddedMin / step) * step
+        maximum = minimum + step * (REFERENCE_GRID_LINES - 1)
+    }
+    return ReferencePriceScale(minimum, maximum, step)
 }
 
 private fun referenceMovingAverage(bars: List<DailyPriceDto>, days: Int): List<Double?> =
     bars.indices.map { index ->
-        if (index + 1 < days) null else bars.subList(index + 1 - days, index + 1).map { it.close }.average()
+        if (index + 1 < days) null
+        else bars.subList(index + 1 - days, index + 1).map { it.close }.average()
     }
 
 private fun androidx.compose.ui.graphics.drawscope.DrawScope.drawReferenceAverage(
@@ -525,7 +634,9 @@ private fun androidx.compose.ui.graphics.drawscope.DrawScope.drawReferenceAverag
         if (!started) {
             path.moveTo(x, y(value))
             started = true
-        } else path.lineTo(x, y(value))
+        } else {
+            path.lineTo(x, y(value))
+        }
     }
     if (started) drawPath(path, color, style = Stroke(1.dp.toPx()))
 }
@@ -546,4 +657,11 @@ private fun referenceCompactVolume(value: Double?): String {
         number >= 10_000 -> "%.2f万".format(Locale.US, number / 10_000)
         else -> "%.0f".format(Locale.US, number)
     }
+}
+
+private fun referenceVolumeSuffix(symbol: String?): String {
+    val normalized = symbol?.uppercase(Locale.ROOT).orEmpty()
+    return if (
+        normalized.endsWith(".SZ") || normalized.endsWith(".SH") || Regex("\\d{6}").matches(normalized)
+    ) "手" else ""
 }
