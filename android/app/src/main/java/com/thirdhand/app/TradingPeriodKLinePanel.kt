@@ -13,10 +13,13 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Tune
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
@@ -52,16 +55,35 @@ fun TradingPeriodKLinePanel(symbol: String, quote: MarketQuoteDto?) {
     var intradayBars by remember(symbol) { mutableStateOf<List<DailyPriceDto>>(emptyList()) }
     var period by remember(symbol) { mutableStateOf("日线") }
     var loading by remember(symbol) { mutableStateOf(true) }
+    var intradayLoading by remember(symbol) { mutableStateOf(true) }
     var error by remember(symbol) { mutableStateOf<String?>(null) }
     var paperLogs by remember(symbol) { mutableStateOf<List<PaperTradingLogDto>>(emptyList()) }
+    var indicatorsVisible by remember(symbol) { mutableStateOf(true) }
 
     fun loadData() = scope.launch {
         loading = true
+        intradayLoading = true
         error = null
 
-        runCatching {
-            val daily = api.marketHistory(symbol, limit = 800)
-            val intraday = runCatching {
+        val daily = runCatching {
+            api.marketHistory(symbol, limit = 800)
+        }.onFailure { throwable ->
+            Log.e(TAG_KLINE, "Failed to load daily K-line bars for symbol=$symbol", throwable)
+        }.getOrElse {
+            loading = false
+            intradayLoading = false
+            if (bars.isEmpty()) error = "无法加载 K 线数据"
+            return@launch
+        }
+
+        // Daily history is the core chart contract. Render it immediately instead
+        // of keeping the whole chart behind optional intraday/marker requests.
+        bars = daily
+        loading = false
+
+        launch {
+            intradayLoading = true
+            intradayBars = runCatching {
                 api.marketIntraday(symbol, limit = 1_500).map { bar ->
                     DailyPriceDto(
                         trading_date = bar.bar_time,
@@ -76,23 +98,17 @@ fun TradingPeriodKLinePanel(symbol: String, quote: MarketQuoteDto?) {
                 }
             }.onFailure { throwable ->
                 Log.w(TAG_KLINE, "Failed to load intraday bars for symbol=$symbol", throwable)
-            }.getOrDefault(emptyList())
-            daily to intraday
-        }.onSuccess { (daily, intraday) ->
-            bars = daily
-            intradayBars = latestIntradaySession(intraday)
+            }.getOrDefault(emptyList()).let(::latestIntradaySession)
+            intradayLoading = false
+        }
 
+        launch {
             paperLogs = runCatching {
                 api.paperTradingLogs(symbol).filter { it.status == "executed" }
             }.onFailure { throwable ->
                 Log.w(TAG_KLINE, "Failed to load paper-trading markers for symbol=$symbol", throwable)
             }.getOrDefault(emptyList())
-        }.onFailure { throwable ->
-            Log.e(TAG_KLINE, "Failed to load daily K-line bars for symbol=$symbol", throwable)
-            error = "无法加载 K 线数据"
         }
-
-        loading = false
     }
 
     LaunchedEffect(symbol) { loadData() }
@@ -103,8 +119,8 @@ fun TradingPeriodKLinePanel(symbol: String, quote: MarketQuoteDto?) {
             .padding(horizontal = AppSpacing.contentHorizontal),
         colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
         shape = MaterialTheme.shapes.large,
-        elevation = CardDefaults.cardElevation(defaultElevation = 0.dp),
-        border = BorderStroke(0.5.dp, MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.45f)),
+        elevation = CardDefaults.cardElevation(defaultElevation = 1.dp),
+        border = BorderStroke(0.5.dp, MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.36f)),
     ) {
         Column(
             modifier = Modifier.padding(horizontal = AppSpacing.large, vertical = AppSpacing.medium),
@@ -149,6 +165,23 @@ fun TradingPeriodKLinePanel(symbol: String, quote: MarketQuoteDto?) {
                         }
                     }
                 }
+
+                TextButton(
+                    onClick = { indicatorsVisible = !indicatorsVisible },
+                    enabled = period != "分时",
+                    modifier = Modifier.width(64.dp).height(36.dp),
+                    contentPadding = PaddingValues(horizontal = 2.dp, vertical = 0.dp),
+                    colors = ButtonDefaults.textButtonColors(
+                        contentColor = if (indicatorsVisible && period != "分时") {
+                            MaterialTheme.colorScheme.primary
+                        } else {
+                            MaterialTheme.colorScheme.onSurfaceVariant
+                        },
+                    ),
+                ) {
+                    Icon(Icons.Default.Tune, contentDescription = null, modifier = Modifier.size(15.dp))
+                    Text("指标", style = CompactTypography.caption)
+                }
             }
 
             Text(
@@ -162,15 +195,15 @@ fun TradingPeriodKLinePanel(symbol: String, quote: MarketQuoteDto?) {
             )
 
             when {
-                loading -> {
+                loading && bars.isEmpty() -> {
                     Box(
-                        modifier = Modifier.fillMaxWidth().height(340.dp),
+                        modifier = Modifier.fillMaxWidth().height(220.dp),
                         contentAlignment = Alignment.Center,
                     ) {
                         CircularProgressIndicator(Modifier.size(24.dp), strokeWidth = 2.dp)
                     }
                 }
-                error != null -> {
+                error != null && bars.isEmpty() -> {
                     Box(
                         modifier = Modifier.fillMaxWidth().height(220.dp),
                         contentAlignment = Alignment.Center,
@@ -189,8 +222,15 @@ fun TradingPeriodKLinePanel(symbol: String, quote: MarketQuoteDto?) {
                             quote = quote,
                             useTimeAxis = period == "分时",
                             paperMarkers = if (period == "分时") emptyList() else paperLogs,
-                            showMovingAverages = period != "分时",
+                            showMovingAverages = period != "分时" && indicatorsVisible,
                         )
+                    } else if (period == "分时" && intradayLoading) {
+                        Box(
+                            modifier = Modifier.fillMaxWidth().height(180.dp),
+                            contentAlignment = Alignment.Center,
+                        ) {
+                            CircularProgressIndicator(Modifier.size(22.dp), strokeWidth = 2.dp)
+                        }
                     } else {
                         Box(
                             modifier = Modifier.fillMaxWidth().height(180.dp),

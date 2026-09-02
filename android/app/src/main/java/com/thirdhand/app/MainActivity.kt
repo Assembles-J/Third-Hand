@@ -139,7 +139,7 @@ private fun ThirdHandApp(resumeSignal: Int) {
     ThirdHandTheme(themeMode) {
         Scaffold(
             bottomBar = {
-                if (detailStock == null && holdingDetail == null && researchTarget == null && !profileOpen) {
+                if (detailStock == null && researchTarget == null && !profileOpen) {
                     CompactBottomNavigation(
                         selectedTab = tab,
                         items = listOf(
@@ -149,7 +149,10 @@ private fun ThirdHandApp(resumeSignal: Int) {
                             CompactNavigationItem("策略", Icons.Filled.AccountBalanceWallet, 3),
                             CompactNavigationItem("自选", Icons.Filled.Bookmark, 4),
                         ),
-                        onTabSelected = { tab = it },
+                        onTabSelected = { destination ->
+                    holdingDetail = null
+                    tab = destination
+                },
                     )
                 }
             },

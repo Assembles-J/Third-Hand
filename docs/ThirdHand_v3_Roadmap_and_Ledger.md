@@ -1740,3 +1740,16 @@ Paper Broker or Evaluation authority.
 - **Delivery status:** `ANDROID_IMPLEMENTED / CI_VISUAL_DEVICE_ACCEPTANCE_PENDING`.
 - **Accepted:** not yet. Final repository documentation-governance, Android unit/screenshot/Debug/Release and `ci-gate` must be green; physical-device gesture/readability validation remains the product acceptance gate.
 - **Authority impact:** none. Formal Decision, AI, StrategyProfile, ReviewPolicy, Risk, sizing, ExecutionPrecheck, Paper Broker, USER manual-order and Evaluation authority remain unchanged and server-owned.
+
+## Delivery update — 2026-09-02 — Holding Detail device-fidelity follow-up (#184)
+
+- **Device follow-up:** the physical-device/reference comparison after #178 exposed both a loading-coupling defect and remaining shell-density differences on the factual Holding Detail route.
+- **Android loading contract:** Daily history is the core render dependency and is shown as soon as it succeeds. Intraday and paper-marker reads run independently; either may fail or remain loading without blanking valid Daily/Weekly/Monthly chart content. Last-good historical bars remain visible during refresh.
+- **Indicator control:** the target-side `指标` affordance is functional and locally toggles MA5/MA10/MA20 on historical views; it is disabled for intraday and has no Strategy/Decision authority.
+- **Holding summary:** current price/freshness, cost, held quantity, server-projected sellable quantity and locked quantity now share one compact five-column fact row under market value and cumulative P/L instead of a taller `3 + 2` grid. Lock wording remains market-neutral rather than falsely applying CN T+1 semantics to every market.
+- **Primary shell continuity:** Holding Detail now retains the canonical `首页 | 行情 | 组合 | 策略 | 自选` bottom navigation. Selecting a primary destination closes the detail route and returns to the selected shell destination instead of leaving the user trapped in detail chrome.
+- **Backend/API:** unchanged. Existing history, intraday, quote, holding, paper-account and paper-log contracts remain authoritative; Android does not invent sellability, lock or trading facts.
+- **Documentation sync:** this Ledger note and the complete #184 Android follow-up are normalized into one product/documentation commit on top of current `main` before final CI.
+- **Delivery status:** `ANDROID_IMPLEMENTED / CI_VISUAL_DEVICE_ACCEPTANCE_PENDING`.
+- **Accepted:** not yet. Documentation governance, Android unit/screenshot/Debug/Release and `ci-gate` must pass on the final head. The intentional Holding Detail screenshot change must be visually reviewed and hash-locked; physical-device bottom-nav, Daily-first rendering and period-switch behavior remain the final product checks.
+- **Authority impact:** none. K-line, indicators, holding facts and paper markers remain read-only display evidence; Formal Decision, AI, ReviewPolicy, Risk, sizing, ExecutionPrecheck, Paper Broker and USER manual-order authority are unchanged.

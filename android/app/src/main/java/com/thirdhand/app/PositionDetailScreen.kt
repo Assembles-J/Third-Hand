@@ -282,7 +282,7 @@ internal fun PositionHoldingSummaryCard(state: PositionDetailUiState) {
             .padding(horizontal = AppSpacing.contentHorizontal),
         colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
         shape = MaterialTheme.shapes.large,
-        elevation = CardDefaults.cardElevation(defaultElevation = 0.dp),
+        elevation = CardDefaults.cardElevation(defaultElevation = 1.dp),
     ) {
         Column(
             modifier = Modifier.padding(horizontal = AppSpacing.large, vertical = AppSpacing.large),
@@ -321,12 +321,13 @@ internal fun PositionHoldingSummaryCard(state: PositionDetailUiState) {
 
             Row(
                 modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.spacedBy(AppSpacing.medium),
+                horizontalArrangement = Arrangement.spacedBy(AppSpacing.xxs),
+                verticalAlignment = Alignment.Top,
             ) {
                 PositionSummaryFact(
                     label = "现价",
                     value = "$currency${currentPrice.positionMoney()}",
-                    modifier = Modifier.weight(1f),
+                    modifier = Modifier.weight(1.25f),
                     badge = positionQuoteStateLabel(state.quote?.display_freshness),
                 )
                 PositionSummaryFact(
@@ -337,24 +338,17 @@ internal fun PositionHoldingSummaryCard(state: PositionDetailUiState) {
                 PositionSummaryFact(
                     label = "持仓数量",
                     value = quantity.positionQuantity(),
-                    modifier = Modifier.weight(1f),
-                    alignEnd = true,
+                    modifier = Modifier.weight(1.05f),
                 )
-            }
-
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.spacedBy(AppSpacing.medium),
-            ) {
                 PositionSummaryFact(
                     label = "可用卖出",
                     value = state.paperPosition?.sellable_quantity?.positionQuantity() ?: "--",
-                    modifier = Modifier.weight(1f),
+                    modifier = Modifier.weight(1.05f),
                 )
                 PositionSummaryFact(
                     label = "锁定数量",
                     value = state.paperPosition?.locked_quantity?.positionQuantity() ?: "--",
-                    modifier = Modifier.weight(1f),
+                    modifier = Modifier.weight(1.05f),
                     alignEnd = true,
                 )
             }
