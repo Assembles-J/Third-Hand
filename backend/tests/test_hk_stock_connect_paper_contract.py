@@ -1,4 +1,4 @@
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timezone
 from decimal import Decimal
 
 from app.api.v1.paper.router import _decorate_manual_order_capability
@@ -23,6 +23,25 @@ def _metadata(*, lot_size=200, price_tick="0.02"):
         "price_tick": price_tick,
         "source": "test-authority",
         "as_of": "2026-09-02",
+    }
+
+
+def _reference_observation(*, applicable_date="2026-09-02"):
+    return {
+        "kind": "REFERENCE",
+        "applicable_date": applicable_date,
+        "pair": "HKD/CNY",
+        "currency": "HKD",
+        "buy_rate": 0.91,
+        "sell_rate": 0.97,
+        "settlement_channel": "SH_HK_CONNECT_RMB",
+        "provider": "AKShare",
+        "provider_version": "test",
+        "upstream": "SSE",
+        "source_reference": "http://www.sse.com.cn/services/hkexsc/disclo/ratios/",
+        "retrieved_at": "2026-09-02T09:00:00+08:00",
+        "snapshot_id": "scfx:test",
+        "payload_hash": "abc",
     }
 
 
@@ -79,40 +98,31 @@ def test_hk_contract_requires_authoritative_lot_and_tick() -> None:
     assert "paper_instrument_price_tick_required" in contract["blocking_reason_codes"]
 
 
-def test_hk_contract_can_become_ready_only_with_explicit_facts() -> None:
-    now = datetime(2026, 9, 2, 10, 0, tzinfo=UTC)
-    contract = HkStockConnectPaperContract(fx_max_age_seconds=120).evaluate(
+def test_hk_contract_can_become_ready_only_with_explicit_directional_daily_facts() -> None:
+    contract = HkStockConnectPaperContract().evaluate(
         metadata=_metadata(),
         adapter=adapter_for_market("HK"),
-        now=now,
-        fx_observation={
-            "pair": "HKD/CNY",
-            "rate": 0.91,
-            "observed_at": (now - timedelta(seconds=20)).isoformat(),
-            "source": "authoritative-test-feed",
-        },
+        now=datetime(2026, 9, 2, 10, 0, tzinfo=UTC),
+        fx_observation=_reference_observation(),
         broker_commission_policy="PAPER_BROKER_ZERO_COMMISSION_V1",
         participant_clearing_pass_through_policy="PAPER_CLEARING_EXPLICIT_V1",
     )
 
     assert contract["execution_ready"] is True
     assert contract["blocking_reason_codes"] == []
-    assert contract["fx_observation"]["rate"] == 0.91
-    assert contract["fx_observation"]["source"] == "authoritative-test-feed"
+    assert contract["fx_reference_observation"]["buy_rate"] == 0.91
+    assert contract["fx_reference_observation"]["sell_rate"] == 0.97
+    assert contract["fx_reference_semantics"]["buy_order_reserve_rate"] == "REFERENCE_SELL_RATE"
+    assert contract["fx_reference_semantics"]["sell_order_estimate_rate"] == "REFERENCE_BUY_RATE"
+    assert contract["fx_reference_semantics"]["midpoint_allowed"] is False
 
 
-def test_hk_contract_rejects_stale_fx_observation() -> None:
-    now = datetime(2026, 9, 2, 10, 0, tzinfo=UTC)
-    contract = HkStockConnectPaperContract(fx_max_age_seconds=60).evaluate(
+def test_hk_contract_rejects_reference_rate_for_another_applicable_date() -> None:
+    contract = HkStockConnectPaperContract().evaluate(
         metadata=_metadata(),
         adapter=adapter_for_market("HK"),
-        now=now,
-        fx_observation={
-            "pair": "HKD/CNY",
-            "rate": 0.91,
-            "observed_at": (now - timedelta(seconds=61)).isoformat(),
-            "source": "authoritative-test-feed",
-        },
+        now=datetime(2026, 9, 2, 10, 0, tzinfo=UTC),
+        fx_observation=_reference_observation(applicable_date="2026-09-01"),
         broker_commission_policy="PAPER_BROKER_ZERO_COMMISSION_V1",
         participant_clearing_pass_through_policy="PAPER_CLEARING_EXPLICIT_V1",
     )
@@ -135,6 +145,12 @@ class _FakeManualOrderService:
         return datetime(2026, 9, 2, 10, 0, tzinfo=UTC)
 
 
+class _FakeRateService:
+    @staticmethod
+    def status():
+        return {"reference": _reference_observation()}
+
+
 def test_hk_order_capability_keeps_compatibility_blocker_and_adds_diagnostics() -> None:
     capability = _decorate_manual_order_capability(
         _FakeManualOrderService(),
@@ -155,3 +171,23 @@ def test_hk_order_capability_keeps_compatibility_blocker_and_adds_diagnostics() 
     assert capability["execution_contract"]["settlement_channel"] == "SH_HK_CONNECT_RMB"
     assert capability["execution_contract"]["lot_size"] == 200
     assert capability["execution_contract"]["price_tick"] == "0.02"
+
+
+def test_hk_capability_consumes_local_reference_snapshot_but_stays_fee_blocked() -> None:
+    capability = _decorate_manual_order_capability(
+        _FakeManualOrderService(),
+        {
+            "symbol": "01810",
+            "market": "HK",
+            "currency": "HKD",
+            "executable": False,
+            "reason_codes": ["paper_hk_execution_not_configured"],
+        },
+        _FakeRateService(),
+    )
+
+    assert capability["executable"] is False
+    assert "paper_hk_fx_observation_missing" not in capability["reason_codes"]
+    assert "paper_hk_fx_observation_stale" not in capability["reason_codes"]
+    assert "paper_hk_broker_commission_policy_unconfigured" in capability["reason_codes"]
+    assert capability["execution_contract"]["fx_reference_observation"]["snapshot_id"] == "scfx:test"
