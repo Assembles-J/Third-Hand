@@ -1,5 +1,6 @@
 package com.thirdhand.app.ui.components
 
+import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.size
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
@@ -21,11 +22,9 @@ data class CompactNavigationItem(
 )
 
 /**
- * Shared bottom navigation treatment for the current five-entry app shell.
- *
- * This intentionally keeps the existing navigation model and 44dp+ interactive
- * targets. UIX1 only reduces visual chrome: smaller labels/icons, no raised bar
- * and no large Material pill behind the selected destination.
+ * Shared five-entry securities navigation. The 56dp bar follows the approved
+ * phone reference while every NavigationBarItem still owns a full-width 44dp+
+ * interaction region. Selection is icon/text-only: no Material pill.
  */
 @Composable
 fun CompactBottomNavigation(
@@ -34,6 +33,7 @@ fun CompactBottomNavigation(
     onTabSelected: (Int) -> Unit,
 ) {
     NavigationBar(
+        modifier = Modifier.height(56.dp),
         containerColor = MaterialTheme.colorScheme.surface,
         tonalElevation = 0.dp,
     ) {
@@ -45,7 +45,7 @@ fun CompactBottomNavigation(
                     Icon(
                         imageVector = item.icon,
                         contentDescription = item.label,
-                        modifier = Modifier.size(21.dp),
+                        modifier = Modifier.size(20.dp),
                     )
                 },
                 label = {
