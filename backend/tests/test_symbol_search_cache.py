@@ -219,3 +219,67 @@ def test_partial_remote_failure_is_not_saved_as_negative_cache(tmp_path):
 
     assert latest["lookup_status"] == "remote_error"
     assert repository.cached_lookup("贵州茅台") is None
+
+
+def test_remote_match_without_match_type_is_normalized_before_cache(tmp_path):
+    store = make_store(tmp_path)
+    repository = SymbolSearchRepository(store)
+    remote = FakeMarketData(
+        delay=0.05,
+        result={
+            "query": "002709",
+            "matches": [{
+                "symbol": "002709",
+                "name": "天赐材料",
+                "market": "CN",
+                "currency": "CNY",
+                "source": "HiThink Financial API",
+            }],
+            "lookup_status": "matched",
+            "lookup_message": "HiThink 官方 A 股目录返回 1 个候选代码。",
+        },
+    )
+    service = SymbolSearchService(repository, remote)
+
+    first = service.search("002709")
+    assert first["lookup_status"] == "pending"
+
+    deadline = time.monotonic() + 2
+    latest = first
+    while time.monotonic() < deadline:
+        latest = service.search("002709")
+        if latest["lookup_status"] == "matched":
+            break
+        time.sleep(0.05)
+
+    assert latest["lookup_status"] == "matched"
+    assert latest["matches"][0]["match_type"] == "symbol"
+    cached = repository.cached_lookup("002709")
+    assert cached is not None
+    assert cached["matches"][0]["match_type"] == "symbol"
+
+
+def test_legacy_cached_match_without_match_type_is_normalized_on_read(tmp_path):
+    store = make_store(tmp_path)
+    repository = SymbolSearchRepository(store)
+    payload = [{
+        "symbol": "002709",
+        "name": "天赐材料",
+        "market": "CN",
+        "currency": "CNY",
+        "source": "HiThink Financial API",
+    }]
+    with store._connect() as connection:
+        connection.execute(
+            "INSERT INTO symbol_lookup_cache(name,payload,updated_at) VALUES(?,?,?)",
+            ("002709", json.dumps(payload, ensure_ascii=False), beijing_now().isoformat()),
+        )
+
+    remote = FakeMarketData(delay=0.2)
+    service = SymbolSearchService(repository, remote)
+
+    result = service.search("002709")
+
+    assert result["lookup_status"] == "matched"
+    assert result["matches"][0]["match_type"] == "symbol"
+    assert remote.calls == 0

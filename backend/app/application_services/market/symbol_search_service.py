@@ -159,11 +159,14 @@ class SymbolSearchService:
                 "lookup_message": "未找到匹配的证券代码。",
             }
             lookup_status = str(result.get("lookup_status") or "not_found")
-            matches = (
+            raw_matches = (
                 result.get("matches")
                 if isinstance(result.get("matches"), list)
                 else []
             )
+            matches = self._merge(query, raw_matches)
+            result = dict(result)
+            result["matches"] = matches
 
             # A partial directory failure with zero matches is not evidence that
             # the security does not exist. Never poison the negative cache.
@@ -226,6 +229,33 @@ class SymbolSearchService:
             return 70
         return 0
 
+    @staticmethod
+    def _normalize_candidate(
+        candidate: dict[str, object],
+        query: str,
+    ) -> dict[str, object]:
+        normalized_candidate = dict(candidate)
+        if str(normalized_candidate.get("match_type") or "").strip():
+            return normalized_candidate
+
+        cleaned = str(query or "").strip().upper()
+        normalized_query = normalize_search_text(cleaned)
+        symbol = str(normalized_candidate.get("symbol") or "").strip().upper()
+        name = normalize_search_text(normalized_candidate.get("name") or "")
+        padded_hk = (
+            cleaned.zfill(5)
+            if cleaned.isdigit() and len(cleaned) < 5
+            else cleaned
+        )
+        if symbol in {cleaned, padded_hk}:
+            match_type = "symbol"
+        elif name == normalized_query:
+            match_type = "exact"
+        else:
+            match_type = "partial"
+        normalized_candidate["match_type"] = match_type
+        return normalized_candidate
+
     def _merge(self, query: str, *groups: object) -> list[dict[str, object]]:
         by_key: dict[str, dict[str, object]] = {}
         for group in groups:
@@ -234,17 +264,18 @@ class SymbolSearchService:
             for item in group:
                 if not isinstance(item, dict):
                     continue
-                symbol = str(item.get("symbol") or "").strip().upper()
-                market = str(item.get("market") or "CN").strip().upper()
+                candidate = self._normalize_candidate(item, query)
+                symbol = str(candidate.get("symbol") or "").strip().upper()
+                market = str(candidate.get("market") or "CN").strip().upper()
                 if not symbol:
                     continue
                 key = f"{market}:{symbol}"
                 existing = by_key.get(key)
                 if (
                     existing is None
-                    or self._score(item, query) > self._score(existing, query)
+                    or self._score(candidate, query) > self._score(existing, query)
                 ):
-                    by_key[key] = dict(item)
+                    by_key[key] = candidate
         return sorted(
             by_key.values(),
             key=lambda item: (
