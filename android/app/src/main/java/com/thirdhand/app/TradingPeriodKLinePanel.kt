@@ -1,24 +1,27 @@
 package com.thirdhand.app
 
 import android.util.Log
-import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Tune
+import androidx.compose.material.icons.outlined.TouchApp
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
@@ -36,14 +39,16 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
-import com.thirdhand.app.ui.components.KLineChart
+import com.thirdhand.app.ui.components.ReferenceKLineChart
 import com.thirdhand.app.ui.theme.AppSpacing
 import com.thirdhand.app.ui.theme.CompactTypography
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import java.time.LocalDate
 import java.time.format.DateTimeFormatter
 import java.time.temporal.WeekFields
 import java.util.Locale
+import kotlin.math.abs
 
 @Composable
 fun TradingPeriodKLinePanel(symbol: String, quote: MarketQuoteDto?) {
@@ -55,6 +60,8 @@ fun TradingPeriodKLinePanel(symbol: String, quote: MarketQuoteDto?) {
     var intradayBars by remember(symbol) { mutableStateOf<List<DailyPriceDto>>(emptyList()) }
     var period by remember(symbol) { mutableStateOf("日线") }
     var loading by remember(symbol) { mutableStateOf(true) }
+    var loadingMessage by remember(symbol) { mutableStateOf("正在加载历史 K 线") }
+    var loadingDetail by remember(symbol) { mutableStateOf("正在读取已缓存行情；缺失部分会由服务端自动补齐。") }
     var intradayLoading by remember(symbol) { mutableStateOf(true) }
     var error by remember(symbol) { mutableStateOf<String?>(null) }
     var paperLogs by remember(symbol) { mutableStateOf<List<PaperTradingLogDto>>(emptyList()) }
@@ -62,6 +69,8 @@ fun TradingPeriodKLinePanel(symbol: String, quote: MarketQuoteDto?) {
 
     fun loadData() = scope.launch {
         loading = true
+        loadingMessage = "正在加载历史 K 线"
+        loadingDetail = "正在读取已缓存行情；缺失部分会由服务端自动补齐。"
         intradayLoading = true
         error = null
 
@@ -76,8 +85,8 @@ fun TradingPeriodKLinePanel(symbol: String, quote: MarketQuoteDto?) {
             return@launch
         }
 
-        // Daily history is the core chart contract. Render it immediately instead
-        // of keeping the whole chart behind optional intraday/marker requests.
+        // Daily is the core render contract: show it immediately and let optional
+        // intraday / marker requests continue independently in the background.
         bars = daily
         loading = false
 
@@ -113,70 +122,120 @@ fun TradingPeriodKLinePanel(symbol: String, quote: MarketQuoteDto?) {
 
     LaunchedEffect(symbol) { loadData() }
 
+    LaunchedEffect(symbol, loading, bars.isEmpty()) {
+        if (!loading || bars.isNotEmpty()) return@LaunchedEffect
+        delay(1_200)
+        if (loading && bars.isEmpty()) {
+            loadingMessage = "后台正在拉取历史 K 线"
+            loadingDetail = "当前缓存不足，正在等待服务端行情源返回；完成后页面会自动更新。"
+        }
+        delay(5_000)
+        if (loading && bars.isEmpty()) {
+            loadingMessage = "行情源响应较慢，仍在获取"
+            loadingDetail = "后台请求仍在进行，请稍候，不需要重复刷新。"
+        }
+    }
+
+    TradingPeriodKLineContent(
+        period = period,
+        onPeriodChange = { period = it },
+        dailyBars = bars,
+        intradayBars = intradayBars,
+        paperLogs = paperLogs,
+        quote = quote,
+        loading = loading,
+        loadingMessage = loadingMessage,
+        loadingDetail = loadingDetail,
+        intradayLoading = intradayLoading,
+        error = error,
+        indicatorsVisible = indicatorsVisible,
+        onIndicatorToggle = { indicatorsVisible = !indicatorsVisible },
+        onRetry = { loadData() },
+    )
+}
+
+/** Pure rendering half so screenshot tests exercise the same real card hierarchy. */
+@Composable
+internal fun TradingPeriodKLineContent(
+    period: String,
+    onPeriodChange: (String) -> Unit,
+    dailyBars: List<DailyPriceDto>,
+    intradayBars: List<DailyPriceDto>,
+    paperLogs: List<PaperTradingLogDto>,
+    quote: MarketQuoteDto?,
+    loading: Boolean,
+    loadingMessage: String,
+    loadingDetail: String,
+    intradayLoading: Boolean,
+    error: String?,
+    indicatorsVisible: Boolean,
+    onIndicatorToggle: () -> Unit,
+    onRetry: () -> Unit,
+) {
     Card(
         modifier = Modifier
             .fillMaxWidth()
-            .padding(horizontal = AppSpacing.contentHorizontal),
+            .padding(horizontal = 12.dp),
         colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
-        shape = MaterialTheme.shapes.large,
+        shape = RoundedCornerShape(18.dp),
         elevation = CardDefaults.cardElevation(defaultElevation = 1.dp),
-        border = BorderStroke(0.5.dp, MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.36f)),
     ) {
         Column(
-            modifier = Modifier.padding(horizontal = AppSpacing.large, vertical = AppSpacing.medium),
-            verticalArrangement = Arrangement.spacedBy(AppSpacing.small),
+            modifier = Modifier.padding(start = 14.dp, top = 8.dp, end = 14.dp, bottom = 12.dp),
+            verticalArrangement = Arrangement.spacedBy(5.dp),
         ) {
             Row(
                 modifier = Modifier.fillMaxWidth(),
                 verticalAlignment = Alignment.CenterVertically,
             ) {
-                listOf("分时", "日线", "周线", "月线").forEach { item ->
-                    val selected = period == item
-                    TextButton(
-                        onClick = { period = item },
-                        modifier = Modifier.weight(1f).height(36.dp),
-                        contentPadding = PaddingValues(horizontal = 2.dp, vertical = 0.dp),
-                        colors = ButtonDefaults.textButtonColors(
-                            containerColor = MaterialTheme.colorScheme.surface,
-                            contentColor = if (selected) {
-                                MaterialTheme.colorScheme.primary
-                            } else {
-                                MaterialTheme.colorScheme.onSurfaceVariant
-                            },
-                        ),
-                        shape = MaterialTheme.shapes.small,
-                    ) {
-                        Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                            Text(
-                                text = item,
-                                style = CompactTypography.body,
-                                fontWeight = if (selected) FontWeight.SemiBold else FontWeight.Normal,
-                            )
-                            Box(
-                                modifier = Modifier
-                                    .padding(top = 3.dp)
-                                    .width(24.dp)
-                                    .height(2.dp)
-                                    .background(
-                                        if (selected) MaterialTheme.colorScheme.primary else Color.Transparent,
-                                        MaterialTheme.shapes.extraSmall,
-                                    ),
-                            )
+                Row {
+                    listOf("分时", "日线", "周线", "月线").forEach { item ->
+                        val selected = period == item
+                        TextButton(
+                            onClick = { onPeriodChange(item) },
+                            modifier = Modifier
+                                .width(66.dp)
+                                .height(36.dp),
+                            contentPadding = PaddingValues(horizontal = 2.dp, vertical = 0.dp),
+                            colors = ButtonDefaults.textButtonColors(
+                                containerColor = MaterialTheme.colorScheme.surface,
+                                contentColor = if (selected) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant,
+                            ),
+                            shape = RoundedCornerShape(0.dp),
+                        ) {
+                            Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                                Text(
+                                    item,
+                                    style = CompactTypography.body,
+                                    fontWeight = if (selected) FontWeight.SemiBold else FontWeight.Normal,
+                                )
+                                Box(
+                                    modifier = Modifier
+                                        .padding(top = 3.dp)
+                                        .width(24.dp)
+                                        .height(2.dp)
+                                        .background(
+                                            if (selected) MaterialTheme.colorScheme.primary else Color.Transparent,
+                                            RoundedCornerShape(2.dp),
+                                        ),
+                                )
+                            }
                         }
                     }
                 }
 
+                Spacer(Modifier.weight(1f))
+
                 TextButton(
-                    onClick = { indicatorsVisible = !indicatorsVisible },
+                    onClick = onIndicatorToggle,
                     enabled = period != "分时",
-                    modifier = Modifier.width(64.dp).height(36.dp),
+                    modifier = Modifier
+                        .width(66.dp)
+                        .height(36.dp),
                     contentPadding = PaddingValues(horizontal = 2.dp, vertical = 0.dp),
                     colors = ButtonDefaults.textButtonColors(
-                        contentColor = if (indicatorsVisible && period != "分时") {
-                            MaterialTheme.colorScheme.primary
-                        } else {
-                            MaterialTheme.colorScheme.onSurfaceVariant
-                        },
+                        contentColor = MaterialTheme.colorScheme.onSurfaceVariant,
+                        disabledContentColor = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.45f),
                     ),
                 ) {
                     Icon(Icons.Default.Tune, contentDescription = null, modifier = Modifier.size(15.dp))
@@ -184,40 +243,59 @@ fun TradingPeriodKLinePanel(symbol: String, quote: MarketQuoteDto?) {
                 }
             }
 
+            HorizontalDivider(
+                color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.58f),
+                thickness = 0.5.dp,
+            )
+
             Text(
-                text = if (period == "分时") {
-                    intradaySessionHint(intradayBars)
-                } else {
-                    "左右拖拽查看历史 · 双指缩放"
-                },
+                "分时仅当日 09:30–15:00  ⓘ",
                 style = CompactTypography.caption,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
 
             when {
-                loading && bars.isEmpty() -> {
-                    Box(
-                        modifier = Modifier.fillMaxWidth().height(220.dp),
-                        contentAlignment = Alignment.Center,
-                    ) {
-                        CircularProgressIndicator(Modifier.size(24.dp), strokeWidth = 2.dp)
-                    }
+                loading && dailyBars.isEmpty() -> {
+                    KLineLoadingState(
+                        title = loadingMessage,
+                        detail = loadingDetail,
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .height(360.dp),
+                    )
                 }
-                error != null && bars.isEmpty() -> {
+
+                error != null && dailyBars.isEmpty() -> {
                     Box(
-                        modifier = Modifier.fillMaxWidth().height(220.dp),
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .height(320.dp),
                         contentAlignment = Alignment.Center,
                     ) {
                         Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                            Text(error!!, style = CompactTypography.secondary, color = MaterialTheme.colorScheme.error)
-                            TextButton(onClick = { loadData() }) { Text("重新加载") }
+                            Text(error, style = CompactTypography.secondary, color = MaterialTheme.colorScheme.error)
+                            TextButton(onClick = onRetry) { Text("重新加载") }
                         }
                     }
                 }
+
                 else -> {
-                    val chartBars = chartBarsForPeriod(period, bars, intradayBars)
+                    // Clamp malformed source wicks before weekly/monthly grouping.
+                    // Otherwise a bad daily wick can poison the aggregated period.
+                    val safeDaily = sanitizeBarsForChart(dailyBars)
+                    val safeIntraday = sanitizeBarsForChart(intradayBars)
+                    val chartBars = chartBarsForPeriod(period, safeDaily.bars, safeIntraday.bars)
+                    val anomalyCount = if (period == "分时") safeIntraday.anomalyCount else safeDaily.anomalyCount
+
                     if (chartBars.isNotEmpty()) {
-                        KLineChart(
+                        if (anomalyCount > 0) {
+                            Text(
+                                "检测到 $anomalyCount 个异常高/低点，已仅修正图表缩放，不改动原始行情。",
+                                style = CompactTypography.caption,
+                                color = MaterialTheme.colorScheme.tertiary,
+                            )
+                        }
+                        ReferenceKLineChart(
                             bars = chartBars,
                             quote = quote,
                             useTimeAxis = period == "分时",
@@ -225,19 +303,22 @@ fun TradingPeriodKLinePanel(symbol: String, quote: MarketQuoteDto?) {
                             showMovingAverages = period != "分时" && indicatorsVisible,
                         )
                     } else if (period == "分时" && intradayLoading) {
-                        Box(
-                            modifier = Modifier.fillMaxWidth().height(180.dp),
-                            contentAlignment = Alignment.Center,
-                        ) {
-                            CircularProgressIndicator(Modifier.size(22.dp), strokeWidth = 2.dp)
-                        }
+                        KLineLoadingState(
+                            title = "正在拉取当日分时",
+                            detail = "仅加载最新交易日 09:30–15:00 的分时数据。",
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .height(300.dp),
+                        )
                     } else {
                         Box(
-                            modifier = Modifier.fillMaxWidth().height(180.dp),
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .height(300.dp),
                             contentAlignment = Alignment.Center,
                         ) {
                             Text(
-                                if (period == "分时") "最新交易日暂无分时数据" else "暂无数据",
+                                if (period == "分时") "最新交易日暂无分时数据" else "暂无 K 线数据",
                                 style = CompactTypography.secondary,
                                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                             )
@@ -245,8 +326,103 @@ fun TradingPeriodKLinePanel(symbol: String, quote: MarketQuoteDto?) {
                     }
                 }
             }
+
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(top = 3.dp),
+                horizontalArrangement = Arrangement.Center,
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Text(
+                    if (period == "分时") {
+                        "按住分时曲线查看当日价格"
+                    } else {
+                        "左右拖拽查看不同期间 · 长按K线查看详情"
+                    },
+                    style = CompactTypography.caption,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+                if (period != "分时") {
+                    Spacer(Modifier.width(3.dp))
+                    Icon(
+                        Icons.Outlined.TouchApp,
+                        contentDescription = null,
+                        modifier = Modifier.size(12.dp),
+                        tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                }
+            }
         }
     }
+}
+
+@Composable
+private fun KLineLoadingState(
+    title: String,
+    detail: String,
+    modifier: Modifier = Modifier,
+) {
+    Box(modifier = modifier, contentAlignment = Alignment.Center) {
+        Column(
+            horizontalAlignment = Alignment.CenterHorizontally,
+            verticalArrangement = Arrangement.spacedBy(AppSpacing.small),
+        ) {
+            CircularProgressIndicator(Modifier.size(24.dp), strokeWidth = 2.dp)
+            Text(
+                title,
+                style = CompactTypography.secondary,
+                fontWeight = FontWeight.SemiBold,
+                color = MaterialTheme.colorScheme.onSurface,
+            )
+            Text(
+                detail,
+                style = CompactTypography.caption,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+        }
+    }
+}
+
+internal data class SanitizedChartBars(
+    val bars: List<DailyPriceDto>,
+    val anomalyCount: Int,
+)
+
+/**
+ * Protect the render scale from a malformed provider wick without rewriting raw
+ * persistence. Ordinary large candles are preserved; only structurally invalid
+ * or locally impossible extreme wicks are clamped to the candle body for draw.
+ */
+internal fun sanitizeBarsForChart(bars: List<DailyPriceDto>): SanitizedChartBars {
+    if (bars.isEmpty()) return SanitizedChartBars(emptyList(), 0)
+    var anomalyCount = 0
+    val safeBars = bars.mapIndexed { index, bar ->
+        val open = bar.open ?: bar.close
+        val bodyHigh = maxOf(open, bar.close)
+        val bodyLow = minOf(open, bar.close)
+        val high = bar.high ?: bodyHigh
+        val low = bar.low ?: bodyLow
+        val previousClose = bars.getOrNull(index - 1)?.close
+        val referenceValues = listOfNotNull(previousClose, open, bar.close).filter { it > 0.0 }
+        val reference = if (referenceValues.isEmpty()) 0.0 else referenceValues.average()
+        val rangeRatio = if (reference > 0.0) abs(high - low) / reference else 0.0
+        val wickRatio = if (reference > 0.0) {
+            maxOf(abs(high - bodyHigh), abs(bodyLow - low)) / reference
+        } else {
+            0.0
+        }
+        val structurallyInvalid = high <= 0.0 || low <= 0.0 || high < bodyHigh || low > bodyLow || high < low
+        val extremeProviderWick = rangeRatio > 0.60 && wickRatio > 0.35
+
+        if (structurallyInvalid || extremeProviderWick) {
+            anomalyCount += 1
+            bar.copy(high = bodyHigh, low = bodyLow)
+        } else {
+            bar
+        }
+    }
+    return SanitizedChartBars(safeBars, anomalyCount)
 }
 
 internal fun latestIntradaySession(intradayBars: List<DailyPriceDto>): List<DailyPriceDto> {
@@ -256,11 +432,7 @@ internal fun latestIntradaySession(intradayBars: List<DailyPriceDto>): List<Dail
 
 internal fun intradaySessionHint(intradayBars: List<DailyPriceDto>): String {
     val date = intradayBars.lastOrNull()?.trading_date?.take(10)
-    return if (date.isNullOrBlank()) {
-        "分时仅展示最新单个交易日"
-    } else {
-        "分时仅展示 $date"
-    }
+    return if (date.isNullOrBlank()) "分时仅展示最新单个交易日" else "分时仅展示 $date"
 }
 
 internal fun chartBarsForPeriod(
@@ -296,6 +468,7 @@ internal fun aggregateBars(bars: List<DailyPriceDto>, period: String): List<Dail
             low = rows.minOfOrNull { it.low ?: it.close },
             volume = rows.sumOf { it.volume ?: 0.0 },
             amount = rows.sumOf { it.amount ?: 0.0 },
+            turnover_rate = rows.sumOf { it.turnover_rate ?: 0.0 }.takeIf { rows.any { row -> row.turnover_rate != null } },
             adjustment = rows.last().adjustment,
             source = rows.last().source,
         )

@@ -1753,3 +1753,15 @@ Paper Broker or Evaluation authority.
 - **Delivery status:** `ANDROID_IMPLEMENTED / CI_VISUAL_DEVICE_ACCEPTANCE_PENDING`.
 - **Accepted:** not yet. Documentation governance, Android unit/screenshot/Debug/Release and `ci-gate` must pass on the final head. The intentional Holding Detail screenshot change must be visually reviewed and hash-locked; physical-device bottom-nav, Daily-first rendering and period-switch behavior remain the final product checks.
 - **Authority impact:** none. K-line, indicators, holding facts and paper markers remain read-only display evidence; Formal Decision, AI, ReviewPolicy, Risk, sizing, ExecutionPrecheck, Paper Broker and USER manual-order authority are unchanged.
+
+## Delivery update — 2026-09-02 — Holding Detail K-line loading and wick resilience (#186)
+
+- **Observed device defects:** the real Holding Detail page could spend a slow history request as an almost empty white chart area with only a small spinner, while a malformed provider high/low wick could stretch the Y-axis so far that all otherwise normal candles became unreadable.
+- **Android loading observability:** the chart now renders explicit staged text while daily history is pending: cache/history loading first, then `后台正在拉取历史 K 线`, and a slower-upstream message if the request remains outstanding. Intraday has its own explicit current-session loading state rather than reusing a blank placeholder.
+- **Render-only OHLC guard:** source-resolution candles are checked for structurally impossible or extreme isolated wicks before drawing. A detected anomaly adjusts only the in-memory chart copy and emits a concise notice; persisted market rows and backend provider lineage are not rewritten. Weekly/monthly aggregation is performed after this source-level guard so a legitimately wide aggregate candle is not mistaken for a bad provider row.
+- **Regression coverage:** Android JVM tests include the device-like 5.x price case with a stray 7.72 / 3.61 wick, verify the chart copy is bounded, verify the raw DTO is untouched, and preserve ordinary large candles. Existing period/intraday tests remain in force.
+- **Backend/API:** unchanged. The current synchronous history/provider chain remains authoritative; this slice makes its in-flight state visible and keeps a single malformed display row from destroying chart readability.
+- **Documentation sync:** this Ledger note and the final Android implementation are normalized into one atomic product/documentation commit before final CI.
+- **Delivery status:** `ANDROID_IMPLEMENTED / CI_VISUAL_DEVICE_ACCEPTANCE_PENDING`.
+- **Accepted:** not yet. Final documentation-governance, Android unit/screenshot/Debug/Release and `ci-gate` must be green; physical-device validation should re-open the affected 龙洲股份/比亚迪 Holding Detail paths and confirm readable K-line plus non-blank loading feedback.
+- **Authority impact:** none. This is read-only Android display resilience; Formal Decision, AI, ReviewPolicy, Risk, sizing, ExecutionPrecheck, Paper Broker, USER manual-order and Evaluation authority remain unchanged and server-owned.
