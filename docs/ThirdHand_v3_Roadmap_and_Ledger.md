@@ -1710,3 +1710,16 @@ Paper Broker or Evaluation authority.
 - **Accepted:** implementation is not yet device-accepted; repository CI and a physical-device Daily/Weekly/Monthly/Intraday walkthrough remain the acceptance gates.
 - **Delivery status:** `ANDROID_IMPLEMENTED / CI_DEVICE_ACCEPTANCE_PENDING`.
 - **Authority impact:** none. K-line and paper markers remain read-only display evidence and do not alter Formal Decision, StrategyProfile, ReviewPolicy, Risk, sizing, ExecutionPrecheck, Paper Broker or Evaluation authority.
+
+## Delivery update — 2026-09-02 — Stock-detail K-line interaction V2 (#178)
+
+- **Android entry:** `组合 -> Holding Detail -> K-line` keeps factual position information first and retains the existing top-right Decision route; no new signal/recommendation surface is introduced.
+- **Historical interaction:** Daily/Weekly/Monthly use a bounded 64-candle viewport with horizontal panning plus a mini range navigator instead of compressing the complete historical series into one canvas. MA5/MA10/MA20, volume, time axis and latest-price context remain display-only evidence.
+- **Intraday contract:** intraday input is reduced to the most recent trading date only. Android deliberately does not hard-code CN or HK session hours; the hint names the latest displayed trading date and leaves market-session authority to existing data/backend contracts.
+- **Paper markers:** historical simulated BUY/SELL markers use small surface-colored circles with thin blue/red outlines and compact B/S glyphs so they do not obscure candles. Intraday hides paper markers.
+- **Holding summary:** the compact card shows held/sellable/locked quantities using market-neutral labels. It does not reinterpret locked inventory as A-share T+1 on HK symbols.
+- **Scope hygiene:** the draft-only no-op indicator button and a misleading empty `交易信号 / 技术摘要` card were removed. Decision/AI remains behind the existing explicit Decision Workspace entry.
+- **Backend/API:** unchanged. Existing quote, history, intraday, holding, paper-log and Decision Workspace contracts remain authoritative.
+- **Tests:** JVM coverage protects latest-session-only intraday projection, market-neutral session hint and existing period aggregation; final Compose screenshot review and Debug/Release CI remain required.
+- **Delivery status:** `ANDROID_IMPLEMENTED / CI_VISUAL_DEVICE_ACCEPTANCE_PENDING`.
+- **Authority impact:** none. K-line, moving averages and paper markers are read-only evidence and cannot create Formal Action, AI intent, sizing, sellability or execution authority.
