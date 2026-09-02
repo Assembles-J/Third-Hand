@@ -7,6 +7,9 @@ application module.
 """
 from __future__ import annotations
 
+from functools import wraps
+from threading import RLock
+
 from app.api.v1.admin.router import create_admin_diagnostics_router
 from app.api.v1.candidate.router import create_candidate_router
 from app.api.v1.decision.workspace_router import create_decision_workspace_router
@@ -23,6 +26,8 @@ from app.application_services.decision.workspace import DecisionWorkspaceService
 from app.application_services.evaluation.lab_query_service import LabQueryService
 from app.application_services.market.symbol_search_service import SymbolSearchService
 from app.application_services.paper.manual_order import ManualPaperOrderService
+from app.application_services.paper.simulation_schema import ensure_paper_simulation_epoch_schema
+from app.application_services.paper.simulation_session import PaperRuntimeStateService, PaperSimulationService
 from app.application_services.personal_universe.service import PersonalUniverseService
 from app.application_services.research.data_gateway import ResearchDataGateway
 from app.infrastructure.database.benchmark_evaluation_repository import BenchmarkEvaluationRepository
@@ -64,7 +69,39 @@ def register_personal_universe_routes(application) -> None:
     application._personal_universe_routes_registered_v2 = True
 
 
+def _install_paper_ledger_mutation_guard(application) -> None:
+    """Serialize all active paper-ledger mutations against epoch restart.
+
+    The existing runtime state lock protects only status projection. It does not
+    cover the full database mutation window. This RLock wraps the installed full
+    paper cycle (including the execution-only poll) plus direct due-execution
+    calls. The same lock is also used by manual-order and restart API routes.
+    """
+    if hasattr(application, "paper_ledger_mutation_lock_v2"):
+        return
+
+    lock = RLock()
+    application.paper_ledger_mutation_lock_v2 = lock
+    original_cycle = application.run_paper_trading_cycle
+    original_execute_due = application.execute_due_paper_decisions
+
+    @wraps(original_cycle)
+    def guarded_cycle(*args, **kwargs):
+        with lock:
+            return original_cycle(*args, **kwargs)
+
+    @wraps(original_execute_due)
+    def guarded_execute_due(*args, **kwargs):
+        with lock:
+            return original_execute_due(*args, **kwargs)
+
+    application.run_paper_trading_cycle = guarded_cycle
+    application.execute_due_paper_decisions = guarded_execute_due
+
+
 def register_v2_routes(application) -> None:
+    _install_paper_ledger_mutation_guard(application)
+
     if not hasattr(application, "research_data_gateway_v2"):
         research_repository = ResearchDataRepository(application.store)
         application.research_data_repository_v2 = research_repository
@@ -171,6 +208,55 @@ def register_v2_routes(application) -> None:
             calendar=application.trading_calendar,
         )
 
+    if not hasattr(application, "paper_simulation_service_v2"):
+        ensure_paper_simulation_epoch_schema(application.store)
+
+        def reset_paper_runtime_state() -> None:
+            application.last_paper_trading_run_at = 0.0
+            application.last_paper_candidate_scan_at = 0.0
+            application.last_company_intelligence_focus_at = 0.0
+            application.last_paper_execution_poll_at = 0.0
+            with application.paper_trading_state_lock:
+                application.paper_trading_state.update({
+                    "running": False,
+                    "last_started_at": None,
+                    "last_finished_at": application.beijing_now(),
+                    "last_status": "restarted",
+                    "last_message": "新模拟轮次已开始：空仓，下一轮自动任务将从机会发现重新开始。",
+                    "last_executed": 0,
+                    "last_skipped": 0,
+                    "last_symbols": [],
+                    "last_run_id": None,
+                })
+
+        application.paper_simulation_service_v2 = PaperSimulationService(
+            application.store,
+            on_restart=reset_paper_runtime_state,
+        )
+
+        def paper_runtime_snapshot() -> dict[str, object]:
+            schedule = application.adaptive_paper_schedule_state()
+            now_mono = application.time.monotonic()
+            last_run = float(getattr(application, "last_paper_trading_run_at", 0.0) or 0.0)
+            review_interval = int(schedule.get("review_interval_seconds") or 0)
+            seconds_until_review = (
+                0
+                if last_run <= 0 or review_interval <= 0
+                else max(0, round(review_interval - max(0.0, now_mono - last_run)))
+            )
+            return {
+                "paper_state": dict(application.paper_trading_state),
+                "market_refresh_state": dict(application.market_refresh_state),
+                "seconds_until_review": seconds_until_review,
+            }
+
+        application.paper_runtime_state_service_v2 = PaperRuntimeStateService(
+            application.store,
+            application.paper_simulation_service_v2,
+            schedule_state=application.adaptive_paper_schedule_state,
+            runtime_snapshot=paper_runtime_snapshot,
+        )
+
     if not hasattr(application, "lab_query_service_v2"):
         experiment_repository = ExperimentDefinitionRepository(application.store)
         outcome_repository = EvaluationOutcomeRepository(application.store)
@@ -197,6 +283,9 @@ def register_v2_routes(application) -> None:
             create_paper_schedule_router(
                 application.adaptive_paper_schedule_state,
                 application.manual_paper_order_service_v2,
+                application.paper_simulation_service_v2,
+                application.paper_runtime_state_service_v2,
+                application.paper_ledger_mutation_lock_v2,
             )
         )
     if "/v1/company-intelligence/{symbol}/requirements" not in existing_paths:

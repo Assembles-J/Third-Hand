@@ -6,6 +6,7 @@ version reuse rules explicit. It does not generate actions or execute trades.
 from __future__ import annotations
 
 import json
+import sqlite3
 from datetime import datetime, timedelta, timezone
 
 from app import decision_config as config
@@ -26,6 +27,34 @@ def _datetime(value: object) -> datetime | None:
     if parsed.tzinfo is None:
         parsed = parsed.replace(tzinfo=BEIJING_TZ)
     return parsed.astimezone(BEIJING_TZ)
+
+
+def _active_paper_epoch_started_at(store) -> str | None:
+    """Return the current paper epoch boundary when the v2 feature is installed.
+
+    Older isolated unit fixtures intentionally do not know about epochs yet; they
+    retain the historical behavior until the idempotent v2 schema bootstrap runs.
+    """
+    connect = getattr(store, "_connect", None)
+    if not callable(connect):
+        return None
+    try:
+        with connect() as connection:
+            row = connection.execute(
+                "SELECT started_at FROM paper_simulation_epochs WHERE status='active' "
+                "ORDER BY sequence DESC LIMIT 1"
+            ).fetchone()
+    except sqlite3.OperationalError:
+        return None
+    return str(row["started_at"]) if row and row["started_at"] else None
+
+
+def _report_belongs_to_active_epoch(report: dict[str, object], epoch_started_at: str | None) -> bool:
+    if not epoch_started_at:
+        return True
+    epoch_start = _datetime(epoch_started_at)
+    generated_at = _datetime(report.get("generated_at"))
+    return bool(epoch_start is not None and generated_at is not None and generated_at >= epoch_start)
 
 
 def _history_eligible_symbols(store, *, minimum_daily_bars: int = 60, limit: int = 10_000) -> tuple[str, ...]:
@@ -84,8 +113,15 @@ def latest_current_version_decision_report(
     policy_version: str,
     limit: int = 20,
 ) -> dict[str, object] | None:
-    """Return the latest formal paper report, ignoring newer manual/research reports."""
+    """Return the latest formal paper report, ignoring newer manual/research reports.
+
+    When paper simulation epochs are installed, reports generated before the
+    active epoch boundary remain historical and cannot become current again.
+    """
+    epoch_started_at = _active_paper_epoch_started_at(store)
     for report in store.decision_reports(symbol, limit):
+        if not _report_belongs_to_active_epoch(report, epoch_started_at):
+            continue
         if _is_current_formal_report(report, policy_version=policy_version):
             return report
     return None
@@ -106,18 +142,33 @@ def pending_current_version_decision_symbols(
     candidate lineage are ignored rather than masking the latest formal paper
     report. WAIT/HOLD/BLOCKED reports are review states, not execution obligations,
     and therefore must not keep the execution queue permanently non-empty.
+
+    A simulation restart additionally creates a hard time boundary: decisions
+    frozen in an archived epoch remain historical but can never execute in the
+    fresh one.
     """
+    epoch_started_at = _active_paper_epoch_started_at(store)
     with store._connect() as connection:  # package-internal read-only adapter
-        rows = connection.execute(
-            "SELECT decision_id,symbol,payload,created_at FROM decision_reports ORDER BY created_at DESC LIMIT ?",
-            (max(1, limit * 20),),
-        ).fetchall()
-        executed = {
-            str(row["decision_id"])
-            for row in connection.execute(
+        if epoch_started_at:
+            rows = connection.execute(
+                "SELECT decision_id,symbol,payload,created_at FROM decision_reports "
+                "WHERE created_at>=? ORDER BY created_at DESC LIMIT ?",
+                (epoch_started_at, max(1, limit * 20)),
+            ).fetchall()
+            executed_rows = connection.execute(
+                "SELECT DISTINCT decision_id FROM paper_trading_logs "
+                "WHERE status='executed' AND decision_id IS NOT NULL AND executed_at>=?",
+                (epoch_started_at,),
+            ).fetchall()
+        else:
+            rows = connection.execute(
+                "SELECT decision_id,symbol,payload,created_at FROM decision_reports ORDER BY created_at DESC LIMIT ?",
+                (max(1, limit * 20),),
+            ).fetchall()
+            executed_rows = connection.execute(
                 "SELECT DISTINCT decision_id FROM paper_trading_logs WHERE status='executed' AND decision_id IS NOT NULL"
             ).fetchall()
-        }
+        executed = {str(row["decision_id"]) for row in executed_rows}
 
     latest_formal_by_symbol: dict[str, tuple[str, dict[str, object]]] = {}
     for row in rows:
@@ -156,17 +207,28 @@ def due_current_version_review_symbols(
 
     A review is a decision-generation obligation, not an execution obligation:
     it may refresh a flat WAIT/BLOCKED decision and must therefore not be added
-    to ``pending_current_version_decision_symbols``.  Only the latest report per
+    to ``pending_current_version_decision_symbols``. Only the latest report per
     symbol is considered, so an old review cannot revive after a newer decision.
+
+    Archived-epoch review obligations remain historical evidence only and are not
+    revived into a newly restarted simulation.
     """
     reference = _datetime(now)
     if reference is None:
         raise ValueError("review_now_must_be_an_iso_datetime")
+    epoch_started_at = _active_paper_epoch_started_at(store)
     with store._connect() as connection:  # package-internal read-only adapter
-        rows = connection.execute(
-            "SELECT symbol,payload,created_at FROM decision_reports ORDER BY created_at DESC LIMIT ?",
-            (max(1, limit * 20),),
-        ).fetchall()
+        if epoch_started_at:
+            rows = connection.execute(
+                "SELECT symbol,payload,created_at FROM decision_reports "
+                "WHERE created_at>=? ORDER BY created_at DESC LIMIT ?",
+                (epoch_started_at, max(1, limit * 20)),
+            ).fetchall()
+        else:
+            rows = connection.execute(
+                "SELECT symbol,payload,created_at FROM decision_reports ORDER BY created_at DESC LIMIT ?",
+                (max(1, limit * 20),),
+            ).fetchall()
 
     latest_formal_by_symbol: dict[str, dict[str, object]] = {}
     for row in rows:
