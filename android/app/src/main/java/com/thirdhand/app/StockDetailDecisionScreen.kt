@@ -15,6 +15,7 @@ import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -157,6 +158,7 @@ private fun StockDecisionSecondarySurface(
                 Row(
                     modifier = Modifier
                         .fillMaxWidth()
+                        .statusBarsPadding()
                         .height(60.dp)
                         .padding(horizontal = AppSpacing.xs),
                     verticalAlignment = Alignment.CenterVertically,
@@ -235,8 +237,8 @@ internal fun StockDetailVisualScaffold(
                     onDecision = onDecision,
                     onRefresh = onRefresh,
                 )
-                // App chrome below the toolbar. The OS status bar is already
-                // outside the app content area and shares the same red in styles.
+                // The real screen includes the system-status inset in the same red
+                // chrome; this remaining field creates the target card overlap.
                 Spacer(Modifier.height(31.dp))
             }
         },
@@ -299,6 +301,7 @@ private fun StockTargetTopBar(
     Row(
         modifier = Modifier
             .fillMaxWidth()
+            .statusBarsPadding()
             .height(62.dp)
             .padding(horizontal = 6.dp),
         verticalAlignment = Alignment.CenterVertically,
