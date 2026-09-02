@@ -250,6 +250,7 @@ internal fun StockDetailVisualScaffold(
                 selectedTab = 3,
                 items = stockDetailPrimaryItems(),
                 onTabSelected = onPrimaryDestination,
+                modifier = Modifier.height(56.dp),
             )
         },
         containerColor = MaterialTheme.colorScheme.background,
