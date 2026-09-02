@@ -1,19 +1,14 @@
 """Deterministic prerequisites for Hong Kong Stock Connect paper execution.
 
-This module deliberately does *not* enable HK fills by itself.  It freezes the
+This module deliberately does *not* enable HK fills by itself. It freezes the
 facts that a future Paper Broker execution must consume so HK cannot silently
 inherit A-share assumptions.
 
-Current product direction follows the existing ``MarketAdapter`` contract:
 SEHK securities trade in HKD while the normal paper account settles through the
-Southbound/Stock-Connect RMB channel.  Therefore an observed HKD->CNY rate,
-authoritative instrument lot/tick metadata and explicit paper-broker fee
-policies are required before execution can become eligible.
-
-The statutory fee snapshot below models the current ordinary HK securities
-transaction levies published by HKEX.  Broker commission and participant-level
-clearing pass-through are intentionally separate because they are not universal
-investor rates.
+Southbound/Stock-Connect RMB channel. The official Stock Connect mechanism uses
+directional daily reference exchange rates during trading and separate
+settlement exchange ratios after close. A midpoint or generic spot-FX quote is
+therefore not an execution input for this contract.
 """
 from __future__ import annotations
 
@@ -36,7 +31,7 @@ _SFC_LEVY_RATE = Decimal("0.000027")       # 0.0027%
 _AFRC_LEVY_RATE = Decimal("0.0000015")     # 0.00015%
 _TRADING_FEE_RATE = Decimal("0.0000565")   # 0.00565%
 _STAMP_DUTY_RATE = Decimal("0.001")        # 0.1%
-_UTC = timezone.utc
+_BEIJING_TZ = timezone(timedelta(hours=8))
 
 
 def _money_cent(value: Decimal) -> Decimal:
@@ -44,7 +39,6 @@ def _money_cent(value: Decimal) -> Decimal:
 
 
 def _stamp_duty(value: Decimal) -> Decimal:
-    # HKEX states ordinary stock stamp duty is rounded *up* to the nearest HKD.
     return value.quantize(_ONE_HKD, rounding=ROUND_CEILING)
 
 
@@ -53,13 +47,7 @@ def calculate_hkex_equity_statutory_fees(
     *,
     side: str,
 ) -> dict[str, object]:
-    """Calculate the versioned HKEX statutory transaction-fee snapshot.
-
-    Brokerage is deliberately excluded: HKEX describes brokerage as freely
-    negotiable between brokers and clients.  Participant-level clearing fees are
-    also excluded from this statutory snapshot and must be configured explicitly
-    by the Paper Broker before a Stock Connect fill can be enabled.
-    """
+    """Calculate the versioned HKEX statutory transaction-fee snapshot."""
 
     gross = Decimal(str(gross_hkd))
     if not gross.is_finite() or gross <= 0:
@@ -106,7 +94,7 @@ def hkex_statutory_fee_schedule() -> dict[str, object]:
     }
 
 
-def _parse_observed_at(value: object) -> datetime | None:
+def _parse_time(value: object) -> datetime | None:
     if not value:
         return None
     try:
@@ -114,39 +102,75 @@ def _parse_observed_at(value: object) -> datetime | None:
     except ValueError:
         return None
     if parsed.tzinfo is None:
-        parsed = parsed.replace(tzinfo=_UTC)
-    return parsed.astimezone(_UTC)
+        parsed = parsed.replace(tzinfo=_BEIJING_TZ)
+    return parsed.astimezone(_BEIJING_TZ)
 
 
-def _normalize_fx_observation(
+def _positive_rate(value: object) -> float | None:
+    try:
+        rate = float(value)
+    except (TypeError, ValueError):
+        return None
+    return rate if math.isfinite(rate) and rate > 0 else None
+
+
+def _normalize_reference_observation(
     raw: Mapping[str, object] | None,
     *,
     now: datetime,
-    max_age_seconds: int,
 ) -> tuple[dict[str, object] | None, list[str]]:
     if raw is None:
         return None, ["paper_hk_fx_observation_missing"]
 
+    if now.tzinfo is None:
+        now = now.replace(tzinfo=_BEIJING_TZ)
+    else:
+        now = now.astimezone(_BEIJING_TZ)
+
+    kind = str(raw.get("kind") or "").strip().upper()
     pair = str(raw.get("pair") or "").strip().upper()
-    source = str(raw.get("source") or "").strip()
-    observed_at = _parse_observed_at(raw.get("observed_at"))
-    try:
-        rate = float(raw.get("rate") or 0)
-    except (TypeError, ValueError):
-        rate = 0.0
+    currency = str(raw.get("currency") or "").strip().upper()
+    channel = str(raw.get("settlement_channel") or "").strip()
+    applicable_date = str(raw.get("applicable_date") or "").strip()
+    provider = str(raw.get("provider") or raw.get("source") or "").strip()
+    upstream = str(raw.get("upstream") or "").strip()
+    source_reference = str(raw.get("source_reference") or "").strip()
+    retrieved_at = _parse_time(raw.get("retrieved_at") or raw.get("observed_at"))
+    buy_rate = _positive_rate(raw.get("buy_rate"))
+    sell_rate = _positive_rate(raw.get("sell_rate"))
 
     reasons: list[str] = []
-    if pair != HKD_CNY_PAIR or not math.isfinite(rate) or rate <= 0 or not source or observed_at is None:
+    if (
+        kind != "REFERENCE"
+        or pair != HKD_CNY_PAIR
+        or currency != "HKD"
+        or channel != HK_STOCK_CONNECT_SETTLEMENT_CHANNEL
+        or buy_rate is None
+        or sell_rate is None
+        or not provider
+        or upstream != "SSE"
+        or not source_reference
+        or retrieved_at is None
+    ):
         reasons.append("paper_hk_fx_observation_invalid")
-    elif (now.astimezone(_UTC) - observed_at).total_seconds() > max_age_seconds:
+    elif applicable_date != now.date().isoformat():
         reasons.append("paper_hk_fx_observation_stale")
 
     normalized = {
+        "kind": kind or None,
         "pair": pair or HKD_CNY_PAIR,
-        "rate": rate if rate > 0 and math.isfinite(rate) else None,
-        "observed_at": observed_at.isoformat() if observed_at else None,
-        "source": source or None,
-        "max_age_seconds": max_age_seconds,
+        "currency": currency or None,
+        "settlement_channel": channel or None,
+        "applicable_date": applicable_date or None,
+        "buy_rate": buy_rate,
+        "sell_rate": sell_rate,
+        "provider": provider or None,
+        "provider_version": raw.get("provider_version"),
+        "upstream": upstream or None,
+        "source_reference": source_reference or None,
+        "retrieved_at": retrieved_at.isoformat() if retrieved_at else None,
+        "snapshot_id": raw.get("snapshot_id"),
+        "payload_hash": raw.get("payload_hash"),
     }
     return normalized, reasons
 
@@ -154,8 +178,6 @@ def _normalize_fx_observation(
 @dataclass(frozen=True, slots=True)
 class HkStockConnectPaperContract:
     """Pure evaluator for whether the HK paper-execution contract is complete."""
-
-    fx_max_age_seconds: int = 300
 
     def evaluate(
         self,
@@ -189,11 +211,7 @@ class HkStockConnectPaperContract:
         if price_tick in (None, "", 0, 0.0):
             reasons.append("paper_instrument_price_tick_required")
 
-        normalized_fx, fx_reasons = _normalize_fx_observation(
-            fx_observation,
-            now=now,
-            max_age_seconds=max(1, int(self.fx_max_age_seconds)),
-        )
+        normalized_fx, fx_reasons = _normalize_reference_observation(fx_observation, now=now)
         reasons.extend(fx_reasons)
 
         broker_policy = str(broker_commission_policy or "").strip() or None
@@ -203,8 +221,6 @@ class HkStockConnectPaperContract:
         if clearing_policy is None:
             reasons.append("paper_hk_clearing_fee_policy_unconfigured")
 
-        # Preserve order while preventing duplicate reason codes when the caller
-        # also performs generic instrument validation.
         reasons = list(dict.fromkeys(reasons))
         return {
             "contract_version": "HK_STOCK_CONNECT_PAPER_V1",
@@ -217,7 +233,16 @@ class HkStockConnectPaperContract:
             "settlement_channel": HK_STOCK_CONNECT_SETTLEMENT_CHANNEL,
             "sellability_rule": "HK_T0_SELLABILITY",
             "fx_required_pair": HKD_CNY_PAIR,
+            # Keep the Phase 2C key for additive/backward compatibility while
+            # making its directional daily-reference semantics explicit.
             "fx_observation": normalized_fx,
+            "fx_reference_observation": normalized_fx,
+            "fx_reference_semantics": {
+                "buy_order_reserve_rate": "REFERENCE_SELL_RATE",
+                "sell_order_estimate_rate": "REFERENCE_BUY_RATE",
+                "midpoint_allowed": False,
+                "generic_spot_fx_allowed": False,
+            },
             "statutory_fee_schedule": hkex_statutory_fee_schedule(),
             "broker_commission_policy": broker_policy,
             "participant_clearing_pass_through_policy": clearing_policy,
