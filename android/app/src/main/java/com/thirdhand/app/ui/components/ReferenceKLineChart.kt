@@ -517,7 +517,7 @@ private fun ReferenceMiniNavigator(
     val outlineColor = MaterialTheme.colorScheme.outlineVariant
     val handleColor = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.72f)
     val handleMarkColor = MaterialTheme.colorScheme.surface.copy(alpha = 0.9f)
-    val navigatorSurface = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.24f)
+    val navigatorSurface = MaterialTheme.colorScheme.surface
     val min = bars.minOfOrNull { it.close } ?: 0.0
     val max = bars.maxOfOrNull { it.close } ?: 1.0
     val span = (max - min).coerceAtLeast(0.01)
@@ -536,11 +536,19 @@ private fun ReferenceMiniNavigator(
             )
         },
     ) {
+        val navigatorCorner = CornerRadius(6.dp.toPx())
         drawRoundRect(
             navigatorSurface,
             size = size,
-            cornerRadius = CornerRadius(6.dp.toPx()),
+            cornerRadius = navigatorCorner,
         )
+        drawRoundRect(
+            outlineColor.copy(alpha = 0.58f),
+            size = size,
+            cornerRadius = navigatorCorner,
+            style = Stroke(0.65.dp.toPx()),
+        )
+
         val step = if (bars.size <= 1) size.width else size.width / (bars.size - 1)
         val path = Path()
         bars.forEachIndexed { index, bar ->
@@ -552,12 +560,20 @@ private fun ReferenceMiniNavigator(
 
         val left = windowStart.toFloat() / bars.size.coerceAtLeast(1) * size.width
         val right = (windowStart + windowSize).toFloat() / bars.size.coerceAtLeast(1) * size.width
+        val selectedSize = Size((right - left).coerceAtLeast(1f), size.height)
+        val selectedCorner = CornerRadius(5.dp.toPx())
         drawRoundRect(
-            primaryColor.copy(alpha = 0.035f),
+            primaryColor.copy(alpha = 0.025f),
             Offset(left, 0f),
-            Size((right - left).coerceAtLeast(1f), size.height),
-            CornerRadius(5.dp.toPx()),
-            style = Stroke(1.dp.toPx()),
+            selectedSize,
+            selectedCorner,
+        )
+        drawRoundRect(
+            handleColor.copy(alpha = 0.58f),
+            Offset(left, 0f),
+            selectedSize,
+            selectedCorner,
+            style = Stroke(0.75.dp.toPx()),
         )
 
         val handleWidth = 6.dp.toPx()
