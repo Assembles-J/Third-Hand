@@ -23,6 +23,7 @@ from app.application_services.decision.workspace import DecisionWorkspaceService
 from app.application_services.evaluation.lab_query_service import LabQueryService
 from app.application_services.market.symbol_search_service import SymbolSearchService
 from app.application_services.paper.manual_order import ManualPaperOrderService
+from app.application_services.paper.stock_connect_exchange_rates import StockConnectExchangeRateService
 from app.application_services.personal_universe.service import PersonalUniverseService
 from app.application_services.research.data_gateway import ResearchDataGateway
 from app.infrastructure.database.benchmark_evaluation_repository import BenchmarkEvaluationRepository
@@ -32,6 +33,7 @@ from app.infrastructure.database.evaluation_outcome_repository import Evaluation
 from app.infrastructure.database.experiment_repository import ExperimentDefinitionRepository
 from app.infrastructure.database.personal_universe_repository import PersonalUniverseRepository
 from app.infrastructure.database.research_data_repository import ResearchDataRepository
+from app.infrastructure.database.stock_connect_exchange_rate_repository import StockConnectExchangeRateRepository
 from app.infrastructure.database.strategy_evaluation_repository import StrategyEvaluationRepository
 from app.infrastructure.database.symbol_search_repository import SymbolSearchRepository
 
@@ -165,6 +167,13 @@ def register_v2_routes(application) -> None:
     if not hasattr(application, "decision_workspace_service_v2"):
         application.decision_workspace_service_v2 = DecisionWorkspaceService(application.store)
 
+    if not hasattr(application, "stock_connect_exchange_rate_service_v2"):
+        stock_connect_repository = StockConnectExchangeRateRepository(application.store)
+        application.stock_connect_exchange_rate_repository_v2 = stock_connect_repository
+        application.stock_connect_exchange_rate_service_v2 = StockConnectExchangeRateService(
+            stock_connect_repository,
+        )
+
     if not hasattr(application, "manual_paper_order_service_v2"):
         application.manual_paper_order_service_v2 = ManualPaperOrderService(
             application.store,
@@ -197,6 +206,7 @@ def register_v2_routes(application) -> None:
             create_paper_schedule_router(
                 application.adaptive_paper_schedule_state,
                 application.manual_paper_order_service_v2,
+                application.stock_connect_exchange_rate_service_v2,
             )
         )
     if "/v1/company-intelligence/{symbol}/requirements" not in existing_paths:
