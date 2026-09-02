@@ -57,6 +57,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.compose.ui.zIndex
 import com.thirdhand.app.ui.components.CompactBottomNavigation
 import com.thirdhand.app.ui.components.CompactNavigationItem
 import com.thirdhand.app.ui.components.DenseRowDivider
@@ -257,7 +258,8 @@ internal fun StockDetailVisualScaffold(
             modifier = Modifier
                 .fillMaxSize()
                 .padding(paddingValues)
-                .offset(y = (-24).dp),
+                .offset(y = (-24).dp)
+                .zIndex(1f),
             contentPadding = PaddingValues(bottom = AppSpacing.xxLarge),
             verticalArrangement = Arrangement.spacedBy(12.dp),
         ) {
