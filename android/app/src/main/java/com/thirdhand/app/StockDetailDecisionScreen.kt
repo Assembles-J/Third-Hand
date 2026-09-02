@@ -4,7 +4,6 @@ import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
-import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
@@ -16,7 +15,6 @@ import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
-import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -137,9 +135,8 @@ fun StockDetailDecisionRoute(
             TradingPeriodKLinePanel(symbol = target.symbol, quote = quote)
         },
         onPrimaryDestination = {
-            // The current single-activity shell owns the actual tab state. Until
-            // that owner exposes destination callbacks to this nested route,
-            // leaving detail returns to the already-selected primary destination.
+            // MainActivity owns the primary-tab state. The detail route exits back
+            // to that authoritative shell rather than keeping a second tab state.
             onBack()
         },
     )
@@ -160,7 +157,6 @@ private fun StockDecisionSecondarySurface(
                 Row(
                     modifier = Modifier
                         .fillMaxWidth()
-                        .statusBarsPadding()
                         .height(60.dp)
                         .padding(horizontal = AppSpacing.xs),
                     verticalAlignment = Alignment.CenterVertically,
@@ -191,9 +187,7 @@ private fun StockDecisionSecondarySurface(
         containerColor = MaterialTheme.colorScheme.background,
     ) { paddingValues ->
         LazyColumn(
-            modifier = Modifier
-                .fillMaxSize()
-                .padding(paddingValues),
+            modifier = Modifier.fillMaxSize().padding(paddingValues),
             contentPadding = PaddingValues(bottom = AppSpacing.xxLarge),
         ) {
             item {
@@ -208,10 +202,10 @@ private fun StockDecisionSecondarySurface(
 }
 
 /**
- * Pure stock-detail visual surface used by the real route and screenshot fixtures.
- * The hierarchy intentionally follows the approved reference: red system/header
- * chrome -> overlapping white factual summary -> one technical chart card ->
- * compact technical/decision entry -> persistent five-item primary navigation.
+ * The real StockDetail route, not a preview-only replica. Geometry intentionally
+ * follows the approved target: red app chrome, a white position card overlapping
+ * the red field, one rounded chart card, compact technical summary and the visible
+ * five-entry primary navigation.
  */
 @Composable
 internal fun StockDetailVisualScaffold(
@@ -241,7 +235,9 @@ internal fun StockDetailVisualScaffold(
                     onDecision = onDecision,
                     onRefresh = onRefresh,
                 )
-                Spacer(Modifier.height(24.dp))
+                // App chrome below the toolbar. The OS status bar is already
+                // outside the app content area and shares the same red in styles.
+                Spacer(Modifier.height(31.dp))
             }
         },
         bottomBar = {
@@ -258,10 +254,10 @@ internal fun StockDetailVisualScaffold(
             modifier = Modifier
                 .fillMaxSize()
                 .padding(paddingValues)
-                .offset(y = (-24).dp)
+                .offset(y = (-45).dp)
                 .zIndex(1f),
             contentPadding = PaddingValues(bottom = AppSpacing.xxLarge),
-            verticalArrangement = Arrangement.spacedBy(6.dp),
+            verticalArrangement = Arrangement.spacedBy(8.dp),
         ) {
             item {
                 StockTargetSummaryCard(
@@ -287,7 +283,6 @@ internal fun StockDetailVisualScaffold(
             }
 
             item { chartContent() }
-
             item { StockTechnicalSummaryCard(onClick = onDecision) }
         }
     }
@@ -304,7 +299,6 @@ private fun StockTargetTopBar(
     Row(
         modifier = Modifier
             .fillMaxWidth()
-            .statusBarsPadding()
             .height(62.dp)
             .padding(horizontal = 6.dp),
         verticalAlignment = Alignment.CenterVertically,
@@ -389,7 +383,7 @@ internal fun StockTargetSummaryCard(
             .fillMaxWidth()
             .padding(horizontal = 12.dp),
         colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
-        shape = RoundedCornerShape(16.dp),
+        shape = RoundedCornerShape(14.dp),
         elevation = CardDefaults.cardElevation(defaultElevation = 3.dp),
     ) {
         if (hasPosition) {
@@ -577,7 +571,7 @@ internal fun StockTechnicalSummaryCard(onClick: () -> Unit) {
             .fillMaxWidth()
             .padding(horizontal = 12.dp),
         colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
-        shape = RoundedCornerShape(16.dp),
+        shape = RoundedCornerShape(14.dp),
         elevation = CardDefaults.cardElevation(defaultElevation = 1.dp),
     ) {
         Column(Modifier.padding(horizontal = 14.dp, vertical = 8.dp)) {
@@ -705,7 +699,7 @@ private fun StockDetailStatusMessage(message: String, retry: () -> Unit) {
 
 private fun stockDetailPrimaryItems() = listOf(
     CompactNavigationItem("首页", Icons.Outlined.Home, 0),
-    CompactNavigationItem("行情", Icons.Default.ShowChart, 1),
+    CompactNavigationItem("行情", Icons.Default.AutoGraph, 1),
     CompactNavigationItem("组合", Icons.Outlined.CreditCard, 2),
     CompactNavigationItem("策略", Icons.Default.AccountBalanceWallet, 3),
     CompactNavigationItem("自选", Icons.Outlined.StarBorder, 4),
@@ -717,11 +711,11 @@ private fun String.isCnSecuritySymbol(): Boolean {
 }
 
 private fun Double.stockPositionMoney(): String = "%,.2f".format(Locale.US, this)
-private fun Double.stockQuantityText(): String = if (this % 1.0 == 0.0) "%.0f股".format(Locale.US, this) else "%.2f股".format(Locale.US, this)
+private fun Double.stockQuantityText(): String =
+    if (this % 1.0 == 0.0) "%.0f股".format(Locale.US, this) else "%.2f股".format(Locale.US, this)
 
-// Existing compact helpers are retained for the smaller component screenshot
-// baselines; the actual stock-detail route above no longer uses this old detached
-// header/facts hierarchy.
+// Legacy compact building blocks remain because the existing component screenshot
+// regression test exercises them independently of the live target-fidelity route.
 @Composable
 internal fun StockFactsHeader(
     quote: MarketQuoteDto?,
