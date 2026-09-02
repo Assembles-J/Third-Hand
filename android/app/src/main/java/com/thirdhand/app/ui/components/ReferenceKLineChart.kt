@@ -149,13 +149,13 @@ fun ReferenceKLineChart(
             ReferencePriceAxis(
                 scale = scale,
                 color = axisColor,
-                modifier = Modifier.width(32.dp).height(165.dp),
+                modifier = Modifier.width(32.dp).height(142.dp),
             )
 
             Canvas(
                 modifier = Modifier
                     .weight(1f)
-                    .height(165.dp)
+                    .height(142.dp)
                     .pointerInput(bars.size, useTimeAxis, safeStart, visible.size) {
                         if (!useTimeAxis) {
                             detectTapGestures(
@@ -311,19 +311,19 @@ fun ReferenceKLineChart(
                             else -> marketColors.neutral
                         }
                     } ?: if (latest.close >= (latest.open ?: latest.close)) marketColors.rise else marketColors.fall
-                    val tagWidth = 39.dp.toPx()
-                    val tagHeight = 19.dp.toPx()
+                    val tagWidth = 24.dp.toPx()
+                    val tagHeight = 12.dp.toPx()
                     val left = (size.width - tagWidth).coerceAtLeast(0f)
                     val top = (latestY - tagHeight / 2f).coerceIn(0f, size.height - tagHeight)
-                    drawRoundRect(tagColor, Offset(left, top), Size(tagWidth, tagHeight), CornerRadius(4.dp.toPx()))
+                    drawRoundRect(tagColor, Offset(left, top), Size(tagWidth, tagHeight), CornerRadius(3.dp.toPx()))
                     drawContext.canvas.nativeCanvas.drawText(
                         "%.2f".format(Locale.US, latestPrice),
                         left + tagWidth / 2f,
-                        top + 13.dp.toPx(),
+                        top + 9.dp.toPx(),
                         Paint().apply {
                             isAntiAlias = true
                             color = android.graphics.Color.WHITE
-                            textSize = 9.5.sp.toPx()
+                            textSize = 8.5.sp.toPx()
                             textAlign = Paint.Align.CENTER
                         },
                     )
@@ -345,7 +345,7 @@ fun ReferenceKLineChart(
             Text(referenceCompactVolume(maxVolume), style = CompactTypography.caption, color = axisColor)
         }
 
-        ReferenceVolumeChart(visible, marketColors.rise, marketColors.fall, Modifier.fillMaxWidth().height(38.dp))
+        ReferenceVolumeChart(visible, marketColors.rise, marketColors.fall, Modifier.fillMaxWidth().height(34.dp))
         ReferenceTimeAxis(visible, useTimeAxis, Modifier.fillMaxWidth().padding(top = 2.dp))
 
         if (!useTimeAxis && bars.size > windowSize) {
@@ -358,7 +358,7 @@ fun ReferenceKLineChart(
                     selectedIndex = (windowStart + windowSize - 1).coerceAtMost(bars.lastIndex)
                     crosshairVisible = false
                 },
-                modifier = Modifier.fillMaxWidth().padding(top = 6.dp).height(28.dp),
+                modifier = Modifier.fillMaxWidth().padding(top = 8.dp).height(30.dp),
             )
         }
     }
