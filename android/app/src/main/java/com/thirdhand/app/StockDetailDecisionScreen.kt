@@ -1,5 +1,6 @@
 package com.thirdhand.app
 
+import android.app.Activity
 import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.Canvas
@@ -25,12 +26,12 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.AccountBalanceWallet
 import androidx.compose.material.icons.filled.AutoGraph
-import androidx.compose.material.icons.filled.ChevronLeft
 import androidx.compose.material.icons.filled.ChevronRight
 import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.outlined.CreditCard
 import androidx.compose.material.icons.outlined.Home
 import androidx.compose.material.icons.outlined.StarBorder
+import androidx.compose.material.icons.outlined.TrendingUp
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.CircularProgressIndicator
@@ -43,6 +44,7 @@ import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -58,7 +60,9 @@ import androidx.compose.ui.graphics.Path
 import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.graphics.StrokeJoin
 import androidx.compose.ui.graphics.drawscope.Stroke
+import androidx.compose.ui.graphics.toArgb
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalView
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontWeight
@@ -90,6 +94,7 @@ fun StockDetailDecisionRoute(
     onResearch: (ResearchTargetDto) -> Unit,
 ) {
     val context = LocalContext.current
+    val view = LocalView.current
     val api = remember(context) { ApiClient.service(context) }
     val scope = rememberCoroutineScope()
     var quote by remember(target.symbol) { mutableStateOf<MarketQuoteDto?>(null) }
@@ -98,6 +103,21 @@ fun StockDetailDecisionRoute(
     var loading by remember(target.symbol) { mutableStateOf(true) }
     var error by remember(target.symbol) { mutableStateOf<String?>(null) }
     var decisionWorkspaceOpen by remember(target.symbol) { mutableStateOf(false) }
+
+    // Keep the real Android status bar visually continuous with the approved red
+    // stock-detail chrome. Restore the shell color as soon as this route leaves.
+    DisposableEffect(view, target.symbol) {
+        val window = (view.context as? Activity)?.window
+        val previousStatusBarColor = window?.statusBarColor
+        if (window != null) {
+            window.statusBarColor = StockDetailHeaderTop.toArgb()
+        }
+        onDispose {
+            if (window != null && previousStatusBarColor != null) {
+                window.statusBarColor = previousStatusBarColor
+            }
+        }
+    }
 
     fun load() = scope.launch {
         loading = true
@@ -323,12 +343,7 @@ private fun StockTargetTopBar(
         verticalAlignment = Alignment.CenterVertically,
     ) {
         IconButton(onClick = onBack, modifier = Modifier.size(AppSpacing.touchTarget)) {
-            Icon(
-                Icons.Default.ChevronLeft,
-                contentDescription = "返回",
-                tint = MaterialTheme.colorScheme.onPrimary,
-                modifier = Modifier.size(32.dp),
-            )
+            StockTargetBackIcon()
         }
 
         Column(
@@ -338,7 +353,7 @@ private fun StockTargetTopBar(
         ) {
             Text(
                 target.name,
-                style = CompactTypography.pageTitle.copy(fontSize = 20.sp, lineHeight = 24.sp),
+                style = CompactTypography.pageTitle.copy(fontSize = 19.sp, lineHeight = 23.sp),
                 fontWeight = FontWeight.Bold,
                 color = MaterialTheme.colorScheme.onPrimary,
                 maxLines = 1,
@@ -371,10 +386,37 @@ private fun StockTargetTopBar(
                     Icons.Default.Refresh,
                     contentDescription = "刷新",
                     tint = MaterialTheme.colorScheme.onPrimary,
-                    modifier = Modifier.size(28.dp),
+                    modifier = Modifier.size(26.dp),
                 )
             }
         }
+    }
+}
+
+@Composable
+private fun StockTargetBackIcon() {
+    val color = MaterialTheme.colorScheme.onPrimary
+    Canvas(
+        modifier = Modifier
+            .size(28.dp)
+            .semantics { contentDescription = "返回" },
+    ) {
+        val stroke = 1.45.dp.toPx()
+        val left = Offset(8.5.dp.toPx(), 14.dp.toPx())
+        drawLine(
+            color = color,
+            start = Offset(18.dp.toPx(), 5.5.dp.toPx()),
+            end = left,
+            strokeWidth = stroke,
+            cap = StrokeCap.Round,
+        )
+        drawLine(
+            color = color,
+            start = left,
+            end = Offset(18.dp.toPx(), 22.5.dp.toPx()),
+            strokeWidth = stroke,
+            cap = StrokeCap.Round,
+        )
     }
 }
 
@@ -680,7 +722,7 @@ internal fun StockTechnicalSummaryCard(onClick: () -> Unit) {
                     Text(
                         "点击查看决策、量价与研究摘要",
                         style = CompactTypography.secondary,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.78f),
                         maxLines = 1,
                         overflow = TextOverflow.Ellipsis,
                     )
@@ -753,7 +795,7 @@ private fun StockDetailStatusMessage(message: String, retry: () -> Unit) {
 
 private fun stockDetailPrimaryItems() = listOf(
     CompactNavigationItem("首页", Icons.Outlined.Home, 0),
-    CompactNavigationItem("行情", Icons.Default.AutoGraph, 1),
+    CompactNavigationItem("行情", Icons.Outlined.TrendingUp, 1),
     CompactNavigationItem("组合", Icons.Outlined.CreditCard, 2),
     CompactNavigationItem("策略", Icons.Default.AccountBalanceWallet, 3),
     CompactNavigationItem("自选", Icons.Outlined.StarBorder, 4),
