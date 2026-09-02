@@ -2,6 +2,8 @@
 
 > Status: UIX0 TARGET-SHELL DELIVERY PLAN
 >
+> **Current-status note (2026-09-02):** the UIX0 target shell has already landed. This file preserves the delivery plan and acceptance contract; use `ThirdHand_Current_Implementation_Status_and_Mobile_Entry_Roadmap.md` for live repository/mobile-entry status.
+>
 > Companion to `ThirdHand_UIUX_Rebuild_v1.md`.
 >
 > Scope: incremental Android delivery against the approved target shell and reference direction, using existing ThirdHand capability only.
@@ -106,7 +108,7 @@ Previously completed or in-flight work remains useful, but it must converge on t
 | #133 UIX5 | 策略 | place simulated-account execution console under Strategy and align Decision/review entry hierarchy |
 | #134 UIX6 | detail + Decision | align factual detail and Decision Workspace to the target visual language without merging authority |
 
-PR #139 stays draft until the UIX0 baseline lands. Its factual portfolio implementation should then be rebased/rebuilt on current `main` and reconciled for `组合`, brand-red shell/theme and target-reference acceptance.
+Historical delivery note: PR #139 was subsequently reconciled onto the approved shell and squash-merged on 2026-08-28. Its remaining physical-device acceptance stayed with #132; do not treat the old “stay draft / rebase later” instruction as current work.
 
 ## 6. 首页 delivery
 
