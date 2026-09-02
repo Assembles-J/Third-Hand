@@ -1,534 +1,285 @@
 # ThirdHand Current Implementation Status and Mobile Entry Roadmap
 
-> Purpose: provide Codex implementation guidance.
+> Snapshot: **2026-09-02**
 >
-> This document answers two questions before any new development:
+> Purpose: provide a short, current navigation/status map for implementation work.
 >
-> 1. What has already been implemented?
-> 2. Where is the user-facing mobile entry for each capability?
->
-> This document does not replace the canonical Architecture and Roadmap documents. It is an implementation navigation map.
+> Canonical authority remains `ThirdHand_Architecture_v3_consolidated.md` plus
+> `ThirdHand_v3_Roadmap_and_Ledger.md`. This file is intentionally a current
+> implementation index, not a historical delivery ledger.
 
 ---
 
-# 1. Current Project Status
+# 1. Current repository snapshot
 
-## Completed
+Current `main` reviewed for this snapshot:
 
-## N1 — StrategyProfile / SWING_V1
+`013b73a446581135419387ca2d583c84c10061be`
 
-Status:
+Current primary Android shell:
 
-`PRODUCT_DONE`
-
-Implemented:
-
-- StrategyProfile
-- SWING_V1 identity
-- strategy version lineage
-- timeframe authority
-- DecisionReport strategy display
-- Android strategy visibility
-
-Mobile entry:
-
+```text
+首页 | 行情 | 组合 | 策略 | 自选
 ```
-Stock Detail
-  -> Strategy Card
-  -> Timeframe Authority
+
+The former primary-shell labels such as `资讯 | 行情 | 持仓 | 交易 | 自选` and
+older roadmap targets that placed `Strategy Lab` directly in bottom navigation
+are historical implementation directions. They are not the current shell.
+
+Current Strategy workspace selector:
+
+```text
+模拟执行 | 收益复盘 | 策略评估
 ```
+
+`模拟执行` remains the existing simulated-account / Formal-Decision execution
+path. It must not be relabelled as real-broker execution or unsupported N5 AI
+paper trading.
 
 ---
 
-## N2 — Decision Workspace
+# 2. Current user-facing mobile entries
 
-Status:
+## 首页
 
-`IMPLEMENTED BUT DEVICE ACCEPTANCE OPEN`
+Purpose:
 
-Implemented:
+- low-effort attention / status surface assembled from supported facts;
+- links into the deeper Portfolio, Strategy and Watchlist paths where relevant.
 
-- Formal Decision display
-- What Changed
-- Decision Memory
-- Financial currentness
-- CorporateEvent status
-- T+1 / sellable / locked quantity
-- Decision Workspace API
-- immutable UiState
-- screenshot regression tests
+Do not fabricate a daily AI brief or unsupported portfolio analytics merely to
+fill the screen.
 
-Mobile entry:
+---
 
+## 行情
+
+Current entry:
+
+```text
+底部导航 -> 行情 -> 股票详情
 ```
-Portfolio
-  -> Holding Detail
-  -> AI / Decision icon
+
+Owns factual market/search/detail presentation, including the current K-line
+path. Decision/research authority remains separate from raw market facts.
+
+---
+
+## 组合
+
+Current entry:
+
+```text
+底部导航 -> 组合 -> Holding Detail
+```
+
+The compact factual portfolio surface is the primary holdings path.
+
+Holding Detail should remain fact-first:
+
+- current price / freshness;
+- quantity;
+- average cost;
+- market value;
+- P/L;
+- holding days;
+- sellable / locked quantity where authoritative;
+- K-line and transaction history.
+
+Decision/research content remains behind its separate secondary route rather
+than being mixed into every holding row.
+
+---
+
+## 策略
+
+Current entry:
+
+```text
+底部导航 -> 策略
+             -> 模拟执行
+             -> 收益复盘
+             -> 策略评估
+```
+
+### 模拟执行
+
+Current supported capability includes:
+
+- simulated-account equity / cash / position facts;
+- automatic execution enabled / paused state;
+- guarded manual decision-rotation action;
+- execution-chain / paper-fill history;
+- decision-audit drill-down;
+- explicit no-real-broker boundary;
+- server-owned paper-runtime state explaining recent work, pending work and
+  no-trade reasons;
+- explicit user-owned archive/restart flow for paper simulation epochs.
+
+Paper restart/runtime repository implementation merged from #177 as
+`013b73a446581135419387ca2d583c84c10061be`. Issue #175 remains open for the
+required deployed/physical-device restart and quiet no-trade walkthrough before
+that slice can be `PRODUCT_DONE`.
+
+### 收益复盘
+
+Reuses the existing Execution Review capability.
+
+### 策略评估
+
+Reuses the existing read-only Strategy Lab / Evaluation capability. Evaluation
+must not rewrite Formal Decision, production policy or execution history.
+
+---
+
+## 自选
+
+Current entry:
+
+```text
+底部导航 -> 自选
+```
+
+Owns the first-class Personal Universe / Watchlist path. Held symbols continue
+to route to factual holding detail; watchlist-only symbols route to stock detail.
+ReviewPolicy facts remain server-owned.
+
+---
+
+# 3. Decision Workspace boundary
+
+Decision Workspace remains separate from factual Holding Detail.
+
+Typical route:
+
+```text
+组合 / 股票详情
+  -> secondary Decision entry
   -> Decision Workspace
 ```
 
-Important:
+Decision Workspace may display authoritative decision/research facts such as:
 
-Holding Detail and Decision Workspace must remain separate.
+- Formal Decision;
+- what changed;
+- Decision Memory / continuity;
+- risk and blocking reasons;
+- financial currentness / CorporateEvent state where supplied;
+- research evidence and lineage.
 
-Holding Detail:
-
-- price
-- K line
-- quantity
-- cost
-- profit/loss
-- holding days
-- market value
-
-Decision Workspace:
-
-- AI explanation
-- why hold/buy/wait
-- what changed
-- risk reason
-- research evidence
+Android remains a renderer. It must not locally recalculate ReviewPolicy,
+execution eligibility, T+1, sizing, strategy actions or market authority.
 
 ---
 
-## N3 — Evaluation Infrastructure
+# 4. Current acceptance-only and parent issues
+
+The following issue states are important so implementation work is not reopened
+accidentally.
+
+## #133 — UIX5 Strategy console
 
 Status:
 
-`PRODUCT_DONE`
+`DEVICE ACCEPTANCE ONLY`
 
-Implemented:
+Repository implementation is already accepted. The issue is open only because
+the required physical-device Strategy walkthrough was never recorded as a full
+PASS. Do not rewrite accepted repository implementation unless that device pass
+finds a concrete regression.
 
-- ExperimentDefinition
-- frozen experiment universe
-- OutcomeResolver
-- StrategyEvaluation
-- BenchmarkEvaluation
-- Lab API
-- Android Strategy Lab
-
-Mobile entry:
-
-```
-Management
-  -> Strategy Lab
-```
-
-Not implemented:
-
-- AI autonomous trading
-- AI calibration
-
-These belong to N4/N5/N6.
-
----
-
-# 2. Current Pending Runtime Acceptance
-
-## Paper Execution Acceptance
-
-Issue:
-
-#46
-
-Need verify:
-
-- T+1
-- mixed inventory
-- stale quote block
-- closed session block
-- restart recovery
-
-Mobile entry:
-
-```
-Portfolio
-  -> Paper Position
-  -> Execution Status
-```
-
----
-
-## Financial Currentness
-
-Issue:
-
-#39
-
-Need:
-
-- deployed Xiaomi/HK acceptance
-- official release refresh verification
-
-Mobile entry:
-
-```
-Stock Detail
-  -> Financial Status
-```
-
----
-
-## CorporateEvent Lifecycle
-
-Issue:
-
-#49
-
-Need:
-
-- deployed lifecycle verification
-
-Mobile entry:
-
-```
-Stock Detail
-  -> Events
-```
-
----
-
-# 3. Current Product Development Queue
-
-## PUX1 — Android Watchlist
-
-Issue:
-
-#92
+## #164 — Strategy shell chrome / workspace tabs
 
 Status:
 
-`ANDROID_VISIBLE / ACCEPTANCE_PENDING`
+`DEVICE ACCEPTANCE ONLY`
 
-Backend/API is complete. Android implementation now provides the first-class
-entry and local JVM/screenshot/Debug/Release validation. It is not
-`PRODUCT_DONE` until repository CI and physical-device acceptance pass.
+Repository implementation was merged via #166. Remaining work is physical-device
+verification of the merged `模拟执行 | 收益复盘 | 策略评估` chrome.
 
-Goal:
+## #159 / #161 — UI-gap parents
 
-Create a first-class user universe.
+Use these as umbrella/status issues. New implementation must be owned by a
+specific current child slice and start from current `main`.
 
-Mobile entry:
+## #167 — Strategy dashboard composition
 
-```
-Bottom Navigation
-  -> Watchlist
-```
-
-Must support:
-
-- add stock
-- remove stock
-- priority
-- notes
-- enabled/disabled
-- review status
-
-Implemented Android surface:
-
-- authoritative Personal Universe read model (Watchlist and Positions tabs);
-- add, edit, remove, priority, note and enabled/paused state;
-- stock-detail routing while preserving holding facts;
-- loading, empty, partial, error and screenshot fixtures/baselines.
-
-Do not use admin/log pages.
+The old implementation head carried by #168/#169 is historical only. PR #169
+was closed unmerged on 2026-09-02 because it is stale against current `main`.
+Reassess the actual current-main delta before writing any replacement code; do
+not replay the stale branch.
 
 ---
 
-## PUX2 — ReviewPolicy / AnalysisBudget
+# 5. Current P0 paper-runtime acceptance
 
-Issue:
+## #175 — restart epochs and visible runtime state
 
-#93
+Repository status:
 
-Goal:
+`MERGED / DEPLOYED_DEVICE_ACCEPTANCE_PENDING`
 
-Control when AI/company research runs.
+Merged implementation:
 
-Mobile entry:
+`#177 -> 013b73a446581135419387ca2d583c84c10061be`
 
-```
-Watchlist
-  -> Review Status
-```
+The merged contract:
 
-Display:
+- preserves historical fills, Formal Decisions, runs and equity evidence;
+- archives the active paper-simulation epoch instead of fabricating SELL fills;
+- starts a new epoch with user-selected CNY cash and isolated new positions/lots;
+- prevents pre-epoch execution/review obligations from leaking into the new
+  round;
+- exposes server-owned runtime/no-trade/next-work facts to Android;
+- serializes paper-ledger mutations;
+- keeps HK paper fills fail-closed and does not widen trading authority.
 
-- why analyzed
-- why skipped
-- next review time
-
----
-
-## PUX3 — Discovery
-
-Issue:
-
-#94
-
-Goal:
-
-Turn Candidate Pool into optional discovery.
-
-Mobile entry:
-
-```
-Watchlist
-  -> Discovery
-```
-
-Rules:
-
-- no BUY authority
-- no automatic watchlist addition
-- explicit user promotion
+Remaining acceptance belongs to #175: verify one real restart and a quiet
+no-trade interval on deployed/physical-device runtime before `PRODUCT_DONE`.
 
 ---
 
-# 4. AI Roadmap
+# 6. Strategy / AI roadmap boundaries
 
-## N4 — AI Strategy Lab Shadow
+The following distinctions remain mandatory:
 
-Issue:
+- current `模拟执行` is not N5 isolated AI-agent paper trading;
+- Strategy Lab / Evaluation is read-only;
+- unsupported confidence, target-price or recommendation fields must not be
+  fabricated in Android;
+- no real-broker order ticket exists unless separately designed, implemented and
+  accepted;
+- foreign-market research visibility does not silently create multi-currency
+  execution authority.
 
-#95
-
-Status:
-
-Not implemented.
-
-Goal:
-
-AI generates paper opinions only.
-
-Mobile entry:
-
-```
-Stock Detail
-  -> AI Opinion
-
-or
-
-Strategy Lab
-  -> AI Shadow
-```
-
-Display:
-
-- Formal Decision
-- AI Opinion
-- difference
-- forecast contract
-
-No trading authority.
+When future N4/N5/N6 work is implemented, update this current status map from the
+accepted repository state rather than preserving old roadmap tense.
 
 ---
 
-## N5 — AI Paper Trading
+# 7. Development and governance rule
 
-Issue:
+Every product change should still be traceable through:
 
-#96
-
-Status:
-
-Not implemented.
-
-Goal:
-
-Independent AI paper accounts.
-
-Mobile entry:
-
-```
-Strategy Lab
-  -> AI Accounts
-```
-
-Display:
-
-- equity
-- positions
-- fills
-- blocked actions
-- execution reasons
-
----
-
-## N6 — AI Calibration
-
-Issue:
-
-#97
-
-Status:
-
-Not implemented.
-
-Goal:
-
-Measure whether AI confidence is reliable.
-
-Mobile entry:
-
-```
-Strategy Lab
-  -> Reliability
-```
-
-Display:
-
-- confidence bucket
-- actual success rate
-- sample size
-- uncertainty interval
-
----
-
-## N7 — Home / Review
-
-Issue:
-
-#98
-
-Status:
-
-Not implemented.
-
-Goal:
-
-Daily low-effort dashboard.
-
-Mobile entry:
-
-```
-Home
-Review
-```
-
-Display:
-
-- what changed
-- decisions requiring attention
-- AI/formal disagreement
-- failures
-
----
-
-## N8 — Order Flow
-
-Issue:
-
-#99
-
-Status:
-
-Design only.
-
-Goal:
-
-Read-only timing evidence.
-
-Mobile entry:
-
-```
-Stock Detail
-  -> Timing Evidence
-```
-
-Rules:
-
-- no direct BUY
-- no direct SELL
-- no override of Strategy
-
----
-
-## N9 — Modularization
-
-Issue:
-
-#100
-
-Goal:
-
-Incremental architecture cleanup.
-
-Rules:
-
-No big rewrite.
-
-Each refactor must protect or deliver a user-visible vertical slice.
-
----
-
-# 5. Mobile Information Architecture Target
-
-Final navigation:
-
-```
-Home
-Watchlist
-Portfolio
-Strategy Lab
-Review
-```
-
-Stock Detail:
-
-```
-Price
-K Line
-Position Data
-
-AI / Decision icon
-
-Decision Workspace
-Research
-Events
-Financials
-Timing Evidence
-```
-
-Portfolio:
-
-```
-Stock Name
-Market Value
-Quantity
-Cost
-Profit/Loss
-Holding Days
-```
-
-Do not put:
-
-- AI reasoning
-- review time
-- execution explanation
-
-inside the basic holding table.
-
----
-
-# 6. Development Rule
-
-Every new feature must have:
-
-```
-Issue
+```text
+Issue / accepted scope
  ↓
-Backend
+authoritative backend/API contract when needed
  ↓
-API
+Android entry when user-visible
  ↓
-Android Entry
+Test / screenshot / APK acceptance as applicable
  ↓
-Screenshot/Test
+canonical roadmap/ledger synchronization
  ↓
-Roadmap Update
+physical-device or deployed acceptance when required
 ```
 
-A backend-only feature is not PRODUCT_DONE.
+Repository governance currently requires every commit that changes product
+implementation under `backend/app/` or `android/app/src/main/` to update
+`docs/ThirdHand_v3_Roadmap_and_Ledger.md` in the **same commit**. Authority-
+sensitive backend changes must also synchronize the canonical architecture.
 
-A UI mock without authoritative data is not PRODUCT_DONE.
+A backend-only capability is not automatically `PRODUCT_DONE`.
+A visual mock without authoritative facts is not `PRODUCT_DONE`.
+A green screenshot hash alone is not physical-device acceptance.
