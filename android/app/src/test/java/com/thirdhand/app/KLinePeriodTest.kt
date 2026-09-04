@@ -18,6 +18,23 @@ class KLinePeriodTest {
     }
 
     @Test
+    fun intraday_period_keeps_only_latest_trading_session() {
+        val older = bar("2026-08-03T14:59:00", 11.8, 11.9, 9.0)
+        val latestOpen = bar("2026-08-04T09:31:00", 12.0, 12.1, 10.0)
+        val latestLater = bar("2026-08-04T10:30:00", 12.1, 12.3, 20.0)
+        val mixed = listOf(older, latestOpen, latestLater)
+
+        assertEquals(listOf(latestOpen, latestLater), latestIntradaySession(mixed))
+        assertEquals(listOf(latestOpen, latestLater), chartBarsForPeriod("分时", daily, mixed))
+    }
+
+    @Test
+    fun intraday_hint_identifies_the_single_session_without_assuming_market_hours() {
+        val intraday = listOf(bar("2026-08-04T09:31:00", 12.0, 12.2, 10.0))
+        assertEquals("分时仅展示 2026-08-04", intradaySessionHint(intraday))
+    }
+
+    @Test
     fun monthly_aggregation_preserves_open_close_and_volume() {
         val monthly = aggregateBars(daily, "月线")
         assertEquals(2, monthly.size)

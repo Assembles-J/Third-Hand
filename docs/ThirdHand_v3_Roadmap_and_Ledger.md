@@ -1231,7 +1231,7 @@ Paper Broker or Evaluation authority.
   Repository compile/unit/screenshot/Debug/Release/ci-gate plus physical-device
   density/readability remain required before #130 can be `PRODUCT_DONE`.
 - **Authority impact:** none. Formal Decision, StrategyProfile, ReviewPolicy,
-  Evidence authority, Risk, sizing, ExecutionPrecheck, Paper Broker and
+  Evidence authority, Risk, sizing, Executionprecheck, Paper Broker and
   Evaluation authority are unchanged.
 
 ## Delivery update — 2026-08-28 — UIX3 Watchlist / Personal Universe density
@@ -1727,3 +1727,16 @@ Paper Broker or Evaluation authority.
 - **Delivery status:** `BACKEND_READY / API_VISIBLE / ANDROID_IMPLEMENTED / CI_DEVICE_ACCEPTANCE_PENDING`.
 - **Accepted:** not yet. Full repository CI must be green before merge, and #175 remains open for one deployed/device restart plus a no-trade interval walkthrough.
 - **Authority impact:** Formal Decision, StrategyProfile, ReviewPolicy, Evidence, Risk, sizing, ExecutionPrecheck, Paper Broker and AI authority remain unchanged. The only new write authority is an explicit USER account-lifecycle restart operation around the existing deterministic paper ledger.
+
+## Delivery update — 2026-09-02 — Stock detail chart interaction V2 (#178)
+
+- **Android surface:** Holding Detail is tightened to the approved red/white stock-detail direction: the system status area remains visible against brand-red chrome, the stock name/code header is compact, and position market value, P/L, current/cost price, quantity, sellable quantity and T+1 lock are grouped into one factual summary card.
+- **Historical chart:** Daily/Weekly/Monthly use a bounded K-line viewport instead of compressing the entire history. The user can pan horizontally through history; the chart adds MA5/MA10/MA20 overlays, a separate volume strip, time axis, latest-price tag and a compact mini range navigator.
+- **Intraday:** `分时` is constrained to the latest trading session only and explicitly presents the single-session `09:30–15:00` contract. Intraday uses the close-price line and does not mix prior trading dates into the view.
+- **BUY/SELL markers:** simulated execution markers are reduced from large dark filled spheres to lightweight surface markers with thin blue/red outlines and tiny B/S glyphs so candles remain readable.
+- **Interaction / tests:** JVM coverage protects latest-session intraday filtering and deterministic session-hint text. Historical pan, navigator movement, status-bar spacing and marker readability still require physical-device acceptance.
+- **Backend/API:** unchanged. Existing quote/history/holding/paper-marker and Decision Workspace contracts remain authoritative; Android performs display/local viewport interaction only.
+- **Documentation sync:** this ledger note and the final Android implementation are normalized into one atomic product/documentation commit before final CI.
+- **Delivery status:** `ANDROID_IMPLEMENTED / CI_VISUAL_DEVICE_ACCEPTANCE_PENDING`.
+- **Accepted:** not yet. Final repository documentation-governance, Android unit/screenshot/Debug/Release and `ci-gate` must be green; physical-device gesture/readability validation remains the product acceptance gate.
+- **Authority impact:** none. Formal Decision, AI, StrategyProfile, ReviewPolicy, Risk, sizing, ExecutionPrecheck, Paper Broker, USER manual-order and Evaluation authority remain unchanged and server-owned.
